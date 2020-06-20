@@ -2,6 +2,11 @@
 
 Visual Studio Code formatting extension for [dprint](https://dprint.dev/).
 
+## Install
+
+1. Install [dprint's CLI](https://dprint.dev/install/)
+2. Install extension via [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=dprint.dprint)
+
 ## Features
 
 Formats code in the editor using [dprint](https://dprint.dev/).
