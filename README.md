@@ -21,7 +21,7 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Set Default Formatter
 
-```json
+```jsonc
 {
     "editor.defaultFormatter": "dprint.dprint",
     // or specify per language (recommended)
@@ -35,7 +35,7 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 Respects formatting on save:
 
-```json
+```jsonc
 {
     "editor.formatOnSave": true,
     // or per language
