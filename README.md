@@ -1,11 +1,37 @@
-# dprint README
+# dprint - Visual Studio Code Extension
 
-Visual Studio Code formatting extension for [dprint](https://dprint.dev/).
+Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pluggable and configurable code formatting platform.
 
 ## Install
 
 1. Install [dprint's CLI](https://dprint.dev/install/)
 2. Install extension via [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=dprint.dprint)
+
+## Setup
+
+1. Run `dprint init` in the root directory of your repository to create a `dprint.config.json` file.
+2. Set the default formatter in your vscode settings:
+    ```jsonc
+    {
+        "editor.defaultFormatter": "dprint.dprint",
+        // or specify per language (recommended)
+        "[javascript]": {
+            "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[typescript]": {
+            "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[json]": {
+            "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[jsonc]": {
+            "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[rust]": {
+            "editor.defaultFormatter": "dprint.dprint"
+        }
+    }
+    ```
 
 ## Features
 
@@ -18,18 +44,6 @@ Plugins are currently resolved based on the `dprint.config.json` in the current 
 You must have dprint installed globally on the path.
 
 Follow the instructions here: [Install](https://dprint.dev/install/)
-
-## Set Default Formatter
-
-```jsonc
-{
-    "editor.defaultFormatter": "dprint.dprint",
-    // or specify per language (recommended)
-    "[typescript]": {
-        "editor.defaultFormatter": "dprint.dprint"
-    }
-}
-```
 
 ## Extension Settings
 
