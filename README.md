@@ -65,6 +65,10 @@ Respects formatting on save:
 
 ## Release Notes
 
+### 0.1.1
+
+Auto-dismiss syntax error notifications.
+
 ### 0.1.0
 
 Initial release.

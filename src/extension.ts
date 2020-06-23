@@ -16,7 +16,16 @@ export function activate(context: vscode.ExtensionContext) {
                 );
                 return [vscode.TextEdit.replace(replaceRange, newText)];
             } catch (err) {
-                vscode.window.showErrorMessage("Error formatting text: " + err);
+                // It seems there's no way to auto-dismiss notifications,
+                // so this uses the Progress API to achieve that.
+                vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: "Error formatting text",
+                }, (progress) => {
+                    progress.report({ message: err, increment: 100 });
+                    return new Promise(resolve => setTimeout(resolve, 6000));
+                });
+                console.error("[dprint]:", err);
                 return [];
             }
         },
@@ -40,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
             context.subscriptions.push(formattingSubscription);
         } catch (err) {
             vscode.window.showErrorMessage("Error initializing dprint. {}", err);
+            console.error("[dprint]:", err);
         }
 
         function getDocumentSelectors(pluginInfos: PluginInfo[]) {
