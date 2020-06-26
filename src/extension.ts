@@ -48,7 +48,7 @@ export function activate(context: vscode.ExtensionContext) {
             );
             context.subscriptions.push(formattingSubscription);
         } catch (err) {
-            vscode.window.showErrorMessage("Error initializing dprint. {}", err);
+            vscode.window.showErrorMessage("Error initializing dprint.", err);
             console.error("[dprint]:", err);
         }
 
