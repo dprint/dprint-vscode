@@ -27,6 +27,9 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
      "[jsonc]": {
        "editor.defaultFormatter": "dprint.dprint"
      },
+     "[markdown]": {
+       "editor.defaultFormatter": "dprint.dprint"
+     },
      "[rust]": {
        "editor.defaultFormatter": "dprint.dprint"
      }
@@ -66,7 +69,7 @@ Respects formatting on save:
 
 ## Release Notes
 
-### 0.1.3
+### 0.1.3-0.1.5
 
 Updates based on latest dprint CLI.
 
