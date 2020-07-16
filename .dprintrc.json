@@ -1,8 +1,6 @@
 {
   "$schema": "https://dprint.dev/schemas/v0.json",
   "projectType": "openSource",
-  "typescript": {
-  },
   "json": {
     "indentWidth": 2
   },
@@ -13,7 +11,8 @@
     "out"
   ],
   "plugins": [
-    "https://plugins.dprint.dev/typescript-0.19.2.wasm",
+    "https://plugins.dprint.dev/typescript-0.19.9.wasm",
+    "https://plugins.dprint.dev/markdown-0.2.4.wasm",
     "https://plugins.dprint.dev/json-0.4.1.wasm"
   ]
 }

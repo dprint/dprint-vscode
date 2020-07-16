@@ -31,7 +31,7 @@ export function activate(context: vscode.ExtensionContext) {
         },
     };
 
-    context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", initializePluginInfos));
+    context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", initializePluginInfos));
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(initializePluginInfos));
 
     initializePluginInfos();
