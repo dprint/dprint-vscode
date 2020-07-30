@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getPluginInfos, PluginInfo, formatText } from "./dprint-shell";
+import { checkInstalled, getPluginInfos, PluginInfo, formatText } from "./dprint-shell";
 
 export function activate(context: vscode.ExtensionContext) {
     let formattingSubscription: vscode.Disposable | undefined = undefined;
@@ -38,6 +38,14 @@ export function activate(context: vscode.ExtensionContext) {
     console.log(`The extension Dprint is now active!`);
 
     async function initializePluginInfos() {
+        const isInstalled = await checkInstalled();
+        if (!isInstalled) {
+            vscode.window.showErrorMessage(
+                "Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install).",
+            );
+            return;
+        }
+
         try {
             clearFormattingSubscription();
             const pluginInfos = await getPluginInfos();
@@ -52,21 +60,27 @@ export function activate(context: vscode.ExtensionContext) {
             console.error("[dprint]:", err);
         }
 
-        function getDocumentSelectors(pluginInfos: PluginInfo[]) {
-            const documentSelectors: vscode.DocumentFilter[] = [];
-            const handledFileExtensions = new Set();
-            for (const pluginInfo of pluginInfos) {
-                for (const fileExtension of pluginInfo.fileExtensions) {
-                    if (!handledFileExtensions.has(fileExtension)) {
-                        documentSelectors.push({
-                            scheme: "file",
-                            pattern: `**/*.${fileExtension}`,
-                        });
-                        handledFileExtensions.add(fileExtension);
+        function getDocumentSelectors(pluginInfos: PluginInfo[]): vscode.DocumentFilter[] {
+            const fileExtensions = getFileExtensions();
+
+            if (fileExtensions.size > 0) {
+                return [{
+                    scheme: "file",
+                    pattern: `**/*.{${Array.from(fileExtensions.values()).join(",")}}`,
+                }];
+            } else {
+                return [];
+            }
+
+            function getFileExtensions() {
+                const fileExtensions = new Set();
+                for (const pluginInfo of pluginInfos) {
+                    for (const fileExtension of pluginInfo.fileExtensions) {
+                        fileExtensions.add(fileExtension);
                     }
                 }
+                return fileExtensions;
             }
-            return documentSelectors;
         }
     }
 

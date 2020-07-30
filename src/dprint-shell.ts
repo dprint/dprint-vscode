@@ -11,6 +11,16 @@ export interface PluginInfo {
     fileExtensions: string[];
 }
 
+export async function checkInstalled() {
+    try {
+        await execShell(`dprint -v`, undefined, undefined);
+        return true;
+    } catch (err) {
+        console.error(err);
+        return false;
+    }
+}
+
 export async function getPluginInfos() {
     const stdout = await execShell(`dprint editor-info`, undefined, undefined);
     const editorInfo = JSON.parse(stdout) as EditorInfo;
