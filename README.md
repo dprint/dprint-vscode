@@ -69,6 +69,11 @@ Respects formatting on save:
 
 ## Release Notes
 
+### 0.1.6
+
+- Instructional message when dprint is not installed globally.
+- Fix encoding issue on error.
+
 ### 0.1.3-0.1.5
 
 Updates based on latest dprint CLI.
