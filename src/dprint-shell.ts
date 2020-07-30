@@ -52,7 +52,10 @@ function execShell(
     return new Promise<string>((resolve, reject) => {
         let cancellationDisposable: vscode.Disposable | undefined;
         try {
-            const process = exec(command, { cwd: vscode.workspace.rootPath }, (err, stdout, stderr) => {
+            const process = exec(command, {
+                cwd: vscode.workspace.rootPath,
+                encoding: "utf8",
+            }, (err, stdout, stderr) => {
                 if (err) {
                     cancellationDisposable?.dispose();
                     reject(stderr);
