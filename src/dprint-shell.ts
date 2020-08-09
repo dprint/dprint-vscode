@@ -24,7 +24,7 @@ export async function checkInstalled() {
 export async function getPluginInfos() {
     const stdout = await execShell(`dprint editor-info`, undefined, undefined);
     const editorInfo = JSON.parse(stdout) as EditorInfo;
-    const currentSchemaVersion = 1;
+    const currentSchemaVersion = 2;
 
     // this is done in case the schemaVersion is not an integer for some reason.
     if (editorInfo.schemaVersion !== currentSchemaVersion) {
@@ -38,10 +38,6 @@ export async function getPluginInfos() {
     }
 
     return editorInfo.plugins;
-}
-
-export function formatText(filePath: string, fileText: string, token: vscode.CancellationToken) {
-    return execShell(`dprint stdin-fmt --file-name "${filePath}"`, fileText, token);
 }
 
 function execShell(

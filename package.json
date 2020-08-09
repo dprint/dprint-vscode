@@ -4,7 +4,7 @@
   "description": "Formats code in VSCode using dprint.",
   "author": "David Sherret",
   "publisher": "dprint",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,12 +17,7 @@
     "Formatters"
   ],
   "activationEvents": [
-    "onLanguage:json",
-    "onLanguage:jsonc",
-    "onLanguage:typescript",
-    "onLanguage:javascript",
-    "onLanguage:markdown",
-    "onLanguage:rust"
+    "workspaceContains:**/.dprintrc.json"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -37,7 +32,7 @@
     "vscode:prepublish": "yarn run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "yarn run compile && yarn run lint",
+    "pretest": "yarn run compile",
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {

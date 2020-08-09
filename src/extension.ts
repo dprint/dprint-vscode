@@ -1,12 +1,18 @@
 import * as vscode from "vscode";
-import { checkInstalled, getPluginInfos, PluginInfo, formatText } from "./dprint-shell";
+import { checkInstalled, getPluginInfos, PluginInfo } from "./dprint-shell";
+import { EditorService } from "./EditorService";
 
 export function activate(context: vscode.ExtensionContext) {
     let formattingSubscription: vscode.Disposable | undefined = undefined;
+    let editorService = new EditorService();
     const editProvider: vscode.DocumentFormattingEditProvider = {
         async provideDocumentFormattingEdits(document, options, token) {
             try {
-                const newText = await formatText(document.fileName, document.getText(), token);
+                if (!(await editorService.canFormat(document.fileName))) {
+                    return [];
+                }
+
+                const newText = await editorService.formatText(document.fileName, document.getText(), token);
                 const lastLineNumber = document.lineCount - 1;
                 const replaceRange = new vscode.Range(
                     0,
@@ -31,11 +37,17 @@ export function activate(context: vscode.ExtensionContext) {
         },
     };
 
-    context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", initializePluginInfos));
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(initializePluginInfos));
+    context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitialize));
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitialize));
 
     initializePluginInfos();
-    console.log(`The extension Dprint is now active!`);
+    console.log(`The dprint extension is now active!`);
+
+    async function reInitialize() {
+        initializePluginInfos();
+        editorService.kill();
+        editorService = new EditorService();
+    }
 
     async function initializePluginInfos() {
         const isInstalled = await checkInstalled();
@@ -99,4 +111,4 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // this method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate() { }

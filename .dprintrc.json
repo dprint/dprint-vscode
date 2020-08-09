@@ -1,9 +1,6 @@
 {
   "$schema": "https://dprint.dev/schemas/v0.json",
   "projectType": "openSource",
-  "json": {
-    "indentWidth": 2
-  },
   "includes": ["**/*.{ts,tsx,js,jsx,json}"],
   "excludes": [
     "**/node_modules",
