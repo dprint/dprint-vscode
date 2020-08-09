@@ -16,7 +16,7 @@ export async function checkInstalled() {
         await execShell(`dprint -v`, undefined, undefined);
         return true;
     } catch (err) {
-        console.error(err);
+        console.error("[dprint]:", err);
         return false;
     }
 }

@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext) {
                     location: vscode.ProgressLocation.Notification,
                     title: "Error formatting text",
                 }, (progress) => {
-                    progress.report({ message: err, increment: 100 });
+                    progress.report({ message: err.toString(), increment: 100 });
                     return new Promise(resolve => setTimeout(resolve, 6000));
                 });
                 console.error("[dprint]:", err);
@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitialize));
 
     initializePluginInfos();
-    console.log(`The dprint extension is now active!`);
+    console.log(`[dprint]: Extension active!`);
 
     async function reInitialize() {
         initializePluginInfos();
@@ -74,11 +74,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         function getDocumentSelectors(pluginInfos: PluginInfo[]): vscode.DocumentFilter[] {
             const fileExtensions = getFileExtensions();
+            const fileExtensionsText = Array.from(fileExtensions.values()).join(",");
+            console.log(`[dprint]: Supporting file extensions ${fileExtensionsText}`);
 
-            if (fileExtensions.size > 0) {
+            if (fileExtensionsText.length > 0) {
                 return [{
                     scheme: "file",
-                    pattern: `**/*.{${Array.from(fileExtensions.values()).join(",")}}`,
+                    pattern: `**/*.{${fileExtensionsText}}`,
                 }];
             } else {
                 return [];

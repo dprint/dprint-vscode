@@ -19,7 +19,11 @@ export class EditorService {
     }
 
     kill() {
-        this._process.kill();
+        try {
+            this._process.kill();
+        } catch {
+            // ignore
+        }
     }
 
     canFormat(filePath: string) {
@@ -46,15 +50,16 @@ export class EditorService {
                     return await this.readString();
                 case 2: // error
                     const errorText = await this.readString();
-                    throw new Error(errorText);
+                    throw errorText;
                 default:
-                    throw new Error(`Unknown format text response kind: ${response}`);
+                    throw `Unknown format text response kind: ${response}`;
             }
         });
     }
 
     private startProcessIfNotRunning() {
         if (!this._isRunning) {
+            this.kill();
             this._process = this.createNewProcess();
         }
     }
