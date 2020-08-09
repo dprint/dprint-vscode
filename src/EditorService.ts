@@ -50,12 +50,13 @@ export class EditorService {
                 default:
                     throw new Error(`Unknown format text response kind: ${response}`);
             }
-        })
+        });
     }
 
     private startProcessIfNotRunning() {
-        if (!this._isRunning)
+        if (!this._isRunning) {
             this._process = this.createNewProcess();
+        }
     }
 
     private createNewProcess() {
@@ -72,15 +73,16 @@ export class EditorService {
             }
 
             function getDataAsString() {
-                if (typeof data === "string")
+                if (typeof data === "string") {
                     return data;
+                }
                 try {
                     return textDecoder.decode(data);
                 } catch {
                     return undefined;
                 }
             }
-        })
+        });
 
         // really dislike this api... just allow me to await a result please
         childProcess.stdout.on("data", data => {
