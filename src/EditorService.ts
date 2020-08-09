@@ -66,7 +66,20 @@ export class EditorService {
         });
 
         childProcess.stderr.on("data", data => {
-            console.error("[dprint]:", data);
+            const dataText = getDataAsString();
+            if (dataText != null) {
+                console.error("[dprint]:", dataText);
+            }
+
+            function getDataAsString() {
+                if (typeof data === "string")
+                    return data;
+                try {
+                    return textDecoder.decode(data);
+                } catch {
+                    return undefined;
+                }
+            }
         })
 
         // really dislike this api... just allow me to await a result please
