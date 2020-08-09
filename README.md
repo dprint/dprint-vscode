@@ -14,7 +14,7 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
    ```json
    {
      "editor.defaultFormatter": "dprint.dprint",
-     // or specify per language (recommended)
+     // or specify per language
      "[javascript]": {
        "editor.defaultFormatter": "dprint.dprint"
      },
@@ -68,6 +68,10 @@ Respects formatting on save:
 - No support for custom config locations.
 
 ## Release Notes
+
+### 0.2.0
+
+Formatting is faster due to using a long-running background process for formatting.
 
 ### 0.1.6
 
