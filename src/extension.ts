@@ -1,13 +1,19 @@
 import * as vscode from "vscode";
-import { checkInstalled, getPluginInfos, PluginInfo } from "./dprint-shell";
-import { EditorService } from "./EditorService";
+import { checkInstalled, getEditorInfo, PluginInfo } from "./dprint-shell";
+import { createEditorService, EditorService } from "./editor-service";
 
 export function activate(context: vscode.ExtensionContext) {
     let formattingSubscription: vscode.Disposable | undefined = undefined;
-    let editorService = new EditorService();
+    let editorService: EditorService | undefined = undefined;
+
     const editProvider: vscode.DocumentFormattingEditProvider = {
         async provideDocumentFormattingEdits(document, options, token) {
             try {
+                if (editorService == null) {
+                    console.warn("[dprint]: Editor service not ready on format request.");
+                    return []; // not ready yet
+                }
+
                 if (!(await editorService.canFormat(document.fileName))) {
                     return [];
                 }
@@ -37,39 +43,49 @@ export function activate(context: vscode.ExtensionContext) {
         },
     };
 
-    context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitialize));
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitialize));
+    context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitializeEditorService));
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
-    initializePluginInfos();
-    console.log(`[dprint]: Extension active!`);
+    // reinitialize on .dprintrc.json changes
+    const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/.dprintrc.json");
+    context.subscriptions.push(fileSystemWatcher);
+    context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
+    context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
+    context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeEditorService));
 
-    async function reInitialize() {
-        initializePluginInfos();
-        editorService.kill();
-        editorService = new EditorService();
-    }
+    return reInitializeEditorService().then(() => {
+        console.log(`[dprint]: Extension active!`);
+    });
 
-    async function initializePluginInfos() {
+    async function reInitializeEditorService() {
+        console.log("[dprint]: Initializing.")
+        setEditorService(undefined);
+        setFormattingSubscription(undefined);
+
         const isInstalled = await checkInstalled();
         if (!isInstalled) {
             vscode.window.showErrorMessage(
                 "Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install).",
             );
-            return;
         }
 
         try {
-            clearFormattingSubscription();
-            const pluginInfos = await getPluginInfos();
-            const documentSelectors = getDocumentSelectors(pluginInfos);
-            formattingSubscription = vscode.languages.registerDocumentFormattingEditProvider(
+            const editorInfo = await getEditorInfo();
+            const documentSelectors = getDocumentSelectors(editorInfo.plugins);
+            setEditorService(createEditorService(editorInfo.schemaVersion));
+            setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
                 documentSelectors,
                 editProvider,
-            );
-            context.subscriptions.push(formattingSubscription);
+            ));
+
+            console.log("[dprint]: Initialized.")
         } catch (err) {
-            vscode.window.showErrorMessage("Error initializing dprint.", err);
-            console.error("[dprint]:", err);
+            vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
+            console.error("[dprint]: Error initializing. ", err);
+
+            // clear
+            setEditorService(undefined);
+            setFormattingSubscription(undefined);
         }
 
         function getDocumentSelectors(pluginInfos: PluginInfo[]): vscode.DocumentFilter[] {
@@ -98,17 +114,31 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    function clearFormattingSubscription() {
-        if (formattingSubscription == null) {
-            return;
-        }
-        const subscriptionIndex = context.subscriptions.indexOf(formattingSubscription);
-        if (subscriptionIndex >= 0) {
-            context.subscriptions.splice(subscriptionIndex, 1);
+    async function setEditorService(newService: EditorService | undefined) {
+        editorService?.kill();
+        editorService = newService;
+    }
+
+    async function setFormattingSubscription(newSubscription: vscode.Disposable | undefined) {
+        clearFormattingSubscription();
+
+        formattingSubscription = newSubscription;
+        if (newSubscription != null) {
+            context.subscriptions.push(newSubscription);
         }
 
-        formattingSubscription.dispose();
-        formattingSubscription = undefined;
+        function clearFormattingSubscription() {
+            if (formattingSubscription == null) {
+                return;
+            }
+            const subscriptionIndex = context.subscriptions.indexOf(formattingSubscription);
+            if (subscriptionIndex >= 0) {
+                context.subscriptions.splice(subscriptionIndex, 1);
+            }
+
+            formattingSubscription.dispose();
+            formattingSubscription = undefined;
+        }
     }
 }
 

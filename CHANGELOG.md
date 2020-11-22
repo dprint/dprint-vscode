@@ -1,5 +1,10 @@
 # Change Log
 
+### 0.3.0
+
+- Update to work with dprint 0.10.0 (will be backwards compatible with 0.9.0 for now).
+- Plugin now re-initializes when the .dprintrc.json file changes.
+
 ### 0.2.1
 
 Fix format error message displaying (was `[object Object]` or whatever instead of a string).

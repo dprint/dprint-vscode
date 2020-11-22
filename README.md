@@ -11,7 +11,7 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
 
 1. Run `dprint init` in the root directory of your repository to create a `dprint.config.json` file.
 2. Set the default formatter in your vscode settings:
-   ```json
+   ```jsonc
    {
      "editor.defaultFormatter": "dprint.dprint",
      // or specify per language
@@ -68,6 +68,11 @@ Respects formatting on save:
 - No support for custom config locations.
 
 ## Release Notes
+
+### 0.3.0
+
+- Update to work with dprint 0.10.0 (will be backwards compatible with 0.9.0 for now).
+- Plugin now re-initializes when the .dprintrc.json file changes.
 
 ### 0.2.0
 

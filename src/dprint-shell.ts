@@ -21,23 +21,23 @@ export async function checkInstalled() {
     }
 }
 
-export async function getPluginInfos() {
+export async function getEditorInfo() {
     const stdout = await execShell(`dprint editor-info`, undefined, undefined);
-    const editorInfo = JSON.parse(stdout) as EditorInfo;
-    const currentSchemaVersion = 2;
+    const editorInfo = parseEditorInfo();
 
-    // this is done in case the schemaVersion is not an integer for some reason.
-    if (editorInfo.schemaVersion !== currentSchemaVersion) {
-        if (editorInfo.schemaVersion > currentSchemaVersion) {
-            throw new Error(
-                "Please upgrade your editor extension to be compatible with the installed version of dprint.",
-            );
-        } else {
-            throw new Error("Your installed version of dprint is out of date. Please update it.");
-        }
+    if (!(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number" || isNaN(editorInfo.schemaVersion)) {
+        throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
     }
 
-    return editorInfo.plugins;
+    return editorInfo;
+
+    function parseEditorInfo() {
+        try {
+            return JSON.parse(stdout) as EditorInfo;
+        } catch (err) {
+            throw new Error(`Error parsing editor info. Output was: ${stdout}\n\nError: ${err}`);
+        }
+    }
 }
 
 function execShell(
