@@ -25,7 +25,10 @@ export async function getEditorInfo() {
     const stdout = await execShell(`dprint editor-info`, undefined, undefined);
     const editorInfo = parseEditorInfo();
 
-    if (!(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number" || isNaN(editorInfo.schemaVersion)) {
+    if (
+        !(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number"
+        || isNaN(editorInfo.schemaVersion)
+    ) {
         throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
     }
 

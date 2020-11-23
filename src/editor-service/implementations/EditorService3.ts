@@ -60,7 +60,7 @@ export class EditorService3 implements EditorService {
         }
         for (let i = 0; i < 4; i++) {
             if (buf[i] !== 255) {
-                throw new Error(`Expected success byte, but found: [${buf.join(", ")}]`);
+                throw new Error(`Expected success bytes, but found: [${buf.join(", ")}]`);
             }
         }
     }

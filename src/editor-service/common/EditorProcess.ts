@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { spawn, ChildProcessByStdio } from "child_process";
-import { Writable, Readable } from "stream";
-import { TextEncoder, TextDecoder } from "util";
+import { ChildProcessByStdio, spawn } from "child_process";
+import { Readable, Writable } from "stream";
+import { TextDecoder, TextEncoder } from "util";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

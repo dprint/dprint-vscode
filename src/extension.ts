@@ -58,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     async function reInitializeEditorService() {
-        console.log("[dprint]: Initializing.")
+        console.log("[dprint]: Initializing.");
         setEditorService(undefined);
         setFormattingSubscription(undefined);
 
@@ -78,7 +78,7 @@ export function activate(context: vscode.ExtensionContext) {
                 editProvider,
             ));
 
-            console.log("[dprint]: Initialized.")
+            console.log("[dprint]: Initialized.");
         } catch (err) {
             vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
             console.error("[dprint]: Error initializing. ", err);
