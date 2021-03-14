@@ -4,7 +4,7 @@
   "description": "Formats code in VSCode using dprint.",
   "author": "David Sherret",
   "publisher": "dprint",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -26,7 +26,23 @@
         "command": "dprint.reset",
         "title": "Dprint: Reset"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "dprint",
+      "properties": {
+        "dprint.path": {
+          "type": ["string", "null"],
+          "default": null,
+          "markdownDescription": "Specify a custom path for the dprint executable other than what's found on the path.",
+          "scope": "window",
+          "examples": [
+            "/usr/bin/dprint",
+            "C:\\some-dir\\dprint.exe"
+          ]
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "yarn run compile",

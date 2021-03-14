@@ -9,7 +9,7 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
 
 ## Setup
 
-1. Run `dprint init` in the root directory of your repository to create a `dprint.config.json` file.
+1. Run `dprint init` in the root directory of your repository to create a dprint configuration file.
 2. Set the default formatter in your vscode settings:
    ```jsonc
    {
@@ -59,7 +59,11 @@ Respects formatting on save:
   // or per language
   "[typescript]": {
     "editor.formatOnSave": true
-  }
+  },
+  // By default it will use `dprint` found on the path,
+  // but use this when you want to specify a custom location.
+  // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
+  "dprint.path": "/home/david/otherPath/dprint"
 }
 ```
 
@@ -68,6 +72,10 @@ Respects formatting on save:
 - No support for custom config locations.
 
 ## Release Notes
+
+### 0.4.0
+
+- Added `dprint.path` setting.
 
 ### 0.3.0
 

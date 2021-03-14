@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.4.0
+
+- Add "dprint.path" setting.
+
 ### 0.3.0
 
 - Update to work with dprint 0.10.0 (will be backwards compatible with 0.9.0 for now).

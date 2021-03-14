@@ -1,7 +1,7 @@
-import * as vscode from "vscode";
-import { ChildProcessByStdio, spawn } from "child_process";
+import { ChildProcessByStdio } from "child_process";
 import { Readable, Writable } from "stream";
 import { TextDecoder, TextEncoder } from "util";
+import { DprintExecutable } from "../../executable/DprintExecutable";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -13,7 +13,7 @@ export class EditorProcess {
     private _onExitHandlers: (() => void)[] = [];
     private _isRunning = false;
 
-    constructor() {
+    constructor(private readonly dprintExecutable: DprintExecutable) {
         this._process = this.createNewProcess();
     }
 
@@ -37,11 +37,7 @@ export class EditorProcess {
     }
 
     private createNewProcess() {
-        const currentProcessId = process.pid;
-        const childProcess = spawn("dprint", ["editor-service", "--parent-pid", currentProcessId.toString()], {
-            stdio: ["pipe", "pipe", "pipe"],
-            cwd: vscode.workspace.rootPath,
-        });
+        const childProcess = this.dprintExecutable.spawnEditorService();
 
         childProcess.stderr.on("data", data => {
             const dataText = getDataAsString();
@@ -166,7 +162,7 @@ export class EditorProcess {
     }
 
     writeBuffer(buf: Buffer) {
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             this._process.stdin.write(buf, err => {
                 if (err) {
                     reject(err);

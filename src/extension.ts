@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { checkInstalled, getEditorInfo, PluginInfo } from "./dprint-shell";
+import { DprintExecutable, PluginInfo } from "./executable";
 import { createEditorService, EditorService } from "./editor-service";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -53,6 +53,13 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
     context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeEditorService));
 
+    // reinitialize when the vscode configuration changes
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
+        if (evt.affectsConfiguration("dprint")) {
+            reInitializeEditorService();
+        }
+    }));
+
     return reInitializeEditorService().then(() => {
         console.log(`[dprint]: Extension active!`);
     });
@@ -62,17 +69,20 @@ export function activate(context: vscode.ExtensionContext) {
         setEditorService(undefined);
         setFormattingSubscription(undefined);
 
-        const isInstalled = await checkInstalled();
+        const dprintExe = getDprintExecutable();
+        const isInstalled = await dprintExe.checkInstalled();
         if (!isInstalled) {
             vscode.window.showErrorMessage(
-                "Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install).",
+                `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
+                    + `or specify a "dprint.path" setting for this vscode extension.`,
             );
+            return;
         }
 
         try {
-            const editorInfo = await getEditorInfo();
+            const editorInfo = await dprintExe.getEditorInfo();
             const documentSelectors = getDocumentSelectors(editorInfo.plugins);
-            setEditorService(createEditorService(editorInfo.schemaVersion));
+            setEditorService(createEditorService(editorInfo.schemaVersion, dprintExe));
             setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
                 documentSelectors,
                 editProvider,
@@ -139,6 +149,14 @@ export function activate(context: vscode.ExtensionContext) {
             formattingSubscription.dispose();
             formattingSubscription = undefined;
         }
+    }
+
+    function getDprintExecutable() {
+        return new DprintExecutable({
+            cmdPath: vscode.workspace.getConfiguration("dprint").get("path"),
+            // todo: support multiple workspace folders
+            workspaceFolder: vscode.workspace.rootPath!,
+        });
     }
 }
 
