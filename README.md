@@ -41,7 +41,7 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
 
 Formats code in the editor using [dprint](https://dprint.dev/).
 
-Plugins are currently resolved based on the `.dprintrc.json` in the current workspace folder or `config` sub directory.
+Plugins are currently resolved based on the dprint configuration file in the current workspace folder.
 
 ## Requirements
 
@@ -73,6 +73,10 @@ Respects formatting on save:
 
 ## Release Notes
 
+### 0.5.0
+
+- Support dprint 0.12
+
 ### 0.4.0
 
 - Added `dprint.path` setting.
@@ -80,7 +84,7 @@ Respects formatting on save:
 ### 0.3.0
 
 - Update to work with dprint 0.10.0 (will be backwards compatible with 0.9.0 for now).
-- Plugin now re-initializes when the .dprintrc.json file changes.
+- Plugin now re-initializes when the configuration file changes.
 
 ### 0.2.0
 

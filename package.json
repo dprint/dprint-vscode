@@ -4,7 +4,7 @@
   "description": "Formats code in VSCode using dprint.",
   "author": "David Sherret",
   "publisher": "dprint",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     "Formatters"
   ],
   "activationEvents": [
-    "workspaceContains:**/.dprintrc.json"
+    "workspaceContains:**/{dprint,.dprintrc}.json"
   ],
   "main": "./out/extension.js",
   "contributes": {

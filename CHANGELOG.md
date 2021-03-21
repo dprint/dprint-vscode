@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.5.0
+
+- Support dprint 0.12
+
 ### 0.4.0
 
 - Add "dprint.path" setting.
@@ -7,7 +11,7 @@
 ### 0.3.0
 
 - Update to work with dprint 0.10.0 (will be backwards compatible with 0.9.0 for now).
-- Plugin now re-initializes when the .dprintrc.json file changes.
+- Plugin now re-initializes when the configuration file changes.
 
 ### 0.2.1
 

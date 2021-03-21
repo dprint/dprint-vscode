@@ -46,8 +46,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitializeEditorService));
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
-    // reinitialize on .dprintrc.json changes
-    const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/.dprintrc.json");
+    // reinitialize on configuration file changes
+    const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/{.dprintrc,dprint}.json");
     context.subscriptions.push(fileSystemWatcher);
     context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
     context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
