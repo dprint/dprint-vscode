@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { DprintExecutable, PluginInfo } from "./executable";
 import { createEditorService, EditorService } from "./editor-service";
+import { DprintExecutable, PluginInfo } from "./executable";
 
 export function activate(context: vscode.ExtensionContext) {
     let formattingSubscription: vscode.Disposable | undefined = undefined;
@@ -47,7 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
     // reinitialize on configuration file changes
-    const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/{.dprintrc,dprint}.json");
+    const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/{dprint,.dprint,.dprintrc}.json");
     context.subscriptions.push(fileSystemWatcher);
     context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
     context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));

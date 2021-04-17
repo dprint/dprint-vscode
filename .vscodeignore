@@ -8,5 +8,4 @@ vsc-extension-quickstart.md
 **/.eslintrc.json
 **/*.map
 **/*.ts
-.dprintrc.json
 dprint.json

@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.6.0
+
+- Support dprint 0.13
+
 ### 0.5.0
 
 - Support dprint 0.12

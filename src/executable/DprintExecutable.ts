@@ -1,5 +1,5 @@
-import * as vscode from "vscode";
 import { exec, spawn } from "child_process";
+import * as vscode from "vscode";
 
 interface EditorInfo {
     schemaVersion: number;
