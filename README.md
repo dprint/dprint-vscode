@@ -75,6 +75,11 @@ Respects formatting on save:
 
 ## Release Notes
 
+### 0.7.0
+
+- Add logging to "output" tab in vscode (under "dprint").
+- Add `"dprint.verbose"` config for outputting verbose logging.
+
 ### 0.6.0
 
 - Support dprint 0.13
