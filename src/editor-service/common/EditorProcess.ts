@@ -2,6 +2,7 @@ import { ChildProcessByStdio } from "child_process";
 import { Readable, Writable } from "stream";
 import { TextDecoder, TextEncoder } from "util";
 import { DprintExecutable } from "../../executable/DprintExecutable";
+import { Logger } from "../../logger";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -13,7 +14,7 @@ export class EditorProcess {
   private _onExitHandlers: (() => void)[] = [];
   private _isRunning = false;
 
-  constructor(private readonly dprintExecutable: DprintExecutable) {
+  constructor(private readonly logger: Logger, private readonly dprintExecutable: DprintExecutable) {
     this._process = this.createNewProcess();
   }
 
@@ -42,7 +43,7 @@ export class EditorProcess {
     childProcess.stderr.on("data", data => {
       const dataText = getDataAsString();
       if (dataText != null) {
-        console.error("[dprint-editor-service]:", dataText);
+        this.logger.log(dataText.trim());
       }
 
       function getDataAsString() {
@@ -73,7 +74,7 @@ export class EditorProcess {
         try {
           handler();
         } catch (err) {
-          console.error("[dprint-vscode]: Error in exit handler.", err);
+          this.logger.logError("Error in exit handler.", err);
         }
       }
     });

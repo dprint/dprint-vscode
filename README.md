@@ -63,7 +63,9 @@ Respects formatting on save:
   // By default it will use `dprint` found on the path,
   // but use this when you want to specify a custom location.
   // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
-  "dprint.path": "/home/david/otherPath/dprint"
+  "dprint.path": "/home/david/otherPath/dprint",
+  // Change this to `true` to get verbose logging
+  "dprint.verbose": false
 }
 ```
 

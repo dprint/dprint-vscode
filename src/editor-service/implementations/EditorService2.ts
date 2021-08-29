@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { DprintExecutable } from "../../executable";
+import { Logger } from "../../logger";
 import { EditorProcess, SerialExecutor } from "../common";
 import { EditorService } from "../EditorService";
 
@@ -7,8 +8,8 @@ export class EditorService2 implements EditorService {
   private _process: EditorProcess;
   private _serialExecutor = new SerialExecutor();
 
-  constructor(dprintExecutable: DprintExecutable) {
-    this._process = new EditorProcess(dprintExecutable);
+  constructor(logger: Logger, dprintExecutable: DprintExecutable) {
+    this._process = new EditorProcess(logger, dprintExecutable);
     this._process.onExit(() => this._serialExecutor.clear());
   }
 

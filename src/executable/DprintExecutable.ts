@@ -1,5 +1,6 @@
 import { exec, spawn } from "child_process";
 import * as vscode from "vscode";
+import { Logger } from "../logger";
 
 interface EditorInfo {
   schemaVersion: number;
@@ -13,31 +14,36 @@ export interface PluginInfo {
 
 export interface DprintExecutableOptions {
   /** The path to the dprint executable. */
-  cmdPath?: string;
+  cmdPath: string | undefined;
   workspaceFolder: string;
+  debug: boolean;
 }
 
 export class DprintExecutable {
-  private readonly _cmdPath: string;
-  private readonly _workspaceFolder: string;
+  readonly #cmdPath: string;
+  readonly #workspaceFolder: string;
+  readonly #debug: boolean;
+  readonly #logger: Logger;
 
-  constructor(options: DprintExecutableOptions) {
-    this._cmdPath = options.cmdPath ?? "dprint";
-    this._workspaceFolder = options.workspaceFolder;
+  constructor(logger: Logger, options: DprintExecutableOptions) {
+    this.#logger = logger;
+    this.#cmdPath = options.cmdPath ?? "dprint";
+    this.#workspaceFolder = options.workspaceFolder;
+    this.#debug = options.debug;
   }
 
   async checkInstalled() {
     try {
-      await this.execShell(`${this._cmdPath} -v`, undefined, undefined);
+      await this.execShell(`${this.#cmdPath} -v`, undefined, undefined);
       return true;
-    } catch (err) {
-      console.error("[dprint]:", err);
+    } catch (err: any) {
+      this.#logger.logError(err.toString());
       return false;
     }
   }
 
   async getEditorInfo() {
-    const stdout = await this.execShell(`${this._cmdPath} editor-info`, undefined, undefined);
+    const stdout = await this.execShell(`${this.#cmdPath} editor-info`, undefined, undefined);
     const editorInfo = parseEditorInfo();
 
     if (
@@ -60,9 +66,14 @@ export class DprintExecutable {
 
   spawnEditorService() {
     const currentProcessId = process.pid;
-    return spawn(this._cmdPath, ["editor-service", "--parent-pid", currentProcessId.toString()], {
+    const args = ["editor-service", "--parent-pid", currentProcessId.toString()];
+    if (this.#debug) {
+      args.push("--verbose");
+    }
+
+    return spawn(this.#cmdPath, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: this._workspaceFolder,
+      cwd: this.#workspaceFolder,
       // Set to true, to ensure this resolves properly on windows.
       // See https://github.com/denoland/vscode_deno/issues/361
       shell: true,
@@ -78,7 +89,7 @@ export class DprintExecutable {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
         const process = exec(command, {
-          cwd: this._workspaceFolder,
+          cwd: this.#workspaceFolder,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
           if (err) {

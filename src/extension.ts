@@ -1,21 +1,26 @@
 import * as vscode from "vscode";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, PluginInfo } from "./executable";
+import { Logger } from "./logger";
 
 let editorService: EditorService | undefined = undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   let formattingSubscription: vscode.Disposable | undefined = undefined;
 
+  const logger = new Logger();
+  context.subscriptions.push(logger);
+
   const editProvider: vscode.DocumentFormattingEditProvider = {
     async provideDocumentFormattingEdits(document, options, token) {
       try {
         if (editorService == null) {
-          console.warn("[dprint]: Editor service not ready on format request.");
+          logger.logWarn("Editor service not ready on format request.");
           return []; // not ready yet
         }
 
         if (!(await editorService.canFormat(document.fileName))) {
+          logger.logVerbose("File not matched:", document.fileName);
           return [];
         }
 
@@ -27,7 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
           lastLineNumber,
           document.lineAt(lastLineNumber).text.length,
         );
-        return [vscode.TextEdit.replace(replaceRange, newText)];
+        const result = [vscode.TextEdit.replace(replaceRange, newText)];
+        logger.logVerbose("Formatted:", document.fileName);
+        return result;
       } catch (err) {
         // It seems there's no way to auto-dismiss notifications,
         // so this uses the Progress API to achieve that.
@@ -38,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
           progress.report({ message: err.toString(), increment: 100 });
           return new Promise(resolve => setTimeout(resolve, 6000));
         });
-        console.error("[dprint]:", err);
+        logger.logError("Error formatting text.", err);
         return [];
       }
     },
@@ -58,15 +65,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
     if (evt.affectsConfiguration("dprint")) {
       reInitializeEditorService();
+      logger.setVerbose(getConfig().verbose);
     }
   }));
 
+  // update state from current config
+  logger.setVerbose(getConfig().verbose);
+
   return reInitializeEditorService().then(() => {
-    console.log(`[dprint]: Extension active!`);
+    logger.logInfo(`Extension active!`);
   });
 
   async function reInitializeEditorService() {
-    console.log("[dprint]: Initializing.");
+    logger.logInfo("Initializing.");
     setEditorService(undefined);
     setFormattingSubscription(undefined);
 
@@ -83,16 +94,16 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const editorInfo = await dprintExe.getEditorInfo();
       const documentSelectors = getDocumentSelectors(editorInfo.plugins);
-      setEditorService(createEditorService(editorInfo.schemaVersion, dprintExe));
+      setEditorService(createEditorService(editorInfo.schemaVersion, logger, dprintExe));
       setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
         documentSelectors,
         editProvider,
       ));
 
-      console.log("[dprint]: Initialized.");
+      logger.logInfo("Initialized.");
     } catch (err) {
       vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
-      console.error("[dprint]: Error initializing. ", err);
+      logger.logErrorAndFocus("Error initializing.", err);
 
       // clear
       setEditorService(undefined);
@@ -102,7 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
     function getDocumentSelectors(pluginInfos: PluginInfo[]): vscode.DocumentFilter[] {
       const fileExtensions = getFileExtensions();
       const fileExtensionsText = Array.from(fileExtensions.values()).join(",");
-      console.log(`[dprint]: Supporting file extensions ${fileExtensionsText}`);
+      logger.logInfo(`Supporting file extensions ${fileExtensionsText}`);
 
       if (fileExtensionsText.length > 0) {
         return [{
@@ -148,11 +159,31 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   function getDprintExecutable() {
-    return new DprintExecutable({
-      cmdPath: vscode.workspace.getConfiguration("dprint").get("path"),
+    const config = getConfig();
+    return new DprintExecutable(logger, {
+      cmdPath: config.path,
       // todo: support multiple workspace folders
       workspaceFolder: vscode.workspace.rootPath!,
+      debug: config.verbose,
     });
+  }
+
+  function getConfig() {
+    const config = vscode.workspace.getConfiguration("dprint");
+    return {
+      path: getPath(),
+      verbose: getDebug(),
+    };
+
+    function getPath() {
+      const path = config.get("path");
+      return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
+    }
+
+    function getDebug() {
+      const debug = config.get("debug");
+      return debug === true;
+    }
   }
 }
 
