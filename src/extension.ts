@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext) {
         const result = [vscode.TextEdit.replace(replaceRange, newText)];
         logger.logVerbose("Formatted:", document.fileName);
         return result;
-      } catch (err) {
+      } catch (err: any) {
         // It seems there's no way to auto-dismiss notifications,
         // so this uses the Progress API to achieve that.
         vscode.window.withProgress({
