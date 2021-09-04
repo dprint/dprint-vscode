@@ -1,5 +1,10 @@
 # Change Log
 
+### 0.8.0
+
+- Support for dprint 0.17
+- Get config file schema from plugins.
+
 ### 0.7.0
 
 - Add logging to "output" tab in vscode (under "dprint").

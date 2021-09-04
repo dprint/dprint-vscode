@@ -2,6 +2,8 @@
 
 Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pluggable and configurable code formatting platform.
 
+Requires dprint 0.17 or above.
+
 ## Install
 
 1. Install [dprint's CLI](https://dprint.dev/install/)
@@ -28,6 +30,9 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
        "editor.defaultFormatter": "dprint.dprint"
      },
      "[markdown]": {
+       "editor.defaultFormatter": "dprint.dprint"
+     },
+     "[toml]": {
        "editor.defaultFormatter": "dprint.dprint"
      },
      "[rust]": {
@@ -74,6 +79,11 @@ Respects formatting on save:
 - No support for custom config locations.
 
 ## Release Notes
+
+### 0.8.0
+
+- Support for dprint 0.17
+- Get config file schema from plugins.
 
 ### 0.7.0
 
