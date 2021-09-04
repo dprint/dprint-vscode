@@ -84,10 +84,6 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
       description: "Schema for a dprint configuration file.",
       type: "object",
       properties: {
-        $schema: {
-          description: "The JSON schema reference.",
-          type: "string",
-        },
         incremental: {
           description:
             "Whether to format files only when they change. Setting this to `true` will dramatically speed up formatting.",
