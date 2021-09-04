@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, PluginInfo } from "./executable";
 import { Logger } from "./logger";
@@ -9,7 +10,11 @@ export function activate(context: vscode.ExtensionContext) {
   let formattingSubscription: vscode.Disposable | undefined = undefined;
 
   const logger = new Logger();
+  const configSchemaProvider = new ConfigJsonSchemaProvider(logger);
   context.subscriptions.push(logger);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
+  );
 
   const editProvider: vscode.DocumentFormattingEditProvider = {
     async provideDocumentFormattingEdits(document, options, token) {
@@ -77,7 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   async function reInitializeEditorService() {
-    logger.logInfo("Initializing.");
+    logger.logInfo("Initializing...");
     setEditorService(undefined);
     setFormattingSubscription(undefined);
 
@@ -93,6 +98,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     try {
       const editorInfo = await dprintExe.getEditorInfo();
+      configSchemaProvider.setEditorInfo(editorInfo);
       const documentSelectors = getDocumentSelectors(editorInfo.plugins);
       setEditorService(createEditorService(editorInfo.schemaVersion, logger, dprintExe));
       setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
@@ -100,7 +106,7 @@ export function activate(context: vscode.ExtensionContext) {
         editProvider,
       ));
 
-      logger.logInfo("Initialized.");
+      logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion}`);
     } catch (err) {
       vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
       logger.logErrorAndFocus("Error initializing.", err);

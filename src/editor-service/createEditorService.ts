@@ -1,25 +1,26 @@
 import { DprintExecutable } from "../executable";
 import { Logger } from "../logger";
 import { EditorService } from "./EditorService";
-import { EditorService2, EditorService3 } from "./implementations";
+import { EditorService4 as EditorService4 } from "./implementations";
 
 export function createEditorService(
   schemaVersion: number,
   logger: Logger,
   dprintExecutable: DprintExecutable,
 ): EditorService {
+  const currentSchemaVersion = 4;
   switch (schemaVersion) {
-    case 2:
-      return new EditorService2(logger, dprintExecutable);
-    case 3:
-      return new EditorService3(logger, dprintExecutable);
+    case currentSchemaVersion:
+      return new EditorService4(logger, dprintExecutable);
   }
 
-  if (schemaVersion > 2) {
+  if (schemaVersion > currentSchemaVersion) {
     throw new Error(
       "Please upgrade your editor extension to be compatible with the installed version of dprint.",
     );
   } else {
-    throw new Error("Your installed version of dprint is out of date. Please update it.");
+    throw new Error(
+      "Your installed version of dprint is out of date. Apologies, but please update to the latest version.",
+    );
   }
 }

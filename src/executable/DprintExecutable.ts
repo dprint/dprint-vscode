@@ -2,14 +2,21 @@ import { exec, spawn } from "child_process";
 import * as vscode from "vscode";
 import { Logger } from "../logger";
 
-interface EditorInfo {
+export interface EditorInfo {
   schemaVersion: number;
+  cliVersion: string;
+  configSchemaUrl: string;
   plugins: PluginInfo[];
 }
 
 export interface PluginInfo {
   name: string;
+  version: string;
+  configKey: string;
   fileExtensions: string[];
+  fileNames: string[];
+  configSchemaUrl: string | undefined;
+  helpUrl: string;
 }
 
 export interface DprintExecutableOptions {

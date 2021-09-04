@@ -4,7 +4,7 @@ import { Logger } from "../../logger";
 import { EditorProcess, SerialExecutor } from "../common";
 import { EditorService } from "../EditorService";
 
-export class EditorService3 implements EditorService {
+export class EditorService4 implements EditorService {
   private _process: EditorProcess;
   private _serialExecutor = new SerialExecutor();
 
