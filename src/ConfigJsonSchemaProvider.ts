@@ -7,15 +7,16 @@ import { Logger } from "./logger";
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
   #cache: Map<string, string> = new Map();
   #editorInfo: EditorInfo | undefined;
-  #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config-json.json");
+  #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
 
-  onDidChange: vscode.Event<vscode.Uri>;
+  get onDidChange() {
+    return this.#onDidChangeEmitter.event;
+  }
 
   constructor(logger: Logger) {
     this.#logger = logger;
-    this.onDidChange = this.#onDidChangeEmitter.event;
   }
 
   static scheme = "dprint";
@@ -30,7 +31,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     this.#onDidChangeEmitter.fire(this.#jsonSchemaUri);
   }
 
-  provideTextDocumentContent(uri: vscode.Uri, _token: vscode.CancellationToken): vscode.ProviderResult<string> {
+  async provideTextDocumentContent(uri: vscode.Uri, _token: vscode.CancellationToken) {
     if (uri.toString() !== this.#jsonSchemaUri.toString()) {
       this.#logger.logWarn("Unknown uri:", uri.toString());
       return undefined;
@@ -42,7 +43,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
       return this.#getDefaultSchemaText();
     }
 
-    return (async () => {
+    try {
       this.#logger.logVerbose("Fetching JSON schema...");
       const configSchema = await this.#getUrl(editorInfo.configSchemaUrl);
       configSchema["$id"] = this.#jsonSchemaUri.toString();
@@ -55,11 +56,11 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
         }
       }
 
-      return JSON.stringify(configSchema, undefined, 2);
-    })().catch(err => {
+      return formatAsJson(configSchema);
+    } catch (err) {
       this.#logger.logError("Error downloading config schema. Defaulting to built in schema.", err);
       return this.#getDefaultSchemaText();
-    });
+    }
   }
 
   async #getUrl(url: string) {
@@ -77,10 +78,10 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
   }
 
   #getDefaultSchemaText() {
-    return JSON.stringify({
+    return formatAsJson({
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: this.#jsonSchemaUri.toString(),
-      title: "dprint Configuration File",
+      title: "dprint configuration file",
       description: "Schema for a dprint configuration file.",
       type: "object",
       properties: {
@@ -164,4 +165,8 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
       },
     });
   }
+}
+
+function formatAsJson(data: object) {
+  return JSON.stringify(data, undefined, 2).replace(/\r?\n/, "\n");
 }

@@ -59,7 +59,7 @@
     "jsonValidation": [
       {
         "fileMatch": "**/{dprint,.dprint,.dprintrc}.json",
-        "url": "dprint://schemas/config-json.json"
+        "url": "dprint://schemas/config.json"
       }
     ]
   },
