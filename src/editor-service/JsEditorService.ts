@@ -15,6 +15,7 @@ export class JsFormatter implements EditorService {
     urls: string[],
     config: Config,
   ): Promise<JsFormatter> {
+    logger.logInfo("initializing plugins", urls)
     const buffers = await Promise.all(
       urls.map((u) => fetch(u).then((resp: any) => resp.arrayBuffer())),
     );
@@ -24,7 +25,6 @@ export class JsFormatter implements EditorService {
       const pluginConfig = (config as any)[configKey] as Record<string, unknown> | undefined ?? {};
       formatter.setConfig(config, pluginConfig);
     });
-    logger.logInfo("got formatters", formatters);
     return new JsFormatter(logger, formatters);
   }
 
