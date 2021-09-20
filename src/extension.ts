@@ -1,7 +1,7 @@
 import { PluginInfo } from "@dprint/formatter";
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { EditorService } from "./editor-service";
+import { EditorService } from "./editor-service/EditorService";
 import { readWorkspaceConfig } from "./editor-service/configuration";
 import { JsFormatter } from "./editor-service/JsEditorService";
 import { Logger } from "./logger";
