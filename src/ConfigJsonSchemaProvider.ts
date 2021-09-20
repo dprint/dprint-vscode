@@ -1,12 +1,12 @@
 import axios from "axios";
 import * as vscode from "vscode";
-import { EditorInfo } from "./executable";
+import { Config } from "./editor-service/configuration";
 import { Logger } from "./logger";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
   #cache: Map<string, string> = new Map();
-  #editorInfo: EditorInfo | undefined;
+  #workspaceConfig: Config | undefined;
   #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
@@ -25,8 +25,8 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     this.#onDidChangeEmitter.dispose();
   }
 
-  setEditorInfo(info: EditorInfo) {
-    this.#editorInfo = info;
+  setEditorInfo(info: Config) {
+    this.#workspaceConfig = info;
     // always refresh to reduce complexity (it's cheap to refresh)
     this.#onDidChangeEmitter.fire(this.#jsonSchemaUri);
   }
@@ -37,24 +37,25 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
       return undefined;
     }
 
-    const editorInfo = this.#editorInfo;
-    if (editorInfo == null) {
+    const config = this.#workspaceConfig;
+    if (config == null) {
       // provide a default schema while it hasn't loaded
       return this.#getDefaultSchemaText();
     }
 
     try {
       this.#logger.logVerbose("Fetching JSON schema...");
-      const configSchema = await this.#getUrl(editorInfo.configSchemaUrl);
+      const configSchema = await this.#getUrl(config["$schema"]);
       configSchema["$id"] = this.#jsonSchemaUri.toString();
 
-      for (const plugin of editorInfo.plugins) {
-        if (plugin.configSchemaUrl != null) {
-          configSchema.properties[plugin.configKey] = {
-            "$ref": plugin.configSchemaUrl,
-          };
-        }
-      }
+      // TODO: implement
+      // for (const plugin of config.plugins) {
+      //   if (plugin.configSchemaUrl != null) {
+      //     configSchema.properties[plugin.configKey] = {
+      //       "$ref": plugin.configSchemaUrl,
+      //     };
+      //   }
+      // }
 
       return formatAsJson(configSchema);
     } catch (err) {

@@ -1,7 +1,9 @@
+import { PluginInfo } from "@dprint/formatter";
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { createEditorService, EditorService } from "./editor-service";
-import { DprintExecutable, PluginInfo } from "./executable";
+import { EditorService } from "./editor-service";
+import { readWorkspaceConfig } from "./editor-service/configuration";
+import { JsFormatter } from "./editor-service/JsEditorService";
 import { Logger } from "./logger";
 
 let editorService: EditorService | undefined = undefined;
@@ -86,27 +88,18 @@ export function activate(context: vscode.ExtensionContext) {
     setEditorService(undefined);
     setFormattingSubscription(undefined);
 
-    const dprintExe = getDprintExecutable();
-    const isInstalled = await dprintExe.checkInstalled();
-    if (!isInstalled) {
-      vscode.window.showErrorMessage(
-        `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
-          + `or specify a "dprint.path" setting for this vscode extension.`,
-      );
-      return;
-    }
-
     try {
-      const editorInfo = await dprintExe.getEditorInfo();
-      configSchemaProvider.setEditorInfo(editorInfo);
-      const documentSelectors = getDocumentSelectors(editorInfo.plugins);
-      setEditorService(createEditorService(editorInfo.schemaVersion, logger, dprintExe));
+      const workspaceConfig = await readWorkspaceConfig()
+      configSchemaProvider.setEditorInfo(workspaceConfig);
+      const editorService = await JsFormatter.fromPluginUrls(logger, workspaceConfig.plugins, workspaceConfig)
+      const documentSelectors = getDocumentSelectors(editorService.plugInfo());
+      setEditorService(editorService)
       setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
         documentSelectors,
         editProvider,
       ));
 
-      logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion}`);
+      logger.logInfo(`Initialized - dprint`);
     } catch (err) {
       vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
       logger.logErrorAndFocus("Error initializing.", err);
@@ -162,16 +155,6 @@ export function activate(context: vscode.ExtensionContext) {
       formattingSubscription.dispose();
       formattingSubscription = undefined;
     }
-  }
-
-  function getDprintExecutable() {
-    const config = getConfig();
-    return new DprintExecutable(logger, {
-      cmdPath: config.path,
-      // todo: support multiple workspace folders
-      workspaceFolder: vscode.workspace.rootPath!,
-      debug: config.verbose,
-    });
   }
 
   function getConfig() {
