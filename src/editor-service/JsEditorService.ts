@@ -6,6 +6,30 @@ import { Logger } from "../logger";
 import { Config } from "./configuration";
 import { EditorService } from "./EditorService";
 
+function base64(u: string): string {
+  return Buffer.from(u).toString("base64");
+}
+
+async function resolvePluginUrl(logger: Logger, url: string, cacheRoot?: vscode.Uri): Promise<ArrayBuffer> {
+  if (!cacheRoot) {
+    const resp = await fetch(url);
+    return resp.arrayBuffer();
+  }
+  const cacheUrl = cacheRoot.with({
+    path: `${cacheRoot.path}/plugins/${base64(url)}`,
+  });
+  try {
+    const data = await vscode.workspace.fs.readFile(cacheUrl);
+    return Buffer.from(data);
+  } catch {
+    logger.logInfo("cache miss for dprint plugin", url);
+    const resp = await fetch(url);
+    const buff = await resp.arrayBuffer();
+    await vscode.workspace.fs.writeFile(cacheUrl, new Uint8Array(buff));
+    return buff;
+  }
+}
+
 export class JsFormatter implements EditorService {
   private readonly formatters: Formatter[];
   private readonly logger: Logger;
@@ -14,15 +38,16 @@ export class JsFormatter implements EditorService {
     logger: Logger,
     urls: string[],
     config: Config,
+    storagePath?: vscode.Uri,
   ): Promise<JsFormatter> {
-    logger.logInfo("initializing plugins", urls)
-    const buffers = await Promise.all(
-      urls.map((u) => fetch(u).then((resp: any) => resp.arrayBuffer())),
-    );
+    logger.logInfo("initializing plugins", urls);
+    const buffers = await Promise.all(urls.map((u) => resolvePluginUrl(logger, u, storagePath)));
+
     const formatters = buffers.map(createFromBuffer);
     formatters.forEach((formatter) => {
       const configKey = formatter.getPluginInfo().configKey;
-      const pluginConfig = (config as any)[configKey] as Record<string, unknown> | undefined ?? {};
+      const pluginConfig = ((config as any)[configKey] as Record<string, unknown> | undefined)
+        ?? {};
       formatter.setConfig(config, pluginConfig);
     });
     return new JsFormatter(logger, formatters);

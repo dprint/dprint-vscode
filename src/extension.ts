@@ -1,8 +1,8 @@
 import { PluginInfo } from "@dprint/formatter";
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { EditorService } from "./editor-service/EditorService";
 import { readWorkspaceConfig } from "./editor-service/configuration";
+import { EditorService } from "./editor-service/EditorService";
 import { JsFormatter } from "./editor-service/JsEditorService";
 import { Logger } from "./logger";
 
@@ -89,11 +89,16 @@ export function activate(context: vscode.ExtensionContext) {
     setFormattingSubscription(undefined);
 
     try {
-      const workspaceConfig = await readWorkspaceConfig()
+      const workspaceConfig = await readWorkspaceConfig();
       configSchemaProvider.setEditorInfo(workspaceConfig);
-      const editorService = await JsFormatter.fromPluginUrls(logger, workspaceConfig.plugins, workspaceConfig)
+      const editorService = await JsFormatter.fromPluginUrls(
+        logger,
+        workspaceConfig.plugins,
+        workspaceConfig,
+        context.storageUri,
+      );
       const documentSelectors = getDocumentSelectors(editorService.plugInfo());
-      setEditorService(editorService)
+      setEditorService(editorService);
       setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
         documentSelectors,
         editProvider,
