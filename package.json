@@ -17,7 +17,7 @@
     "Formatters"
   ],
   "activationEvents": [
-    "workspaceContains:**/{dprint,.dprint,.dprintrc}.json",
+    "onStartupFinished",
     "onFileSystem:dprint"
   ],
   "main": "./out/extension.js",
