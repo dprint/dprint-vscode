@@ -23,20 +23,28 @@ export interface DprintExecutableOptions {
   /** The path to the dprint executable. */
   cmdPath: string | undefined;
   workspaceFolder: string;
-  debug: boolean;
+  verbose: boolean;
 }
 
 export class DprintExecutable {
   readonly #cmdPath: string;
   readonly #workspaceFolder: string;
-  readonly #debug: boolean;
+  readonly #verbose: boolean;
   readonly #logger: Logger;
 
   constructor(logger: Logger, options: DprintExecutableOptions) {
     this.#logger = logger;
     this.#cmdPath = options.cmdPath ?? "dprint";
     this.#workspaceFolder = options.workspaceFolder;
-    this.#debug = options.debug;
+    this.#verbose = options.verbose;
+  }
+
+  get cmdPath() {
+    return this.#cmdPath;
+  }
+
+  get workspaceFolder() {
+    return this.#workspaceFolder;
   }
 
   async checkInstalled() {
@@ -74,7 +82,7 @@ export class DprintExecutable {
   spawnEditorService() {
     const currentProcessId = process.pid;
     const args = ["editor-service", "--parent-pid", currentProcessId.toString()];
-    if (this.#debug) {
+    if (this.#verbose) {
       args.push("--verbose");
     }
 

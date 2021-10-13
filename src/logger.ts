@@ -22,7 +22,7 @@ export class Logger {
 
   logVerbose(message: string, ...args: any[]) {
     if (this.#verbose) {
-      this.#outputChannel.appendLine(getFormattedMessageWithLevel("debug", message, args));
+      this.#outputChannel.appendLine(getFormattedMessageWithLevel("verbose", message, args));
     }
   }
 
@@ -44,7 +44,7 @@ export class Logger {
   }
 }
 
-function getFormattedMessageWithLevel(level: "debug" | "info" | "warn" | "error", message: string, args: any[]) {
+function getFormattedMessageWithLevel(level: "verbose" | "info" | "warn" | "error", message: string, args: any[]) {
   return `[${level.toUpperCase()}] ${getFormattedArgs(message, args)}`;
 }
 

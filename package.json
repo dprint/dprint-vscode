@@ -50,7 +50,7 @@
             "boolean",
             "null"
           ],
-          "default": null,
+          "default": false,
           "markdownDescription": "Whether to enable verbose logging.",
           "scope": "window"
         }

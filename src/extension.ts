@@ -107,6 +107,8 @@ export function activate(context: vscode.ExtensionContext) {
       ));
 
       logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion}`);
+      logger.logVerbose(`cmd: ${dprintExe.cmdPath}`);
+      logger.logVerbose(`dir: ${dprintExe.workspaceFolder}`);
     } catch (err) {
       vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
       logger.logErrorAndFocus("Error initializing.", err);
@@ -170,7 +172,7 @@ export function activate(context: vscode.ExtensionContext) {
       cmdPath: config.path,
       // todo: support multiple workspace folders
       workspaceFolder: vscode.workspace.rootPath!,
-      debug: config.verbose,
+      verbose: config.verbose,
     });
   }
 
@@ -178,7 +180,7 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration("dprint");
     return {
       path: getPath(),
-      verbose: getDebug(),
+      verbose: getVerbose(),
     };
 
     function getPath() {
@@ -186,9 +188,9 @@ export function activate(context: vscode.ExtensionContext) {
       return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
     }
 
-    function getDebug() {
-      const debug = config.get("debug");
-      return debug === true;
+    function getVerbose() {
+      const verbose = config.get("verbose");
+      return verbose === true;
     }
   }
 }
