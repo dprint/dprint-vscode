@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
     const dprintExe = getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
     if (!isInstalled) {
-      vscode.window.showErrorMessage(
+      logger.showErrorMessageNotification(
         `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
           + `or specify a "dprint.path" setting for this vscode extension.`,
       );
@@ -98,6 +98,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     try {
       const editorInfo = await dprintExe.getEditorInfo();
+      if (editorInfo.plugins.length > 0) {
+        logger.enableNotifications(true);
+      }
       configSchemaProvider.setEditorInfo(editorInfo);
       const documentSelectors = getDocumentSelectors(editorInfo.plugins);
       setEditorService(createEditorService(editorInfo.schemaVersion, logger, dprintExe));
@@ -110,7 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
       logger.logVerbose(`cmd: ${dprintExe.cmdPath}`);
       logger.logVerbose(`dir: ${dprintExe.workspaceFolder}`);
     } catch (err) {
-      vscode.window.showErrorMessage(`Error initializing dprint. ${err}`);
+      logger.showErrorMessageNotification(`Error initializing dprint. ${err}`);
       logger.logErrorAndFocus("Error initializing.", err);
 
       // clear

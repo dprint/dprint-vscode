@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
   #verbose = false;
+  #enableNotifications = false;
 
   constructor() {
     this.#outputChannel = vscode.window.createOutputChannel("dprint");
@@ -40,7 +41,43 @@ export class Logger {
 
   logErrorAndFocus(message: string, ...args: any[]) {
     this.logError(message, ...args);
-    this.#outputChannel.show();
+
+    this.#getShowNotifications().then(shouldShow => {
+      if (shouldShow) {
+        this.#outputChannel.show();
+      }
+    });
+  }
+
+  showErrorMessageNotification(message: string) {
+    this.#getShowNotifications().then(shouldShow => {
+      if (shouldShow) {
+        vscode.window.showErrorMessage(message);
+      }
+    });
+  }
+
+  enableNotifications(value: boolean) {
+    this.#enableNotifications = value;
+  }
+
+  async #getShowNotifications() {
+    if (this.#enableNotifications) {
+      return true;
+    }
+
+    try {
+      const result = await vscode.workspace.findFiles("**/{dprint,.dprint,.dprintrc}.json");
+      if (result.length > 0) {
+        this.#enableNotifications = true;
+        return true;
+      } else {
+        return false;
+      }
+    } catch (err) {
+      this.logError("Error globbing for config file.", err);
+      return false;
+    }
   }
 }
 
