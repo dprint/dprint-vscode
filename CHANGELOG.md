@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.9.0
+
+- Support config files in ancestor directories of the workspace.
+
 ### 0.8.0
 
 - Support for dprint 0.17
