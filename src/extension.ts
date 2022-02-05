@@ -41,15 +41,6 @@ export function activate(context: vscode.ExtensionContext) {
         logger.logVerbose("Formatted:", document.fileName);
         return result;
       } catch (err: any) {
-        // It seems there's no way to auto-dismiss notifications,
-        // so this uses the Progress API to achieve that.
-        vscode.window.withProgress({
-          location: vscode.ProgressLocation.Notification,
-          title: "Error formatting text",
-        }, (progress) => {
-          progress.report({ message: err.toString(), increment: 100 });
-          return new Promise(resolve => setTimeout(resolve, 6000));
-        });
         logger.logError("Error formatting text.", err);
         return [];
       }
