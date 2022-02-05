@@ -1,4 +1,4 @@
-import axios from "axios";
+import * as https from "https";
 import * as vscode from "vscode";
 import { EditorInfo } from "./executable";
 import { Logger } from "./logger";
@@ -38,16 +38,10 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     }
 
     const editorInfo = this.#editorInfo;
-    if (editorInfo == null) {
-      // provide a default schema while it hasn't loaded
-      return this.#getDefaultSchemaText();
-    }
+    const configSchema = await this.#getRawConfigSchema(editorInfo);
+    configSchema["$id"] = this.#jsonSchemaUri.toString();
 
-    try {
-      this.#logger.logVerbose("Fetching JSON schema...");
-      const configSchema = await this.#getUrl(editorInfo.configSchemaUrl);
-      configSchema["$id"] = this.#jsonSchemaUri.toString();
-
+    if (editorInfo != null) {
       for (const plugin of editorInfo.plugins) {
         if (plugin.configSchemaUrl != null) {
           configSchema.properties[plugin.configKey] = {
@@ -55,11 +49,23 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
           };
         }
       }
+    }
 
-      return formatAsJson(configSchema);
+    return formatAsJson(configSchema);
+  }
+
+  async #getRawConfigSchema(editorInfo: EditorInfo | undefined) {
+    if (editorInfo == null) {
+      // provide a default schema while it hasn't loaded
+      return this.#getDefaultSchemaObject();
+    }
+
+    try {
+      this.#logger.logVerbose("Fetching JSON schema:", editorInfo.configSchemaUrl);
+      return await this.#getUrl(editorInfo.configSchemaUrl);
     } catch (err) {
       this.#logger.logError("Error downloading config schema. Defaulting to built in schema.", err);
-      return this.#getDefaultSchemaText();
+      return this.#getDefaultSchemaObject();
     }
   }
 
@@ -70,15 +76,27 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
 
     if (text == null) {
       // store an immutable snapshot
-      text = JSON.stringify(await axios.get(url).then(r => r.data));
+      text = JSON.stringify(
+        await new Promise((resolve, reject) => {
+          https.get(url, (res) => {
+            let body = "";
+            res.on("data", (chunk) => {
+              body += chunk;
+            });
+            res.on("end", () => {
+              resolve(body);
+            });
+          }).on("error", e => reject(e));
+        }),
+      );
       this.#cache.set(url, text);
     }
 
     return JSON.parse(text);
   }
 
-  #getDefaultSchemaText() {
-    return formatAsJson({
+  #getDefaultSchemaObject() {
+    return {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: this.#jsonSchemaUri.toString(),
       title: "dprint configuration file",
@@ -163,7 +181,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
         description: "Plugin configuration.",
         type: "object",
       },
-    });
+    };
   }
 }
 
