@@ -33,18 +33,24 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
     this.#disposed = true;
   }
 
+  #assertNotDisposed() {
+    if (this.#disposed) {
+      throw new ObjectDisposedError();
+    }
+  }
+
   getEditorInfo(): Readonly<EditorInfo> | undefined {
     return this.#editorInfo;
   }
 
   async initialize() {
-    if (this.#disposed) throw new ObjectDisposedError();
+    this.#assertNotDisposed();
     const config = this.#getConfig();
     this.#logger.setVerbose(config.verbose);
     this.#setEditorService(undefined);
     const dprintExe = this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
-    if (this.#disposed) throw new ObjectDisposedError();
+    this.#assertNotDisposed();
     if (!isInstalled) {
       this.#notifier.showErrorMessageNotification(
         `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
@@ -55,16 +61,15 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
 
     try {
       const editorInfo = await dprintExe.getEditorInfo();
-      if (this.#disposed) throw new ObjectDisposedError();
+      this.#assertNotDisposed();
       this.#editorInfo = editorInfo;
       this.#notifier.enableNotifications(editorInfo.plugins.length > 0);
 
       // const documentSelectors = getDocumentSelectors(editorInfo.plugins);
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
 
-      this.#logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion}`);
+      this.#logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion} in ${dprintExe.workspaceFolder}`);
       this.#logger.logVerbose(`cmd: ${dprintExe.cmdPath}`);
-      this.#logger.logVerbose(`dir: ${dprintExe.workspaceFolder}`);
       return true;
     } catch (err) {
       // clear
@@ -76,7 +81,7 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
       }
 
       this.#notifier.showErrorMessageNotification(`Error initializing dprint. ${err}`);
-      this.#notifier.logErrorAndFocus("Error initializing.", err);
+      this.#notifier.logErrorAndFocus(`Error initializing in ${dprintExe.workspaceFolder}:`, err);
       return false;
     }
   }

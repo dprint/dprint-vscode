@@ -26,6 +26,8 @@ export function activate(context: vscode.ExtensionContext) {
   let formattingSubscription: vscode.Disposable | undefined = undefined;
   const logger = new Logger(outputChannel);
 
+  // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
+  // for ConfigJsonSchemaProvider based on the file that's shown
   const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),

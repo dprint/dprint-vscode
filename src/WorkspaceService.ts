@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
-import { EditorInfo, PluginInfo } from "./executable";
-import { Logger } from "./logger";
+import { EditorInfo } from "./executable";
 import { ObjectDisposedError } from "./utils";
 import { WorkspaceFolderService } from "./WorkspaceFolderService";
 
@@ -24,6 +23,12 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     this.#disposed = true;
   }
 
+  #assertNotDisposed() {
+    if (this.#disposed) {
+      throw new ObjectDisposedError();
+    }
+  }
+
   async provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     options: vscode.FormattingOptions,
@@ -45,7 +50,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   async initializeFolders(): Promise<EditorInfo[]> {
-    if (this.#disposed) throw new ObjectDisposedError();
+    this.#assertNotDisposed();
 
     this.#clearFolders();
     if (vscode.workspace.workspaceFolders == null) {
@@ -70,7 +75,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       }
     }));
 
-    if (this.#disposed) throw new ObjectDisposedError();
+    this.#assertNotDisposed();
 
     const allEditorInfos: Readonly<EditorInfo>[] = [];
     for (const folder of initializedFolders) {
