@@ -1,22 +1,23 @@
-import * as https from "https";
 import * as vscode from "vscode";
 import { EditorInfo } from "./executable";
 import { Logger } from "./logger";
+import { RacyCacheTextDownloader, TextDownloader } from "./TextDownloader";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  #cache: Map<string, string> = new Map();
   #editorInfo: EditorInfo | undefined;
   #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
+  #cachedTextDownloader: TextDownloader;
 
   get onDidChange() {
     return this.#onDidChangeEmitter.event;
   }
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, textDownloader: TextDownloader) {
     this.#logger = logger;
+    this.#cachedTextDownloader = new RacyCacheTextDownloader(textDownloader);
   }
 
   static scheme = "dprint";
@@ -42,6 +43,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     configSchema["$id"] = this.#jsonSchemaUri.toString();
 
     if (editorInfo != null) {
+      configSchema.properties = configSchema.properties ?? {};
       for (const plugin of editorInfo.plugins) {
         if (plugin.configSchemaUrl != null) {
           configSchema.properties[plugin.configKey] = {
@@ -62,37 +64,12 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
 
     try {
       this.#logger.logVerbose("Fetching JSON schema:", editorInfo.configSchemaUrl);
-      return await this.#getUrl(editorInfo.configSchemaUrl);
+      const text = await this.#cachedTextDownloader.get(editorInfo.configSchemaUrl);
+      return JSON.parse(text);
     } catch (err) {
       this.#logger.logError("Error downloading config schema. Defaulting to built in schema.", err);
       return this.#getDefaultSchemaObject();
     }
-  }
-
-  async #getUrl(url: string) {
-    // don't worry about race conditions here as making two
-    // or more of the same request is not a big deal
-    let text = this.#cache.get(url);
-
-    if (text == null) {
-      // store an immutable snapshot
-      text = JSON.stringify(
-        await new Promise((resolve, reject) => {
-          https.get(url, (res) => {
-            let body = "";
-            res.on("data", (chunk) => {
-              body += chunk;
-            });
-            res.on("end", () => {
-              resolve(body);
-            });
-          }).on("error", e => reject(e));
-        }),
-      );
-      this.#cache.set(url, text);
-    }
-
-    return JSON.parse(text);
   }
 
   #getDefaultSchemaObject() {

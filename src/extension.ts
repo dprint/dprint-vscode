@@ -3,6 +3,7 @@ import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, PluginInfo } from "./executable";
 import { Logger } from "./logger";
+import { HttpsTextDownloader } from "./TextDownloader";
 
 let editorService: EditorService | undefined = undefined;
 
@@ -10,7 +11,7 @@ export function activate(context: vscode.ExtensionContext) {
   let formattingSubscription: vscode.Disposable | undefined = undefined;
 
   const logger = new Logger();
-  const configSchemaProvider = new ConfigJsonSchemaProvider(logger);
+  const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
   context.subscriptions.push(logger);
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
