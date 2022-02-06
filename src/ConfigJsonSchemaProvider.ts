@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
-import { EditorInfo } from "./executable";
+import { EditorInfos } from "./executable";
 import { Logger } from "./logger";
 import { RacyCacheTextDownloader, TextDownloader } from "./TextDownloader";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  #editorInfo: EditorInfo | undefined;
+  #editorInfos: EditorInfos | undefined;
   #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
@@ -26,29 +26,36 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     this.#onDidChangeEmitter.dispose();
   }
 
-  setEditorInfo(info: EditorInfo) {
-    this.#editorInfo = info;
+  setEditorInfos(infos: EditorInfos | undefined) {
+    this.#editorInfos = infos;
     // always refresh to reduce complexity (it's cheap to refresh)
     this.#onDidChangeEmitter.fire(this.#jsonSchemaUri);
   }
 
   async provideTextDocumentContent(uri: vscode.Uri, _token: vscode.CancellationToken) {
     if (uri.toString() !== this.#jsonSchemaUri.toString()) {
-      this.#logger.logWarn("Unknown uri:", uri.toString());
+      this.#logger.logWarn("Unknown JSON schema uri:", uri.toString());
       return undefined;
     }
 
-    const editorInfo = this.#editorInfo;
-    const configSchema = await this.#getRawConfigSchema(editorInfo);
+    const editorInfos = this.#editorInfos;
+    const configSchema = await this.#getRawConfigSchema(editorInfos);
     configSchema["$id"] = this.#jsonSchemaUri.toString();
 
-    if (editorInfo != null) {
+    if (editorInfos != null) {
       configSchema.properties = configSchema.properties ?? {};
-      for (const plugin of editorInfo.plugins) {
-        if (plugin.configSchemaUrl != null) {
-          configSchema.properties[plugin.configKey] = {
-            "$ref": plugin.configSchemaUrl,
-          };
+      // compromise: between workspace folders, the same plugin might appear
+      // with a different version. We compromise by selecting the first plugin
+      // found to be the one used, but perhaps an improvement would be to use
+      // the latest plugin version found. This would be a bit more complex to
+      // figure out though.
+      for (const editorInfo of editorInfos) {
+        for (const plugin of editorInfo.plugins) {
+          if (plugin.configSchemaUrl != null && configSchema.properties[plugin.configKey] == null) {
+            configSchema.properties[plugin.configKey] = {
+              "$ref": plugin.configSchemaUrl,
+            };
+          }
         }
       }
     }
@@ -56,15 +63,17 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     return formatAsJson(configSchema);
   }
 
-  async #getRawConfigSchema(editorInfo: EditorInfo | undefined) {
-    if (editorInfo == null) {
+  async #getRawConfigSchema(editorInfos: EditorInfos | undefined) {
+    // compromise: settle for the first one though they'll likely always be the same
+    const configSchemaUrl = editorInfos?.[0]?.configSchemaUrl;
+    if (configSchemaUrl == null) {
       // provide a default schema while it hasn't loaded
       return this.#getDefaultSchemaObject();
     }
 
     try {
-      this.#logger.logVerbose("Fetching JSON schema:", editorInfo.configSchemaUrl);
-      const text = await this.#cachedTextDownloader.get(editorInfo.configSchemaUrl);
+      this.#logger.logVerbose("Fetching JSON schema:", configSchemaUrl);
+      const text = await this.#cachedTextDownloader.get(configSchemaUrl);
       return JSON.parse(text);
     } catch (err) {
       this.#logger.logError("Error downloading config schema. Defaulting to built in schema.", err);

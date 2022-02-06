@@ -1,46 +1,17 @@
 import * as vscode from "vscode";
 
-export class Logger {
+export class Notifier {
   readonly #outputChannel: vscode.OutputChannel;
-  #verbose = false;
+  readonly #logger: Logger;
   #enableNotifications = false;
 
-  constructor() {
-    this.#outputChannel = vscode.window.createOutputChannel("dprint");
-  }
-
-  dispose() {
-    this.#outputChannel.dispose();
-  }
-
-  setVerbose(enabled: boolean) {
-    this.#verbose = enabled;
-  }
-
-  log(message: string, ...args: any[]) {
-    this.#outputChannel.appendLine(getFormattedArgs(message, args));
-  }
-
-  logVerbose(message: string, ...args: any[]) {
-    if (this.#verbose) {
-      this.#outputChannel.appendLine(getFormattedMessageWithLevel("verbose", message, args));
-    }
-  }
-
-  logInfo(message: string, ...args: any[]) {
-    this.#outputChannel.appendLine(getFormattedMessageWithLevel("info", message, args));
-  }
-
-  logWarn(message: string, ...args: any[]) {
-    this.#outputChannel.appendLine(getFormattedMessageWithLevel("warn", message, args));
-  }
-
-  logError(message: string, ...args: any[]) {
-    this.#outputChannel.appendLine(getFormattedMessageWithLevel("error", message, args));
+  constructor(outputChannel: vscode.OutputChannel, logger: Logger) {
+    this.#outputChannel = outputChannel;
+    this.#logger = logger;
   }
 
   logErrorAndFocus(message: string, ...args: any[]) {
-    this.logError(message, ...args);
+    this.#logger.logError(message, ...args);
 
     this.#getShowNotifications().then(shouldShow => {
       if (shouldShow) {
@@ -75,9 +46,44 @@ export class Logger {
         return false;
       }
     } catch (err) {
-      this.logError("Error globbing for config file.", err);
+      this.#logger.logError("Error globbing for config file.", err);
       return false;
     }
+  }
+}
+
+export class Logger {
+  readonly #outputChannel: vscode.OutputChannel;
+  #verbose = false;
+
+  constructor(outputChannel: vscode.OutputChannel) {
+    this.#outputChannel = outputChannel;
+  }
+
+  setVerbose(enabled: boolean) {
+    this.#verbose = enabled;
+  }
+
+  log(message: string, ...args: any[]) {
+    this.#outputChannel.appendLine(getFormattedArgs(message, args));
+  }
+
+  logVerbose(message: string, ...args: any[]) {
+    if (this.#verbose) {
+      this.#outputChannel.appendLine(getFormattedMessageWithLevel("verbose", message, args));
+    }
+  }
+
+  logInfo(message: string, ...args: any[]) {
+    this.#outputChannel.appendLine(getFormattedMessageWithLevel("info", message, args));
+  }
+
+  logWarn(message: string, ...args: any[]) {
+    this.#outputChannel.appendLine(getFormattedMessageWithLevel("warn", message, args));
+  }
+
+  logError(message: string, ...args: any[]) {
+    this.#outputChannel.appendLine(getFormattedMessageWithLevel("error", message, args));
   }
 }
 
