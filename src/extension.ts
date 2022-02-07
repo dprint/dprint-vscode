@@ -89,25 +89,13 @@ export function activate(context: vscode.ExtensionContext) {
     function getFormattingPatterns() {
       const patterns: vscode.RelativePattern[] = [];
       for (const folderInfo of allFolderInfos) {
-        const extensions = getFileExtensions(folderInfo.editorInfo);
-        if (extensions.size > 0) {
-          const extensionsText = Array.from(extensions.values()).join(",");
-          const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*.{${extensionsText}}`);
-          logger.logInfo("Matching pattern:", pattern.pattern, `(${pattern.base})`);
+        if (folderInfo.editorInfo.plugins.length > 0) {
+          // match against all files and let the dprint CLI say if it can format a file or not
+          const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*`);
           patterns.push(pattern);
         }
       }
       return patterns;
-    }
-
-    function getFileExtensions(editorInfo: EditorInfo) {
-      const fileExtensions = new Set();
-      for (const pluginInfo of editorInfo.plugins) {
-        for (const fileExtension of pluginInfo.fileExtensions) {
-          fileExtensions.add(fileExtension);
-        }
-      }
-      return fileExtensions;
     }
   }
 

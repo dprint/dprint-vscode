@@ -110,7 +110,7 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
 
       if (!(await this.#editorService.canFormat(document.fileName))) {
         this.#logger.logVerbose("File not matched:", document.fileName);
-        return [];
+        return undefined;
       }
 
       const newText = await this.#editorService.formatText(document.fileName, document.getText(), token);
