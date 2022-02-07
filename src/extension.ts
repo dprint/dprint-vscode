@@ -90,7 +90,12 @@ export function activate(context: vscode.ExtensionContext) {
       const patterns: vscode.RelativePattern[] = [];
       for (const folderInfo of allFolderInfos) {
         if (folderInfo.editorInfo.plugins.length > 0) {
-          // match against all files and let the dprint CLI say if it can format a file or not
+          // Match against all files and let the dprint CLI say if it can format a file or not.
+          // This is necessary because by using the "associations" feature, a user may pattern
+          // match against any file path then format that file using a certain plugin. Additionally,
+          // we can't use the "includes" and "excludes" patterns from the config file because we
+          // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
+          // pattern matching being the same.
           const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*`);
           patterns.push(pattern);
         }
