@@ -1,10 +1,10 @@
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { EditorInfos } from "./executable";
+import { EditorInfo } from "./executable";
 import { Logger } from "./logger";
 import { HttpsTextDownloader } from "./TextDownloader";
 import { ObjectDisposedError } from "./utils";
-import { WorkspaceService } from "./WorkspaceService";
+import { FolderInfo, FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 class GlobalPluginState {
   constructor(
@@ -58,9 +58,9 @@ export function activate(context: vscode.ExtensionContext) {
     setFormattingSubscription(undefined);
 
     try {
-      const allEditorInfos = await workspaceService.initializeFolders();
-      configSchemaProvider.setEditorInfos(allEditorInfos);
-      trySetFormattingSubscriptionFromEditorInfos(allEditorInfos);
+      const folderInfos = await workspaceService.initializeFolders();
+      configSchemaProvider.setFolderInfos(folderInfos);
+      trySetFormattingSubscriptionFromFolderInfos(folderInfos);
     } catch (err) {
       if (!(err instanceof ObjectDisposedError)) {
         logger.logError("Error initializing:", err);
@@ -68,31 +68,43 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  function trySetFormattingSubscriptionFromEditorInfos(allEditorInfos: EditorInfos) {
-    const fileExtensions = getFileExtensions();
-    const fileExtensionsText = Array.from(fileExtensions.values()).join(",");
-    logger.logInfo(`Supporting file extensions: ${fileExtensionsText}`);
+  function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos) {
+    const formattingPatterns = getFormattingPatterns();
 
-    if (fileExtensionsText.length === 0) {
+    if (formattingPatterns.length === 0) {
       return;
     }
 
-    setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider([{
-      scheme: "file",
-      pattern: `**/*.{${fileExtensionsText}}`,
-    }], {
-      async provideDocumentFormattingEdits(document, options, token) {
-        return workspaceService.provideDocumentFormattingEdits(document, options, token);
-      },
-    }));
+    setFormattingSubscription(
+      vscode.languages.registerDocumentFormattingEditProvider(
+        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
+        {
+          async provideDocumentFormattingEdits(document, options, token) {
+            return workspaceService.provideDocumentFormattingEdits(document, options, token);
+          },
+        },
+      ),
+    );
 
-    function getFileExtensions() {
+    function getFormattingPatterns() {
+      const patterns: vscode.RelativePattern[] = [];
+      for (const folderInfo of allFolderInfos) {
+        const extensions = getFileExtensions(folderInfo.editorInfo);
+        if (extensions.size > 0) {
+          const extensionsText = Array.from(extensions.values()).join(",");
+          const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*.{${extensionsText}}`);
+          logger.logInfo("Matching pattern:", pattern.pattern, `(${pattern.base})`);
+          patterns.push(pattern);
+        }
+      }
+      return patterns;
+    }
+
+    function getFileExtensions(editorInfo: EditorInfo) {
       const fileExtensions = new Set();
-      for (const editorInfo of allEditorInfos) {
-        for (const pluginInfo of editorInfo.plugins) {
-          for (const fileExtension of pluginInfo.fileExtensions) {
-            fileExtensions.add(fileExtension);
-          }
+      for (const pluginInfo of editorInfo.plugins) {
+        for (const fileExtension of pluginInfo.fileExtensions) {
+          fileExtensions.add(fileExtension);
         }
       }
       return fileExtensions;

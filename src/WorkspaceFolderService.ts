@@ -65,11 +65,18 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
       this.#editorInfo = editorInfo;
       this.#notifier.enableNotifications(editorInfo.plugins.length > 0);
 
-      // const documentSelectors = getDocumentSelectors(editorInfo.plugins);
+      // don't start up if there's no plugins
+      if (editorInfo.plugins.length === 0) {
+        return false;
+      }
+
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
 
-      this.#logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion} in ${dprintExe.workspaceFolder}`);
-      this.#logger.logVerbose(`cmd: ${dprintExe.cmdPath}`);
+      this.#logger.logInfo(
+        `Initialized dprint ${editorInfo.cliVersion}\n`
+          + `  Folder: ${dprintExe.workspaceFolder}\n`
+          + `  Command: ${dprintExe.cmdPath}`,
+      );
       return true;
     } catch (err) {
       // clear
@@ -91,6 +98,10 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
+    if (this.#editorInfo != null && this.#editorInfo.plugins.length === 0) {
+      return undefined;
+    }
+
     try {
       if (this.#editorService == null) {
         this.#logger.logWarn("Editor service not ready on format request.");

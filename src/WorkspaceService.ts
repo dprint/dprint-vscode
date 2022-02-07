@@ -3,6 +3,13 @@ import { EditorInfo } from "./executable";
 import { ObjectDisposedError } from "./utils";
 import { WorkspaceFolderService } from "./WorkspaceFolderService";
 
+export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
+
+export interface FolderInfo {
+  folder: vscode.WorkspaceFolder;
+  editorInfo: EditorInfo;
+}
+
 export interface WorkspaceServiceOptions {
   outputChannel: vscode.OutputChannel;
 }
@@ -49,7 +56,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     this.#folders.length = 0; // clear
   }
 
-  async initializeFolders(): Promise<EditorInfo[]> {
+  async initializeFolders(): Promise<FolderInfos> {
     this.#assertNotDisposed();
 
     this.#clearFolders();
@@ -77,11 +84,13 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     this.#assertNotDisposed();
 
-    const allEditorInfos: Readonly<EditorInfo>[] = [];
+    const allEditorInfos: FolderInfo[] = [];
     for (const folder of initializedFolders) {
-      const editorInfo = folder?.getEditorInfo();
-      if (editorInfo != null) {
-        allEditorInfos.push(editorInfo);
+      if (folder != null) {
+        const editorInfo = folder.getEditorInfo();
+        if (editorInfo != null) {
+          allEditorInfos.push({ folder: folder.folder, editorInfo: editorInfo });
+        }
       }
     }
     return allEditorInfos;

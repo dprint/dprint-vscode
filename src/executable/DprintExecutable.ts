@@ -2,9 +2,6 @@ import { exec, spawn } from "child_process";
 import * as vscode from "vscode";
 import { Logger } from "../logger";
 
-/** The editor infos for each folder. */
-export type EditorInfos = ReadonlyArray<Readonly<EditorInfo>>;
-
 export interface EditorInfo {
   schemaVersion: number;
   cliVersion: string;

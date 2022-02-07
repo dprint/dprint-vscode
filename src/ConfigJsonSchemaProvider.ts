@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
-import { EditorInfos } from "./executable";
 import { Logger } from "./logger";
 import { RacyCacheTextDownloader, TextDownloader } from "./TextDownloader";
+import { FolderInfos } from "./WorkspaceService";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  #editorInfos: EditorInfos | undefined;
+  #folderEditorInfos: FolderInfos | undefined;
   #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
@@ -26,8 +26,8 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     this.#onDidChangeEmitter.dispose();
   }
 
-  setEditorInfos(infos: EditorInfos | undefined) {
-    this.#editorInfos = infos;
+  setFolderInfos(infos: FolderInfos | undefined) {
+    this.#folderEditorInfos = infos;
     // always refresh to reduce complexity (it's cheap to refresh)
     this.#onDidChangeEmitter.fire(this.#jsonSchemaUri);
   }
@@ -38,19 +38,19 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
       return undefined;
     }
 
-    const editorInfos = this.#editorInfos;
-    const configSchema = await this.#getRawConfigSchema(editorInfos);
+    const folderEditorInfos = this.#folderEditorInfos;
+    const configSchema = await this.#getRawConfigSchema(folderEditorInfos);
     configSchema["$id"] = this.#jsonSchemaUri.toString();
 
-    if (editorInfos != null) {
+    if (folderEditorInfos != null) {
       configSchema.properties = configSchema.properties ?? {};
       // compromise: between workspace folders, the same plugin might appear
       // with a different version. We compromise by selecting the first plugin
       // found to be the one used, but perhaps an improvement would be to use
       // the latest plugin version found. This would be a bit more complex to
       // figure out though.
-      for (const editorInfo of editorInfos) {
-        for (const plugin of editorInfo.plugins) {
+      for (const { editorInfo: info } of folderEditorInfos) {
+        for (const plugin of info.plugins) {
           if (plugin.configSchemaUrl != null && configSchema.properties[plugin.configKey] == null) {
             configSchema.properties[plugin.configKey] = {
               "$ref": plugin.configSchemaUrl,
@@ -63,9 +63,9 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     return formatAsJson(configSchema);
   }
 
-  async #getRawConfigSchema(editorInfos: EditorInfos | undefined) {
+  async #getRawConfigSchema(folderEditorInfos: FolderInfos | undefined) {
     // compromise: settle for the first one though they'll likely always be the same
-    const configSchemaUrl = editorInfos?.[0]?.configSchemaUrl;
+    const configSchemaUrl = folderEditorInfos?.[0]?.editorInfo?.configSchemaUrl;
     if (configSchemaUrl == null) {
       // provide a default schema while it hasn't loaded
       return this.#getDefaultSchemaObject();
