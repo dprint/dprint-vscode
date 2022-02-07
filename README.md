@@ -2,8 +2,6 @@
 
 Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pluggable and configurable code formatting platform.
 
-Requires dprint 0.17 or above.
-
 ## Install
 
 1. Install [dprint's CLI](https://dprint.dev/install/)
@@ -12,35 +10,18 @@ Requires dprint 0.17 or above.
 ## Setup
 
 1. Run `dprint init` in the root directory of your repository to create a dprint configuration file.
-2. Set the default formatter in your vscode settings:
+2. Set the default formatter in your vscode settings and consider turning on "format on save":
    ```jsonc
    {
      "editor.defaultFormatter": "dprint.dprint",
-     // or specify per language
+     "editor.formatOnSave": true,
+     // or specify per language, for example
      "[javascript]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[typescript]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[json]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[jsonc]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[markdown]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[toml]": {
-       "editor.defaultFormatter": "dprint.dprint"
-     },
-     "[rust]": {
-       "editor.defaultFormatter": "dprint.dprint"
+       "editor.defaultFormatter": "dprint.dprint",
+       "editor.formatOnSave": true,
      }
    }
    ```
-3. Consider turning on "format on save" (see below in Extension Settings)
 
 ## Features
 
@@ -56,15 +37,8 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Extension Settings
 
-Respects formatting on save:
-
 ```jsonc
 {
-  "editor.formatOnSave": true,
-  // or per language
-  "[typescript]": {
-    "editor.formatOnSave": true
-  },
   // By default it will use `dprint` found on the path,
   // but use this when you want to specify a custom location.
   // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
@@ -79,6 +53,13 @@ Respects formatting on save:
 - No support for custom config locations.
 
 ## Release Notes
+
+### 0.10.0
+
+- Support multiple workspace folders.
+- Do not show notification for formatting errors (it only outputs to the output tab).
+- Better handling when default schema can't be downloaded.
+- Extension is bundled to single JS file to improve load times.
 
 ### 0.9.0
 

@@ -1,5 +1,12 @@
 # Change Log
 
+### 0.10.0
+
+- Support multiple workspace folders.
+- Do not show notification for formatting errors (it only outputs to the output tab).
+- Better handling when default schema can't be downloaded.
+- Extension is bundled to single JS file to improve load times.
+
 ### 0.9.0
 
 - Support config files in ancestor directories of the workspace.
