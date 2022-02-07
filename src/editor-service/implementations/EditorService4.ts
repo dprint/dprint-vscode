@@ -14,7 +14,17 @@ export class EditorService4 implements EditorService {
   }
 
   kill() {
-    this._process.kill();
+    // If graceful shutdown doesn't work soon enough
+    // then kill the process
+    const killTimeout = setTimeout(() => {
+      this._process.kill();
+    }, 1_000);
+
+    // send a graceful shutdown signal
+    this._process.writeInt(0).finally(() => {
+      this._process.kill();
+      clearTimeout(killTimeout);
+    }).catch(() => {/* ignore */});
   }
 
   canFormat(filePath: string) {

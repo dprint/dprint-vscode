@@ -1,52 +1,37 @@
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { createEditorService, EditorService } from "./editor-service";
-import { DprintExecutable, PluginInfo } from "./executable";
+import { EditorInfo } from "./executable";
 import { Logger } from "./logger";
 import { HttpsTextDownloader } from "./TextDownloader";
+import { ObjectDisposedError } from "./utils";
+import { FolderInfo, FolderInfos, WorkspaceService } from "./WorkspaceService";
 
-let editorService: EditorService | undefined = undefined;
+class GlobalPluginState {
+  constructor(
+    private readonly workspaceService: WorkspaceService,
+    private readonly outputChannel: vscode.OutputChannel,
+  ) {
+  }
+
+  dispose() {
+    this.outputChannel.dispose();
+    this.workspaceService.dispose();
+  }
+}
+
+let globalState: GlobalPluginState | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  const { outputChannel, workspaceService } = getAndSetNewGlobalState(context);
   let formattingSubscription: vscode.Disposable | undefined = undefined;
+  const logger = new Logger(outputChannel);
 
-  const logger = new Logger();
+  // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
+  // for ConfigJsonSchemaProvider based on the file that's shown
   const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  context.subscriptions.push(logger);
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
-
-  const editProvider: vscode.DocumentFormattingEditProvider = {
-    async provideDocumentFormattingEdits(document, options, token) {
-      try {
-        if (editorService == null) {
-          logger.logWarn("Editor service not ready on format request.");
-          return []; // not ready yet
-        }
-
-        if (!(await editorService.canFormat(document.fileName))) {
-          logger.logVerbose("File not matched:", document.fileName);
-          return [];
-        }
-
-        const newText = await editorService.formatText(document.fileName, document.getText(), token);
-        const lastLineNumber = document.lineCount - 1;
-        const replaceRange = new vscode.Range(
-          0,
-          0,
-          lastLineNumber,
-          document.lineAt(lastLineNumber).text.length,
-        );
-        const result = [vscode.TextEdit.replace(replaceRange, newText)];
-        logger.logVerbose("Formatted:", document.fileName);
-        return result;
-      } catch (err: any) {
-        logger.logError("Error formatting text.", err);
-        return [];
-      }
-    },
-  };
 
   context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitializeEditorService));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
@@ -62,92 +47,75 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
     if (evt.affectsConfiguration("dprint")) {
       reInitializeEditorService();
-      logger.setVerbose(getConfig().verbose);
     }
   }));
-
-  // update state from current config
-  logger.setVerbose(getConfig().verbose);
 
   return reInitializeEditorService().then(() => {
     logger.logInfo(`Extension active!`);
   });
 
   async function reInitializeEditorService() {
-    logger.logInfo("Initializing...");
-    setEditorService(undefined);
     setFormattingSubscription(undefined);
 
-    const dprintExe = getDprintExecutable();
-    const isInstalled = await dprintExe.checkInstalled();
-    if (!isInstalled) {
-      logger.showErrorMessageNotification(
-        `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
-          + `or specify a "dprint.path" setting for this vscode extension.`,
-      );
-      return;
-    }
-
     try {
-      const editorInfo = await dprintExe.getEditorInfo();
-      if (editorInfo.plugins.length > 0) {
-        logger.enableNotifications(true);
-      }
-      configSchemaProvider.setEditorInfo(editorInfo);
-      const documentSelectors = getDocumentSelectors(editorInfo.plugins);
-      setEditorService(createEditorService(editorInfo.schemaVersion, logger, dprintExe));
-      setFormattingSubscription(vscode.languages.registerDocumentFormattingEditProvider(
-        documentSelectors,
-        editProvider,
-      ));
-
-      logger.logInfo(`Initialized - dprint ${editorInfo.cliVersion}`);
-      logger.logVerbose(`cmd: ${dprintExe.cmdPath}`);
-      logger.logVerbose(`dir: ${dprintExe.workspaceFolder}`);
+      const folderInfos = await workspaceService.initializeFolders();
+      configSchemaProvider.setFolderInfos(folderInfos);
+      trySetFormattingSubscriptionFromFolderInfos(folderInfos);
     } catch (err) {
-      logger.showErrorMessageNotification(`Error initializing dprint. ${err}`);
-      logger.logErrorAndFocus("Error initializing.", err);
-
-      // clear
-      setEditorService(undefined);
-      setFormattingSubscription(undefined);
-    }
-
-    function getDocumentSelectors(pluginInfos: PluginInfo[]): vscode.DocumentFilter[] {
-      const fileExtensions = getFileExtensions();
-      const fileExtensionsText = Array.from(fileExtensions.values()).join(",");
-      logger.logInfo(`Supporting file extensions ${fileExtensionsText}`);
-
-      if (fileExtensionsText.length > 0) {
-        return [{
-          scheme: "file",
-          pattern: `**/*.{${fileExtensionsText}}`,
-        }];
-      } else {
-        return [];
-      }
-
-      function getFileExtensions() {
-        const fileExtensions = new Set();
-        for (const pluginInfo of pluginInfos) {
-          for (const fileExtension of pluginInfo.fileExtensions) {
-            fileExtensions.add(fileExtension);
-          }
-        }
-        return fileExtensions;
+      if (!(err instanceof ObjectDisposedError)) {
+        logger.logError("Error initializing:", err);
       }
     }
   }
 
-  async function setFormattingSubscription(newSubscription: vscode.Disposable | undefined) {
-    clearFormattingSubscription();
+  function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos) {
+    const formattingPatterns = getFormattingPatterns();
 
-    formattingSubscription = newSubscription;
-    if (newSubscription != null) {
-      context.subscriptions.push(newSubscription);
+    if (formattingPatterns.length === 0) {
+      return;
     }
 
-    function clearFormattingSubscription() {
+    setFormattingSubscription(
+      vscode.languages.registerDocumentFormattingEditProvider(
+        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
+        {
+          async provideDocumentFormattingEdits(document, options, token) {
+            return workspaceService.provideDocumentFormattingEdits(document, options, token);
+          },
+        },
+      ),
+    );
+
+    function getFormattingPatterns() {
+      const patterns: vscode.RelativePattern[] = [];
+      for (const folderInfo of allFolderInfos) {
+        const extensions = getFileExtensions(folderInfo.editorInfo);
+        if (extensions.size > 0) {
+          const extensionsText = Array.from(extensions.values()).join(",");
+          const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*.{${extensionsText}}`);
+          logger.logInfo("Matching pattern:", pattern.pattern, `(${pattern.base})`);
+          patterns.push(pattern);
+        }
+      }
+      return patterns;
+    }
+
+    function getFileExtensions(editorInfo: EditorInfo) {
+      const fileExtensions = new Set();
+      for (const pluginInfo of editorInfo.plugins) {
+        for (const fileExtension of pluginInfo.fileExtensions) {
+          fileExtensions.add(fileExtension);
+        }
+      }
+      return fileExtensions;
+    }
+  }
+
+  function setFormattingSubscription(newSubscription: vscode.Disposable | undefined) {
+    clear();
+    setNew();
+
+    function clear() {
       if (formattingSubscription == null) {
         return;
       }
@@ -159,43 +127,42 @@ export function activate(context: vscode.ExtensionContext) {
       formattingSubscription.dispose();
       formattingSubscription = undefined;
     }
-  }
 
-  function getDprintExecutable() {
-    const config = getConfig();
-    return new DprintExecutable(logger, {
-      cmdPath: config.path,
-      // todo: support multiple workspace folders
-      workspaceFolder: vscode.workspace.rootPath!,
-      verbose: config.verbose,
-    });
-  }
-
-  function getConfig() {
-    const config = vscode.workspace.getConfiguration("dprint");
-    return {
-      path: getPath(),
-      verbose: getVerbose(),
-    };
-
-    function getPath() {
-      const path = config.get("path");
-      return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
-    }
-
-    function getVerbose() {
-      const verbose = config.get("verbose");
-      return verbose === true;
+    function setNew() {
+      formattingSubscription = newSubscription;
+      if (newSubscription != null) {
+        context.subscriptions.push(newSubscription);
+      }
     }
   }
 }
 
 // this method is called when your extension is deactivated
 export function deactivate() {
-  setEditorService(undefined);
+  clearGlobalState();
 }
 
-async function setEditorService(newService: EditorService | undefined) {
-  editorService?.kill();
-  editorService = newService;
+function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
+  clearGlobalState();
+
+  let outputChannel: vscode.OutputChannel | undefined = undefined;
+  let workspaceService: WorkspaceService | undefined = undefined;
+  try {
+    outputChannel = vscode.window.createOutputChannel("dprint");
+    workspaceService = new WorkspaceService({
+      outputChannel,
+    });
+  } catch (err) {
+    outputChannel?.dispose();
+    workspaceService?.dispose();
+    throw err;
+  }
+  globalState = new GlobalPluginState(workspaceService, outputChannel);
+  context.subscriptions.push(globalState);
+  return { workspaceService, outputChannel };
+}
+
+function clearGlobalState() {
+  globalState?.dispose();
+  globalState = undefined;
 }
