@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.11.0
+
+- Support sub directories with dprint configuration files.
+
 ### 0.10.0
 
 - Support multiple workspace folders.
