@@ -4,28 +4,34 @@ import { DprintExecutable, EditorInfo } from "./executable";
 import { Logger, Notifier } from "./logger";
 import { ObjectDisposedError } from "./utils";
 
-export interface WorkspaceServiceOptions {
-  folder: vscode.WorkspaceFolder;
+export interface FolderServiceOptions {
+  workspaceFolder: vscode.WorkspaceFolder;
+  configUri: vscode.Uri | undefined;
   outputChannel: vscode.OutputChannel;
 }
 
-export class WorkspaceFolderService implements vscode.DocumentFormattingEditProvider {
+export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
-  readonly #folder: vscode.WorkspaceFolder;
+  readonly #workspaceFolder: vscode.WorkspaceFolder;
+  readonly #configUri: vscode.Uri | undefined;
   #notifier: Notifier;
   #disposed = false;
 
   #editorService: EditorService | undefined;
   #editorInfo: EditorInfo | undefined;
 
-  constructor(opts: WorkspaceServiceOptions) {
+  constructor(opts: FolderServiceOptions) {
     this.#logger = new Logger(opts.outputChannel);
-    this.#folder = opts.folder;
+    this.#workspaceFolder = opts.workspaceFolder;
+    this.#configUri = opts.configUri;
     this.#notifier = new Notifier(opts.outputChannel, this.#logger);
   }
 
-  get folder() {
-    return this.#folder;
+  get uri() {
+    if (this.#configUri != null) {
+      return vscode.Uri.joinPath(this.#configUri, "../");
+    }
+    return this.#workspaceFolder.uri;
   }
 
   dispose() {
@@ -74,7 +80,7 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
 
       this.#logger.logInfo(
         `Initialized dprint ${editorInfo.cliVersion}\n`
-          + `  Folder: ${dprintExe.workspaceFolder}\n`
+          + `  Folder: ${dprintExe.initializationFolderUri.fsPath}\n`
           + `  Command: ${dprintExe.cmdPath}`,
       );
       return true;
@@ -88,7 +94,7 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
       }
 
       this.#notifier.showErrorMessageNotification(`Error initializing dprint. ${err}`);
-      this.#notifier.logErrorAndFocus(`Error initializing in ${dprintExe.workspaceFolder}:`, err);
+      this.#notifier.logErrorAndFocus(`Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`, err);
       return false;
     }
   }
@@ -139,13 +145,19 @@ export class WorkspaceFolderService implements vscode.DocumentFormattingEditProv
     const config = this.#getConfig();
     return new DprintExecutable(this.#logger, {
       cmdPath: config.path,
-      workspaceFolder: this.#folder.uri.fsPath,
+      // It's important that we always use the workspace folder as the
+      // cwd for the process instead of possibly the sub directory because
+      // we don't want the dprint process to hold a resource lock on a
+      // sub directory. That would give the user a bad experience where
+      // they can't delete the sub directory.
+      cwd: this.#workspaceFolder.uri,
+      configUri: this.#configUri,
       verbose: config.verbose,
     });
   }
 
   #getConfig() {
-    const config = vscode.workspace.getConfiguration("dprint", this.#folder);
+    const config = vscode.workspace.getConfiguration("dprint", this.uri);
     return {
       path: getPath(),
       verbose: getVerbose(),

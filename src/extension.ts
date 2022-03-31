@@ -1,10 +1,10 @@
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { EditorInfo } from "./executable";
+import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
 import { Logger } from "./logger";
 import { HttpsTextDownloader } from "./TextDownloader";
 import { ObjectDisposedError } from "./utils";
-import { FolderInfo, FolderInfos, WorkspaceService } from "./WorkspaceService";
+import { FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 class GlobalPluginState {
   constructor(
@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
   // reinitialize on configuration file changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher("**/{dprint,.dprint,.dprintrc}.json");
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(`**/${DPRINT_CONFIG_FILENAME_GLOB}`);
   context.subscriptions.push(fileSystemWatcher);
   context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
@@ -96,7 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
           // we can't use the "includes" and "excludes" patterns from the config file because we
           // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
           // pattern matching being the same.
-          const pattern = new vscode.RelativePattern(folderInfo.folder, `**/*`);
+          const pattern = new vscode.RelativePattern(folderInfo.uri, `**/*`);
           patterns.push(pattern);
         }
       }

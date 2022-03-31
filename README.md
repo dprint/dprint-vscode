@@ -52,6 +52,11 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 - No support for custom config locations.
 
+## Developing and Testing Locally
+
+1. `npm install`
+2. Go to "Run and debug" in VS code and run the "Run Extension" task.
+
 ## Release Notes
 
 ### 0.10.0

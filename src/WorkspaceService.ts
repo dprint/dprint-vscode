@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
+import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
 import { EditorInfo } from "./executable";
+import { FolderService } from "./FolderService";
 import { ObjectDisposedError } from "./utils";
-import { WorkspaceFolderService } from "./WorkspaceFolderService";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 
 export interface FolderInfo {
-  folder: vscode.WorkspaceFolder;
+  uri: vscode.Uri;
   editorInfo: EditorInfo;
 }
 
@@ -17,7 +18,7 @@ export interface WorkspaceServiceOptions {
 /** Handles creating dprint instances for each workspace folder. */
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #outputChannel: vscode.OutputChannel;
-  readonly #folders: WorkspaceFolderService[] = [];
+  readonly #folders: FolderService[] = [];
 
   #disposed = false;
 
@@ -41,12 +42,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
+    const folder = this.#getFolderForUri(document.uri);
+    return folder?.provideDocumentFormattingEdits(document, options, token);
+  }
+
+  #getFolderForUri(uri: vscode.Uri) {
+    let bestMatch: FolderService | undefined;
     for (const folder of this.#folders) {
-      if (document.uri.fsPath.startsWith(folder.folder.uri.fsPath)) {
-        return folder.provideDocumentFormattingEdits(document, options, token);
+      if (uri.fsPath.startsWith(folder.uri.fsPath)) {
+        if (bestMatch == null || folder.uri.fsPath.startsWith(bestMatch.uri.fsPath)) {
+          bestMatch = folder;
+        }
       }
     }
-    return null;
+    return bestMatch;
   }
 
   #clearFolders() {
@@ -66,11 +75,24 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     for (const folder of vscode.workspace.workspaceFolders) {
       this.#folders.push(
-        new WorkspaceFolderService({
-          folder,
+        new FolderService({
+          workspaceFolder: folder,
+          configUri: undefined,
           outputChannel: this.#outputChannel,
         }),
       );
+
+      // now search within sub directories to find any configuration files
+      const subConfigFiles = await vscode.workspace.findFiles(`*/**/${DPRINT_CONFIG_FILENAME_GLOB}`);
+      for (const subConfigFile of subConfigFiles) {
+        this.#folders.push(
+          new FolderService({
+            workspaceFolder: folder,
+            configUri: subConfigFile,
+            outputChannel: this.#outputChannel,
+          }),
+        );
+      }
     }
 
     // now initialize in parallel
@@ -89,7 +111,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       if (folder != null) {
         const editorInfo = folder.getEditorInfo();
         if (editorInfo != null) {
-          allEditorInfos.push({ folder: folder.folder, editorInfo: editorInfo });
+          allEditorInfos.push({ uri: folder.uri, editorInfo: editorInfo });
         }
       }
     }
