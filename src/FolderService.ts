@@ -120,6 +120,11 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       const newText = await this.#editorService.formatText(document.fileName, document.getText(), token);
+      if (newText == null) {
+        this.#logger.logVerbose("Formatted (No change):", document.fileName);
+        return [];
+      }
+
       const lastLineNumber = document.lineCount - 1;
       const replaceRange = new vscode.Range(
         0,

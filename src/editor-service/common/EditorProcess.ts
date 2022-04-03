@@ -1,10 +1,9 @@
 import { ChildProcessByStdio } from "child_process";
 import { Readable, Writable } from "stream";
-import { TextDecoder, TextEncoder } from "util";
+import { TextDecoder } from "util";
 import { DprintExecutable } from "../../executable/DprintExecutable";
 import { Logger } from "../../logger";
 
-const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export class EditorProcess {
@@ -16,6 +15,10 @@ export class EditorProcess {
 
   constructor(private readonly logger: Logger, private readonly dprintExecutable: DprintExecutable) {
     this._process = this.createNewProcess();
+  }
+
+  get isRunning() {
+    return this._isRunning;
   }
 
   onExit(handler: () => void) {
@@ -85,53 +88,16 @@ export class EditorProcess {
     return childProcess;
   }
 
-  async writeString(value: string) {
-    const BUFFER_SIZE = 1024;
-    const bytes = Buffer.from(textEncoder.encode(value));
-    await this.writeInt(bytes.length);
-    if (bytes.length < BUFFER_SIZE) {
-      await this.writeBuffer(bytes);
-    } else {
-      // dislike how it doesn't seem to be possible to say "write this slice of this buffer to a stream"
-      let index = 0;
-      const fullBuffer = Buffer.alloc(1024);
-
-      while (index < bytes.length) {
-        if (index > 0) {
-          // wait for "ready" from CLI
-          await this.readInt();
-        }
-        const bufferSize = Math.min(BUFFER_SIZE, bytes.length - index);
-        const buffer = bufferSize === BUFFER_SIZE ? fullBuffer : Buffer.alloc(bufferSize); // reuse already allocated buffer if able
-        bytes.copy(buffer, 0, index, index + bufferSize);
-        await this.writeBuffer(buffer);
-        index += bufferSize;
-      }
-    }
-  }
-
-  async readString() {
-    const stringSize = await this.readInt();
-    const bytes = Buffer.alloc(stringSize);
-    let index = 0;
-    while (index < stringSize) {
-      if (index > 0) {
-        // send "ready" to CLI
-        await this.writeInt(0);
-      }
-      const nextBuffer = await this.readBuffer(stringSize - index);
-      nextBuffer.copy(bytes, index, 0, nextBuffer.length);
-      index += nextBuffer.length;
-    }
-    return textDecoder.decode(bytes);
-  }
-
   async readInt() {
     const buf = await this.readBuffer(4);
     return buf.readUInt32BE();
   }
 
   readBuffer(maxSize: number) {
+    if (maxSize === 0) {
+      return Promise.resolve(Buffer.alloc(0));
+    }
+
     return new Promise<Buffer>(resolve => {
       const buf = this.shiftBuffer(maxSize);
       if (buf != null) {
@@ -146,20 +112,15 @@ export class EditorProcess {
   }
 
   private shiftBuffer(maxSize: number) {
-    const buf = this._bufs.shift();
+    let buf = this._bufs.shift();
     if (buf != null) {
       if (buf.length > maxSize) {
         // insert the portion of the buffer back at the start
         this._bufs.unshift(buf.slice(maxSize));
+        buf = buf.slice(0, maxSize);
       }
     }
     return buf;
-  }
-
-  writeInt(value: number) {
-    const buf = Buffer.alloc(4);
-    buf.writeUInt32BE(value);
-    return this.writeBuffer(buf);
   }
 
   writeBuffer(buf: Buffer) {
