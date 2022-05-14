@@ -179,7 +179,6 @@ export class EditorService5 implements EditorService {
   private gracefulClose() {
     const message = this.getMessageForKind(MessageKind.ShutDownProcess);
     const buf = message.build();
-    this._process.startProcessIfNotRunning();
     return new Promise<void>(async (resolve, reject) => {
       this._pendingMessages.store(message.id, { resolve, reject });
       await this._process.writeBuffer(buf);
