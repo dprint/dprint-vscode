@@ -1,4 +1,5 @@
 import { exec, spawn } from "child_process";
+import * as os from "os";
 import * as vscode from "vscode";
 import { Logger } from "../logger";
 
@@ -34,12 +35,22 @@ export class DprintExecutable {
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
-  constructor(logger: Logger, options: DprintExecutableOptions) {
+  private constructor(logger: Logger, options: DprintExecutableOptions) {
     this.#logger = logger;
     this.#cmdPath = options.cmdPath ?? "dprint";
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
     this.#verbose = options.verbose;
+  }
+
+  static async create(logger: Logger, options: DprintExecutableOptions) {
+    return new DprintExecutable(logger, {
+      ...options,
+      cmdPath: options.cmdPath != null
+        ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
+        : // attempt to use the npm executable if it exists
+          await tryResolveNpmExecutable(options.cwd),
+    });
   }
 
   get cmdPath() {
@@ -144,4 +155,27 @@ export class DprintExecutable {
       return [];
     }
   }
+}
+
+function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
+  if (cmd.startsWith("./") || cmd.startsWith("../")) {
+    return vscode.Uri.joinPath(cwd, cmd).fsPath;
+  }
+
+  return cmd;
+}
+
+async function tryResolveNpmExecutable(cwd: vscode.Uri) {
+  const npmExecutablePath = vscode.Uri.joinPath(cwd, "node_modules", "dprint", getDprintExeName());
+
+  try {
+    await vscode.workspace.fs.stat(npmExecutablePath);
+    return npmExecutablePath.fsPath;
+  } catch {
+    return undefined;
+  }
+}
+
+function getDprintExeName() {
+  return os.platform() === "win32" ? "dprint.exe" : "dprint";
 }

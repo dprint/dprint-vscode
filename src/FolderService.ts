@@ -54,7 +54,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     this.#logger.setVerbose(config.verbose);
     this.#setEditorService(undefined);
-    const dprintExe = this.#getDprintExecutable();
+    const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
     this.#assertNotDisposed();
     if (!isInstalled) {
@@ -148,7 +148,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
-    return new DprintExecutable(this.#logger, {
+    return DprintExecutable.create(this.#logger, {
       cmdPath: config.path,
       // It's important that we always use the workspace folder as the
       // cwd for the process instead of possibly the sub directory because
