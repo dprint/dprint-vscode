@@ -1,5 +1,10 @@
 # Change Log
 
+### 0.12.0
+
+- feat: prefer resolving dprint executable in node_modules
+- feat: support for editor schema v5 (#30)
+
 ### 0.11.0
 
 - Support sub directories with dprint configuration files.
