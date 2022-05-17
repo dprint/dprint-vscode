@@ -54,7 +54,7 @@ export class DprintExecutable {
   }
 
   get cmdPath() {
-    return `"${this.#cmdPath}"`;
+    return this.#cmdPath;
   }
 
   get initializationFolderUri() {
@@ -66,7 +66,7 @@ export class DprintExecutable {
 
   async checkInstalled() {
     try {
-      await this.#execShell([this.cmdPath, "-v"], undefined, undefined);
+      await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
       return true;
     } catch (err: any) {
       this.#logger.logError(err.toString());
@@ -76,7 +76,7 @@ export class DprintExecutable {
 
   async getEditorInfo() {
     const stdout = await this.#execShell(
-      [this.cmdPath, "editor-info", ...this.#getConfigArgs()],
+      [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
       undefined,
       undefined,
     );
@@ -107,7 +107,7 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(this.cmdPath, args, {
+    return spawn(`"${this.#cmdPath}"`, args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
       // Set to true, to ensure this resolves properly on windows.
@@ -124,7 +124,7 @@ export class DprintExecutable {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const process = exec(command.join(" "), {
+        const process = exec(command.map(c => `"${c}"`).join(" "), {
           cwd: this.#cwd.fsPath,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
