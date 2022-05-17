@@ -170,7 +170,7 @@ async function tryResolveNpmExecutable(cwd: vscode.Uri) {
 
   try {
     await vscode.workspace.fs.stat(npmExecutablePath);
-    return npmExecutablePath.fsPath;
+    return `"${npmExecutablePath.fsPath}"`;
   } catch {
     return undefined;
   }
