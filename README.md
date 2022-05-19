@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.12.1
+
+- fix: support folders with spaces when resolving node_modules path and in `"dprint.path"` configuration
+
 ### 0.12.0
 
 - feat: prefer resolving dprint executable in node_modules
