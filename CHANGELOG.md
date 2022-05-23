@@ -2,7 +2,7 @@
 
 ### 0.13.0
 
-- feat: expand `~/` in the *dprint.path* configuration to the home directory
+- feat: expand `~/` in the _dprint.path_ configuration to the home directory
 
 ### 0.12.1
 

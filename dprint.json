@@ -1,7 +1,7 @@
 {
   "indentWidth": 2,
   "includes": [
-    "**/*.{ts,tsx,js,jsx,json}"
+    "**/*.{ts,tsx,js,jsx,json,md}"
   ],
   "excludes": [
     "**/node_modules",

@@ -18,7 +18,7 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
      // or specify per language, for example
      "[javascript]": {
        "editor.defaultFormatter": "dprint.dprint",
-       "editor.formatOnSave": true,
+       "editor.formatOnSave": true
      }
    }
    ```
@@ -61,7 +61,7 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ### 0.13.0
 
-- feat: expand `~/` in the *dprint.path* configuration to the home directory
+- feat: expand `~/` in the _dprint.path_ configuration to the home directory
 
 ### 0.12.1
 
