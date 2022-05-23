@@ -69,7 +69,7 @@ export class DprintExecutable {
       await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
       return true;
     } catch (err: any) {
-      this.#logger.logError(err.toString());
+      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err.toString());
       return false;
     }
   }

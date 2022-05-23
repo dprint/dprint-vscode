@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, EditorInfo } from "./executable";
 import { Logger, Notifier } from "./logger";
-import { ObjectDisposedError } from "./utils";
+import { ObjectDisposedError, shellExpand } from "./utils";
 
 export interface FolderServiceOptions {
   workspaceFolder: vscode.WorkspaceFolder;
@@ -169,8 +169,13 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     };
 
     function getPath() {
-      const path = config.get("path");
-      return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
+      const path = getRawPath();
+      return path == null ? undefined : shellExpand(path);
+
+      function getRawPath() {
+        const path = config.get("path");
+        return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
+      }
     }
 
     function getVerbose() {
