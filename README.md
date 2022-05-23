@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.13.0
+
+- feat: expand `~/` in the *dprint.path* configuration to the home directory
+
 ### 0.12.1
 
 - fix: support folders with spaces when resolving node_modules path and in `"dprint.path"` configuration
