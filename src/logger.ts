@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
 
 export class Notifier {
   readonly #outputChannel: vscode.OutputChannel;
@@ -38,7 +39,7 @@ export class Notifier {
     }
 
     try {
-      const result = await vscode.workspace.findFiles("**/{dprint,.dprint,.dprintrc}.json");
+      const result = await vscode.workspace.findFiles(`**/${DPRINT_CONFIG_FILENAME_GLOB}`, null, /* max results */ 1);
       if (result.length > 0) {
         this.#enableNotifications = true;
         return true;

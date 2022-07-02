@@ -29,6 +29,7 @@ export class EditorService5 implements EditorService {
   private async startReadingStdout() {
     while (true) {
       try {
+        this._process.startProcessIfNotRunning();
         const messageId = await this._process.readInt();
         const messageKind = await this._process.readInt();
         const bodyLength = await this._process.readInt();
