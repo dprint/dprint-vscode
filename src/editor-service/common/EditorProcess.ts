@@ -9,7 +9,10 @@ const textDecoder = new TextDecoder();
 export class EditorProcess {
   private _process: ChildProcessByStdio<Writable, Readable, Readable>;
   private _bufs: Buffer[] = [];
-  private _listener: (() => void) | undefined;
+  private _listener: {
+    resolve: (() => void);
+    reject: (err: unknown) => void;
+  } | undefined;
   private _onExitHandlers: (() => void)[] = [];
   private _isRunning = false;
 
@@ -31,6 +34,7 @@ export class EditorProcess {
     } catch {
       // ignore
     }
+    this._clearInternal();
   }
 
   startProcessIfNotRunning() {
@@ -66,13 +70,11 @@ export class EditorProcess {
       this._bufs.push(data);
       const listener = this._listener;
       this._listener = undefined;
-      listener?.();
+      listener?.resolve();
     });
 
     childProcess.on("exit", () => {
-      this._listener = undefined;
-      this._bufs.length = 0; // clear
-      this._isRunning = false;
+      this._clearInternal();
       for (const handler of this._onExitHandlers) {
         try {
           handler();
@@ -88,24 +90,37 @@ export class EditorProcess {
     return childProcess;
   }
 
+  private _clearInternal() {
+    const listener = this._listener;
+    this._listener = undefined;
+    this._bufs.length = 0; // clear
+    this._isRunning = false;
+    listener?.reject(new Error("Operation cancelled."));
+  }
+
   async readInt() {
     const buf = await this.readBuffer(4);
     return buf.readUInt32BE();
   }
 
   readBuffer(maxSize: number) {
+    this._throwIfNotRunning();
+
     if (maxSize === 0) {
       return Promise.resolve(Buffer.alloc(0));
     }
 
-    return new Promise<Buffer>(resolve => {
+    return new Promise<Buffer>((resolve, reject) => {
       const buf = this.shiftBuffer(maxSize);
       if (buf != null) {
         resolve(buf);
       } else {
-        this._listener = () => {
-          const buf = this.shiftBuffer(maxSize)!;
-          resolve(buf);
+        this._listener = {
+          resolve: () => {
+            const buf = this.shiftBuffer(maxSize)!;
+            resolve(buf);
+          },
+          reject,
         };
       }
     });
@@ -124,6 +139,7 @@ export class EditorProcess {
   }
 
   writeBuffer(buf: Buffer) {
+    this._throwIfNotRunning();
     return new Promise<void>((resolve, reject) => {
       this._process.stdin.write(buf, err => {
         if (err) {
@@ -133,5 +149,11 @@ export class EditorProcess {
         }
       });
     });
+  }
+
+  private _throwIfNotRunning() {
+    if (!this._isRunning) {
+      throw new Error("Editor service is not running.");
+    }
   }
 }
