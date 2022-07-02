@@ -10,7 +10,7 @@ export class EditorProcess {
   private _process: ChildProcessByStdio<Writable, Readable, Readable>;
   private _bufs: Buffer[] = [];
   private _listener: {
-    resolve: (() => void);
+    resolve: () => void;
     reject: (err: unknown) => void;
   } | undefined;
   private _onExitHandlers: (() => void)[] = [];

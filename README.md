@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.13.1
+
+- fix: handle dprint process being killed by an outside force
+
 ### 0.13.0
 
 - feat: expand `~/` in the _dprint.path_ configuration to the home directory
