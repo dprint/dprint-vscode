@@ -15,7 +15,6 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-    - name: Build
-      run: npm run compile
-    - name: Test
-      run: npm run test
+    - run: npm ci
+    - run: npm run compile
+    - run: npm run test
