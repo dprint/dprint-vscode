@@ -1,82 +1,91 @@
 {
-  "name": "dprint",
-  "displayName": "Dprint Code Formatter",
-  "description": "Formats code in VSCode using dprint.",
-  "author": "David Sherret",
-  "publisher": "dprint",
-  "version": "0.13.1",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/dprint/dprint-vscode.git"
-  },
-  "engines": {
-    "vscode": "^1.45.0"
-  },
-  "categories": [
-    "Formatters"
-  ],
-  "activationEvents": [
-    "onStartupFinished",
-    "onFileSystem:dprint"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "dprint.reset",
-        "title": "Dprint: Reset"
-      }
-    ],
-    "configuration": {
-      "type": "object",
-      "title": "dprint",
-      "properties": {
-        "dprint.path": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null,
-          "markdownDescription": "Specify a custom path for the dprint executable other than what's found on the path.",
-          "scope": "resource",
-          "examples": [
-            "/usr/bin/dprint",
-            "C:\\some-dir\\dprint.exe"
-          ]
-        },
-        "dprint.verbose": {
-          "type": [
-            "boolean",
-            "null"
-          ],
-          "default": false,
-          "markdownDescription": "Whether to enable verbose logging.",
-          "scope": "resource"
-        }
-      }
-    },
-    "jsonValidation": [
-      {
-        "fileMatch": "**/{dprint,.dprint,.dprintrc}.json",
-        "url": "dprint://schemas/config.json"
-      }
-    ]
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "run:extension": "code --extensionDevelopmentPath=.",
-    "watch": "npm run compile -- --watch"
-  },
-  "devDependencies": {
-    "@types/glob": "^7.1.4",
-    "@types/mocha": "^9.0.0",
-    "@types/node": "^16.11.1",
-    "@types/vscode": "^1.45.0",
-    "esbuild": "^0.14.29",
-    "glob": "^7.2.0",
-    "mocha": "^9.2.2",
-    "typescript": "^4.6.3"
-  }
+	"name": "dprint",
+	"displayName": "Dprint Code Formatter",
+	"description": "Formats code in VSCode using dprint.",
+	"author": "David Sherret",
+	"publisher": "dprint",
+	"version": "0.13.1",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dprint/dprint-vscode.git"
+	},
+	"engines": {
+		"vscode": "^1.45.0"
+	},
+	"categories": [
+		"Formatters"
+	],
+	"activationEvents": [
+		"onStartupFinished",
+		"onFileSystem:dprint"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "dprint.reset",
+				"title": "Dprint: Reset"
+			}
+		],
+		"configuration": {
+			"type": "object",
+			"title": "dprint",
+			"properties": {
+				"dprint.path": {
+					"type": [
+						"string",
+						"null"
+					],
+					"default": null,
+					"markdownDescription": "Specify a custom path for the dprint executable other than what's found on the path.",
+					"scope": "resource",
+					"examples": [
+						"/usr/bin/dprint",
+						"C:\\some-dir\\dprint.exe"
+					]
+				},
+				"dprint.verbose": {
+					"type": [
+						"boolean",
+						"null"
+					],
+					"default": false,
+					"markdownDescription": "Whether to enable verbose logging.",
+					"scope": "resource"
+				}
+			}
+		},
+		"jsonValidation": [
+			{
+				"fileMatch": "**/{dprint,.dprint,.dprintrc}.json",
+				"url": "dprint://schemas/config.json"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+		"run:extension": "code --extensionDevelopmentPath=.",
+		"watch": "npm run compile -- --watch",
+		"pretest": "tsc -p ./",
+		"test": "node ./out/test/runTest.js"
+	},
+	"devDependencies": {
+		"@types/glob": "^7.1.4",
+		"@types/mocha": "^9.0.0",
+		"@types/node": "^16.11.1",
+		"@types/vscode": "^1.45.0",
+		"esbuild": "^0.14.29",
+		"glob": "^7.2.0",
+		"mocha": "^9.2.2",
+		"typescript": "^4.6.3",
+		"@vscode/test-electron": "^2.1.5"
+	},
+	"__metadata": {
+		"id": "a71f21fc-951b-4829-92f5-ba423b77109f",
+		"publisherDisplayName": "dprint",
+		"publisherId": "fbc6f234-24bc-436b-a1f7-81d06d444496",
+		"isPreReleaseVersion": false
+	}
 }
