@@ -6,11 +6,14 @@ import * as path from "path";
 import * as vscode from "vscode";
 // import * as myExtension from '../../extension';
 
-suite("Extension Test Suite", () => {
+suite("Extension Test Suite", function() {
   vscode.window.showInformationMessage("Start all tests.");
   // create a temp folder
   let tempNumber = 0;
   let tempFolder = path.join(process.cwd(), "temp");
+  const isCI = process.env.CI != null;
+
+  this.timeout(isCI ? 20_000 : 4_000);
 
   const context = {
     get tempFolderUri() {
@@ -55,7 +58,7 @@ suite("Extension Test Suite", () => {
     },
     waitInitialize() {
       // would be nice to do something better
-      return this.sleep(250);
+      return this.sleep(isCI ? 1_000 : 250);
     },
     async sleep(ms: number) {
       await new Promise(resolve => setTimeout(resolve, ms));
