@@ -165,7 +165,7 @@ suite("Extension Test Suite", function() {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  }).timeout(4_000);
+  });
 
   async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
     const edit = new vscode.WorkspaceEdit();
