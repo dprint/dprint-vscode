@@ -10,7 +10,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout
@@ -19,5 +22,9 @@ jobs:
       run: npm ci
     - name: Build
       run: npm run compile
-    - name: Test
+    - name: Test (Linux)
+      if: runner.os == 'Linux'
+      run: xvfb-run -a npm test
+    - name: Test (Windows/Mac)
+      if: runner.os != 'Linux'
       run: npm run test
