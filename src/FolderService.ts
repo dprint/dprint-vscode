@@ -115,13 +115,13 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       if (!(await this.#editorService.canFormat(document.fileName))) {
-        this.#logger.logVerbose("File not matched:", document.fileName);
+        this.#logger.logVerbose("Response - File not matched:", document.fileName);
         return undefined;
       }
 
       const newText = await this.#editorService.formatText(document.fileName, document.getText(), token);
       if (newText == null) {
-        this.#logger.logVerbose("Formatted (No change):", document.fileName);
+        this.#logger.logVerbose("Response - Formatted (No change):", document.fileName);
         return [];
       }
 
@@ -133,7 +133,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         document.lineAt(lastLineNumber).text.length,
       );
       const result = [vscode.TextEdit.replace(replaceRange, newText)];
-      this.#logger.logVerbose("Formatted:", document.fileName);
+      this.#logger.logVerbose("Response - Formatted:", document.fileName);
       return result;
     } catch (err: any) {
       this.#logger.logError("Error formatting text.", err);
