@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.13.3
+
+- fix: regression where dprint versions <= 0.28 stopped formatting
+
 ### 0.13.2
 
 - fix: ensure large files get formatted on Mac
