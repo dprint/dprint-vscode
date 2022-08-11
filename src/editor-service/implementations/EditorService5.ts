@@ -34,7 +34,7 @@ export class EditorService5 implements EditorService {
         const messageKind = await this._process.readInt();
         const bodyLength = await this._process.readInt();
 
-        const body = new BodyReader(await this._process.readBuffer(bodyLength));
+        const body = new BodyReader(await this._process.readBufferExact(bodyLength));
         await assertSuccessBytes(this._process);
 
         switch (messageKind) {
@@ -83,7 +83,7 @@ export class EditorService5 implements EditorService {
     }
 
     async function assertSuccessBytes(process: EditorProcess) {
-      const buf = await process.readBuffer(4);
+      const buf = await process.readBufferExact(4);
       if (buf.length !== 4) {
         throw new Error(`Expected success byte array with length 4, but had length ${buf.length}.`);
       }

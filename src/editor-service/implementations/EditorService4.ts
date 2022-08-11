@@ -70,7 +70,7 @@ export class EditorService4 implements EditorService {
   }
 
   private async assertSuccessBytes() {
-    const buf = await this._process.readBuffer(4);
+    const buf = await this._process.readBufferExact(4);
     if (buf.length !== 4) {
       throw new Error(`Expected success byte array with length 4, but had length ${buf.length}.`);
     }
@@ -121,7 +121,7 @@ async function readString(process: EditorProcess) {
       // send "ready" to CLI
       await writeInt(process, 0);
     }
-    const nextBuffer = await process.readBuffer(stringSize - index);
+    const nextBuffer = await process.readBufferExact(stringSize - index);
     nextBuffer.copy(bytes, index, 0, nextBuffer.length);
     index += nextBuffer.length;
   }
