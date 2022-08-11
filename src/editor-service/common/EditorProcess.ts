@@ -99,11 +99,28 @@ export class EditorProcess {
   }
 
   async readInt() {
-    const buf = await this.readBuffer(4);
+    const buf = await this.readBufferExact(4);
     return buf.readUInt32BE();
   }
 
-  readBuffer(maxSize: number) {
+  async readBufferExact(size: number) {
+    let i = 0;
+    let finalBuffer: Buffer | undefined;
+    while (i < size) {
+      const remainingSize = size - i;
+      const buffer = await this.readBufferWithMaxSize(remainingSize);
+      if (i == 0 && buffer.length === size) {
+        return buffer;
+      } else if (finalBuffer == null) {
+        finalBuffer = Buffer.alloc(size);
+      }
+      buffer.copy(finalBuffer, i, 0);
+      i += buffer.length;
+    }
+    return finalBuffer ?? Buffer.alloc(0);
+  }
+
+  readBufferWithMaxSize(maxSize: number) {
     this._throwIfNotRunning();
 
     if (maxSize === 0) {
