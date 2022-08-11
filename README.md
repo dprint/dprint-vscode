@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.13.2
+
+- fix: ensure large files get formatted on Mac
+
 ### 0.13.1
 
 - fix: handle dprint process being killed by an outside force
