@@ -73,48 +73,48 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    for (const folder of vscode.workspace.workspaceFolders) {
-      this.#folders.push(
-        new FolderService({
-          workspaceFolder: folder,
-          configUri: undefined,
-          outputChannel: this.#outputChannel,
+    const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILENAME_GLOB);
+
+    // Initializes the workspace folder with the first config file that is found.
+    vscode.workspace.workspaceFolders.forEach((folder) => {
+      const stringFolderUri = folder.uri.toString();
+      const subConfigFile = configFiles.find((c) => c.toString().startsWith(stringFolderUri));
+      this.#initFolder(folder, subConfigFile);
+    });
+
+    const initializedFolders = (
+      await Promise.all(
+        this.#folders.map(async (f) => {
+          if (await f.initialize()) {
+            return f;
+          } else {
+            return undefined;
+          }
         }),
-      );
-
-      // now search within sub directories to find any configuration files
-      const subConfigFiles = await vscode.workspace.findFiles(`*/**/${DPRINT_CONFIG_FILENAME_GLOB}`);
-      for (const subConfigFile of subConfigFiles) {
-        this.#folders.push(
-          new FolderService({
-            workspaceFolder: folder,
-            configUri: subConfigFile,
-            outputChannel: this.#outputChannel,
-          }),
-        );
-      }
-    }
-
-    // now initialize in parallel
-    const initializedFolders = await Promise.all(this.#folders.map(async f => {
-      if (await f.initialize()) {
-        return f;
-      } else {
-        return undefined;
-      }
-    }));
+      )
+    ).filter((v): v is NonNullable<typeof v> => v != null);
 
     this.#assertNotDisposed();
 
-    const allEditorInfos: FolderInfo[] = [];
-    for (const folder of initializedFolders) {
-      if (folder != null) {
+    const allEditorInfos = initializedFolders
+      .map((folder) => {
         const editorInfo = folder.getEditorInfo();
         if (editorInfo != null) {
-          allEditorInfos.push({ uri: folder.uri, editorInfo: editorInfo });
+          return { uri: folder.uri, editorInfo: editorInfo };
         }
-      }
-    }
+      })
+      .filter((v): v is NonNullable<typeof v> => v != null);
+
     return allEditorInfos;
+  }
+
+  #initFolder(workspaceFolder: vscode.WorkspaceFolder, configUri?: vscode.Uri) {
+    this.#folders.push(
+      new FolderService({
+        outputChannel: this.#outputChannel,
+        configUri,
+        workspaceFolder,
+      }),
+    );
   }
 }

@@ -10,8 +10,7 @@ class GlobalPluginState {
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly outputChannel: vscode.OutputChannel,
-  ) {
-  }
+  ) {}
 
   dispose() {
     this.outputChannel.dispose();
@@ -37,18 +36,20 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
   // reinitialize on configuration file changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(`**/${DPRINT_CONFIG_FILENAME_GLOB}`);
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILENAME_GLOB);
   context.subscriptions.push(fileSystemWatcher);
   context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeEditorService));
 
   // reinitialize when the vscode configuration changes
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
-    if (evt.affectsConfiguration("dprint")) {
-      reInitializeEditorService();
-    }
-  }));
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((evt) => {
+      if (evt.affectsConfiguration("dprint")) {
+        reInitializeEditorService();
+      }
+    }),
+  );
 
   return reInitializeEditorService().then(() => {
     logger.logInfo(`Extension active!`);
@@ -77,7 +78,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     setFormattingSubscription(
       vscode.languages.registerDocumentFormattingEditProvider(
-        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
+        formattingPatterns.map((pattern) => ({ scheme: "file", pattern })),
         {
           async provideDocumentFormattingEdits(document, options, token) {
             return workspaceService.provideDocumentFormattingEdits(document, options, token);

@@ -78,7 +78,7 @@ export class EditorService5 implements EditorService {
         this._process.kill();
 
         // wait a little bit before reading again (in case this gets caught in an infinite failure)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
@@ -103,10 +103,14 @@ export class EditorService5 implements EditorService {
     }, 1_000);
 
     // send a graceful shutdown signal
-    this.gracefulClose().finally(() => {
-      this._process.kill();
-      clearTimeout(killTimeout);
-    }).catch(() => {/* ignore */});
+    this.gracefulClose()
+      .finally(() => {
+        this._process.kill();
+        clearTimeout(killTimeout);
+      })
+      .catch(() => {
+        /* ignore */
+      });
   }
 
   async canFormat(filePath: string) {
@@ -134,7 +138,7 @@ export class EditorService5 implements EditorService {
       const disposable = token.onCancellationRequested(() => {
         resolve(undefined);
         disposable.dispose();
-        this.cancelFormat(message.id).catch(_err => {
+        this.cancelFormat(message.id).catch((_err) => {
           // ignore
         });
       });
@@ -256,8 +260,7 @@ class BodyReader {
 class Message {
   private _parts: (Uint8Array | number)[] = [];
 
-  constructor(private readonly messageId: number, private readonly kind: MessageKind) {
-  }
+  constructor(private readonly messageId: number, private readonly kind: MessageKind) {}
 
   get id() {
     return this.messageId;
@@ -268,7 +271,9 @@ class Message {
   }
 
   build(): Buffer {
-    const bodyLength = this._parts.map(p => typeof p === "number" ? 4 : (p.byteLength + 4)).reduce((a, b) => a + b, 0);
+    const bodyLength = this._parts
+      .map((p) => (typeof p === "number" ? 4 : p.byteLength + 4))
+      .reduce((a, b) => a + b, 0);
     const byteLength = bodyLength + 4 * 4;
     const buf = Buffer.alloc(byteLength);
     buf.writeUInt32BE(this.messageId, 0);

@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, EditorInfo } from "./executable";
-import { Logger, Notifier } from "./logger";
+import { Logger } from "./logger";
+import { NotifierService } from "./NotifierService";
 import { ObjectDisposedError, shellExpand } from "./utils";
 
 export interface FolderServiceOptions {
@@ -10,11 +11,12 @@ export interface FolderServiceOptions {
   outputChannel: vscode.OutputChannel;
 }
 
+/** Represents an instance of dprint for a single workspace folder */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
-  #notifier: Notifier;
+  #notifier: NotifierService;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -24,7 +26,11 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = new Logger(opts.outputChannel);
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
-    this.#notifier = new Notifier(opts.outputChannel, this.#logger);
+    this.#notifier = new NotifierService({
+      outputChannel: opts.outputChannel,
+      logger: this.#logger,
+      configUri: opts.configUri,
+    });
   }
 
   get uri() {
@@ -126,12 +132,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       const lastLineNumber = document.lineCount - 1;
-      const replaceRange = new vscode.Range(
-        0,
-        0,
-        lastLineNumber,
-        document.lineAt(lastLineNumber).text.length,
-      );
+      const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
       const result = [vscode.TextEdit.replace(replaceRange, newText)];
       this.#logger.logVerbose("Response - Formatted:", document.fileName);
       return result;

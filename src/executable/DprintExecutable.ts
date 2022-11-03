@@ -83,7 +83,8 @@ export class DprintExecutable {
     const editorInfo = parseEditorInfo();
 
     if (
-      !(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number"
+      !(editorInfo.plugins instanceof Array)
+      || typeof editorInfo.schemaVersion !== "number"
       || isNaN(editorInfo.schemaVersion)
     ) {
       throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
@@ -124,18 +125,22 @@ export class DprintExecutable {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const process = exec(command.map(quoteCommandArg).join(" "), {
-          cwd: this.#cwd.fsPath,
-          encoding: "utf8",
-        }, (err, stdout, stderr) => {
-          if (err) {
+        const process = exec(
+          command.map(quoteCommandArg).join(" "),
+          {
+            cwd: this.#cwd.fsPath,
+            encoding: "utf8",
+          },
+          (err, stdout, stderr) => {
+            if (err) {
+              cancellationDisposable?.dispose();
+              reject(stderr);
+              return;
+            }
+            resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
             cancellationDisposable?.dispose();
-            reject(stderr);
-            return;
-          }
-          resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
-          cancellationDisposable?.dispose();
-        });
+          },
+        );
         cancellationDisposable = token?.onCancellationRequested(() => process.kill());
         if (stdin != null) {
           process.stdin!.write(stdin);

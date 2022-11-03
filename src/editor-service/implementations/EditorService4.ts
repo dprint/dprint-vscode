@@ -25,10 +25,14 @@ export class EditorService4 implements EditorService {
     }, 1_000);
 
     // send a graceful shutdown signal
-    writeInt(this._process, 0).finally(() => {
-      this._process.kill();
-      clearTimeout(killTimeout);
-    }).catch(() => {/* ignore */});
+    writeInt(this._process, 0)
+      .finally(() => {
+        this._process.kill();
+        clearTimeout(killTimeout);
+      })
+      .catch(() => {
+        /* ignore */
+      });
   }
 
   canFormat(filePath: string) {
