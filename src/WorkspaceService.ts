@@ -76,17 +76,19 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILEPATH_GLOB);
 
     // Initializes the workspace folder with the first config file that is found.
-    vscode.workspace.workspaceFolders.forEach((folder) => {
+    for (const folder of vscode.workspace.workspaceFolders) {
       const stringFolderUri = folder.uri.toString();
-      const subConfigUri = configFiles.find((c) => c.toString().startsWith(stringFolderUri));
-      this.#folders.push(
-        new FolderService({
-          outputChannel: this.#outputChannel,
-          configUri: subConfigUri,
-          workspaceFolder: folder,
-        }),
-      );
-    });
+      const subConfigUris = configFiles.filter(c => c.toString().startsWith(stringFolderUri));
+      for (const subConfigUri of subConfigUris) {
+        this.#folders.push(
+          new FolderService({
+            outputChannel: this.#outputChannel,
+            configUri: subConfigUri,
+            workspaceFolder: folder,
+          }),
+        );
+      }
+    }
 
     // now initialize in parallel
     const initializedFolders = await Promise.all(this.#folders.map(async f => {
