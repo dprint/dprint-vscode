@@ -108,7 +108,6 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         }
       }
     }
-
     return allEditorInfos;
   }
 }

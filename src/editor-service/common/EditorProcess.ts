@@ -158,7 +158,7 @@ export class EditorProcess {
   writeBuffer(buf: Buffer) {
     this._throwIfNotRunning();
     return new Promise<void>((resolve, reject) => {
-      this._process.stdin.write(buf, (err) => {
+      this._process.stdin.write(buf, err => {
         if (err) {
           reject(err);
         } else {
