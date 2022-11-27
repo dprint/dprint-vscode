@@ -107,7 +107,7 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args, {
+    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
       // Set to true, to ensure this resolves properly on windows.
