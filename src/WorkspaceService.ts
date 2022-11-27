@@ -78,7 +78,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     // Initializes the workspace folder with the first config file that is found.
     vscode.workspace.workspaceFolders.forEach((folder) => {
       const stringFolderUri = folder.uri.toString();
-      const subConfigFile = configFiles.find((c) => c.toString().startsWith(stringFolderUri));
+      const subConfigUri = configFiles.find((c) => c.toString().startsWith(stringFolderUri));
       this.#folders.push(
         new FolderService({
           outputChannel: this.#outputChannel,
@@ -89,28 +89,25 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     });
 
     // now initialize in parallel
-    const initializedFolders = (
-      await Promise.all(
-        this.#folders.map(async (f) => {
-          if (await f.initialize()) {
-            return f;
-          } else {
-            return undefined;
-          }
-        }),
-      )
-    ).filter((v): v is NonNullable<typeof v> => v != null);
+    const initializedFolders = await Promise.all(this.#folders.map(async f => {
+      if (await f.initialize()) {
+        return f;
+      } else {
+        return undefined;
+      }
+    }));
 
     this.#assertNotDisposed();
 
-    const allEditorInfos = initializedFolders
-      .map((folder) => {
+    const allEditorInfos: FolderInfo[] = [];
+    for (const folder of initializedFolders) {
+      if (folder != null) {
         const editorInfo = folder.getEditorInfo();
         if (editorInfo != null) {
-          return { uri: folder.uri, editorInfo: editorInfo };
+          allEditorInfos.push({ uri: folder.uri, editorInfo: editorInfo });
         }
-      })
-      .filter((v): v is NonNullable<typeof v> => v != null);
+      }
+    }
 
     return allEditorInfos;
   }
