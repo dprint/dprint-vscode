@@ -82,9 +82,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       for (const subConfigUri of subConfigUris) {
         this.#folders.push(
           new FolderService({
-            outputChannel: this.#outputChannel,
-            configUri: subConfigUri,
             workspaceFolder: folder,
+            configUri: subConfigUri,
+            outputChannel: this.#outputChannel,
           }),
         );
       }
