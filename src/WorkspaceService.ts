@@ -79,9 +79,16 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     vscode.workspace.workspaceFolders.forEach((folder) => {
       const stringFolderUri = folder.uri.toString();
       const subConfigFile = configFiles.find((c) => c.toString().startsWith(stringFolderUri));
-      this.#initFolder(folder, subConfigFile);
+      this.#folders.push(
+        new FolderService({
+          outputChannel: this.#outputChannel,
+          configUri: subConfigUri,
+          workspaceFolder: folder,
+        }),
+      );
     });
 
+    // now initialize in parallel
     const initializedFolders = (
       await Promise.all(
         this.#folders.map(async (f) => {
@@ -106,15 +113,5 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       .filter((v): v is NonNullable<typeof v> => v != null);
 
     return allEditorInfos;
-  }
-
-  #initFolder(workspaceFolder: vscode.WorkspaceFolder, configUri?: vscode.Uri) {
-    this.#folders.push(
-      new FolderService({
-        outputChannel: this.#outputChannel,
-        configUri,
-        workspaceFolder,
-      }),
-    );
   }
 }

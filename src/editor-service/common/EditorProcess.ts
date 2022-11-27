@@ -9,12 +9,10 @@ const textDecoder = new TextDecoder();
 export class EditorProcess {
   private _process: ChildProcessByStdio<Writable, Readable, Readable>;
   private _bufs: Buffer[] = [];
-  private _listener:
-    | {
-      resolve: () => void;
-      reject: (err: unknown) => void;
-    }
-    | undefined;
+  private _listener: {
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  } | undefined;
   private _onExitHandlers: (() => void)[] = [];
   private _isRunning = false;
 
@@ -49,7 +47,7 @@ export class EditorProcess {
   private createNewProcess() {
     const childProcess = this.dprintExecutable.spawnEditorService();
 
-    childProcess.stderr.on("data", (data) => {
+    childProcess.stderr.on("data", data => {
       const dataText = getDataAsString();
       if (dataText != null) {
         this.logger.log(dataText.trim());
@@ -68,7 +66,7 @@ export class EditorProcess {
     });
 
     // really dislike this api... just allow me to await a result please
-    childProcess.stdout.on("data", (data) => {
+    childProcess.stdout.on("data", data => {
       this._bufs.push(data);
       const listener = this._listener;
       this._listener = undefined;
