@@ -33,6 +33,11 @@ export class Logger {
   logError(message: string, ...args: any[]) {
     this.#outputChannel.appendLine(getFormattedMessageWithLevel("error", message, args));
   }
+
+  logErrorAndFocus(message: string, ...args: any[]) {
+    this.logError(message, ...args);
+    this.#outputChannel.show();
+  }
 }
 
 function getFormattedMessageWithLevel(level: "verbose" | "info" | "warn" | "error", message: string, args: any[]) {

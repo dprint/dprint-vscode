@@ -75,7 +75,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILEPATH_GLOB);
 
-    // Initializes the workspace folder with the first config file that is found.
+    // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
       const stringFolderUri = folder.uri.toString();
       const subConfigUris = configFiles.filter(c => c.toString().startsWith(stringFolderUri));

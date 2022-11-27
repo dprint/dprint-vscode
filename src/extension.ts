@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeEditorService));
 
   // reinitialize when the vscode configuration changes
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((evt) => {
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
     if (evt.affectsConfiguration("dprint")) {
       reInitializeEditorService();
     }

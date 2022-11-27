@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, EditorInfo } from "./executable";
 import { Logger } from "./logger";
-import { NotifierService } from "./NotifierService";
 import { ObjectDisposedError, shellExpand } from "./utils";
 
 export interface FolderServiceOptions {
@@ -16,7 +15,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
-  #notifier: NotifierService;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -26,11 +24,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = new Logger(opts.outputChannel);
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
-    this.#notifier = new NotifierService({
-      outputChannel: opts.outputChannel,
-      logger: this.#logger,
-      configUri: opts.configUri,
-    });
   }
 
   get uri() {
@@ -64,7 +57,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const isInstalled = await dprintExe.checkInstalled();
     this.#assertNotDisposed();
     if (!isInstalled) {
-      this.#notifier.showErrorMessageNotification(
+      this.#logger.logErrorAndFocus(
         `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
           + `or specify a "dprint.path" setting to the executable.`,
       );
@@ -75,7 +68,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       const editorInfo = await dprintExe.getEditorInfo();
       this.#assertNotDisposed();
       this.#editorInfo = editorInfo;
-      this.#notifier.enableNotifications(editorInfo.plugins.length > 0);
 
       // don't start up if there's no plugins
       if (editorInfo.plugins.length === 0) {
@@ -99,8 +91,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         throw err;
       }
 
-      this.#notifier.showErrorMessageNotification(`Error initializing dprint. ${err}`);
-      this.#notifier.logErrorAndFocus(`Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`, err);
+      this.#logger.logErrorAndFocus(`Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`, err);
       return false;
     }
   }
