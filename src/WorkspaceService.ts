@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { EditorInfo } from "./executable";
 import { FolderService } from "./FolderService";
 import { ObjectDisposedError } from "./utils";
@@ -73,7 +73,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILENAME_GLOB);
+    const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILEPATH_GLOB);
 
     // Initializes the workspace folder with the first config file that is found.
     vscode.workspace.workspaceFolders.forEach((folder) => {
