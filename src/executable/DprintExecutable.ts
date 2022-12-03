@@ -48,8 +48,8 @@ export class DprintExecutable {
       ...options,
       cmdPath: options.cmdPath != null
         ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
-        : // attempt to use the npm executable if it exists
-          await tryResolveNpmExecutable(options.cwd),
+        // attempt to use the npm executable if it exists
+        : await tryResolveNpmExecutable(options.cwd),
     });
   }
 

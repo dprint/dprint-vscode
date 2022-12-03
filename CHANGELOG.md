@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.13.4
+
+- perf: reduce startup cpu usage with multiple workspace folders
+
 ### 0.13.3
 
 - fix: regression where dprint versions <= 0.28 stopped formatting
