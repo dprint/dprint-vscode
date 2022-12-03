@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { Logger } from "./logger";
 import { HttpsTextDownloader } from "./TextDownloader";
 import { ObjectDisposedError } from "./utils";
@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
   // reinitialize on configuration file changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(`**/${DPRINT_CONFIG_FILENAME_GLOB}`);
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
   context.subscriptions.push(fileSystemWatcher);
   context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));

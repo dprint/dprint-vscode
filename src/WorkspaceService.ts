@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { EditorInfo } from "./executable";
 import { FolderService } from "./FolderService";
 import { ObjectDisposedError } from "./utils";
@@ -73,22 +73,17 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    for (const folder of vscode.workspace.workspaceFolders) {
-      this.#folders.push(
-        new FolderService({
-          workspaceFolder: folder,
-          configUri: undefined,
-          outputChannel: this.#outputChannel,
-        }),
-      );
+    const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILEPATH_GLOB);
 
-      // now search within sub directories to find any configuration files
-      const subConfigFiles = await vscode.workspace.findFiles(`*/**/${DPRINT_CONFIG_FILENAME_GLOB}`);
-      for (const subConfigFile of subConfigFiles) {
+    // Initialize the workspace folders with each sub configuration that's found.
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const stringFolderUri = folder.uri.toString();
+      const subConfigUris = configFiles.filter(c => c.toString().startsWith(stringFolderUri));
+      for (const subConfigUri of subConfigUris) {
         this.#folders.push(
           new FolderService({
             workspaceFolder: folder,
-            configUri: subConfigFile,
+            configUri: subConfigUri,
             outputChannel: this.#outputChannel,
           }),
         );

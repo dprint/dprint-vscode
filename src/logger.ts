@@ -1,57 +1,4 @@
 import * as vscode from "vscode";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
-
-export class Notifier {
-  readonly #outputChannel: vscode.OutputChannel;
-  readonly #logger: Logger;
-  #enableNotifications = false;
-
-  constructor(outputChannel: vscode.OutputChannel, logger: Logger) {
-    this.#outputChannel = outputChannel;
-    this.#logger = logger;
-  }
-
-  logErrorAndFocus(message: string, ...args: any[]) {
-    this.#logger.logError(message, ...args);
-
-    this.#getShowNotifications().then(shouldShow => {
-      if (shouldShow) {
-        this.#outputChannel.show();
-      }
-    });
-  }
-
-  showErrorMessageNotification(message: string) {
-    this.#getShowNotifications().then(shouldShow => {
-      if (shouldShow) {
-        vscode.window.showErrorMessage(message);
-      }
-    });
-  }
-
-  enableNotifications(value: boolean) {
-    this.#enableNotifications = value;
-  }
-
-  async #getShowNotifications() {
-    if (this.#enableNotifications) {
-      return true;
-    }
-
-    try {
-      const result = await vscode.workspace.findFiles(`**/${DPRINT_CONFIG_FILENAME_GLOB}`, null, /* max results */ 1);
-      if (result.length > 0) {
-        this.#enableNotifications = true;
-        return true;
-      } else {
-        return false;
-      }
-    } catch (err) {
-      this.#logger.logError("Error globbing for config file.", err);
-      return false;
-    }
-  }
-}
 
 export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
@@ -85,6 +32,11 @@ export class Logger {
 
   logError(message: string, ...args: any[]) {
     this.#outputChannel.appendLine(getFormattedMessageWithLevel("error", message, args));
+  }
+
+  logErrorAndFocus(message: string, ...args: any[]) {
+    this.logError(message, ...args);
+    this.#outputChannel.show();
   }
 }
 

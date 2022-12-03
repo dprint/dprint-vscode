@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { createEditorService, EditorService } from "./editor-service";
 import { DprintExecutable, EditorInfo } from "./executable";
-import { Logger, Notifier } from "./logger";
+import { Logger } from "./logger";
 import { ObjectDisposedError, shellExpand } from "./utils";
 
 export interface FolderServiceOptions {
@@ -10,11 +10,11 @@ export interface FolderServiceOptions {
   outputChannel: vscode.OutputChannel;
 }
 
+/** Represents an instance of dprint for a single workspace folder */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
-  #notifier: Notifier;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -24,7 +24,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = new Logger(opts.outputChannel);
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
-    this.#notifier = new Notifier(opts.outputChannel, this.#logger);
   }
 
   get uri() {
@@ -58,7 +57,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const isInstalled = await dprintExe.checkInstalled();
     this.#assertNotDisposed();
     if (!isInstalled) {
-      this.#notifier.showErrorMessageNotification(
+      this.#logger.logErrorAndFocus(
         `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
           + `or specify a "dprint.path" setting to the executable.`,
       );
@@ -69,7 +68,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       const editorInfo = await dprintExe.getEditorInfo();
       this.#assertNotDisposed();
       this.#editorInfo = editorInfo;
-      this.#notifier.enableNotifications(editorInfo.plugins.length > 0);
 
       // don't start up if there's no plugins
       if (editorInfo.plugins.length === 0) {
@@ -93,8 +91,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         throw err;
       }
 
-      this.#notifier.showErrorMessageNotification(`Error initializing dprint. ${err}`);
-      this.#notifier.logErrorAndFocus(`Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`, err);
+      this.#logger.logErrorAndFocus(`Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`, err);
       return false;
     }
   }
@@ -126,12 +123,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       const lastLineNumber = document.lineCount - 1;
-      const replaceRange = new vscode.Range(
-        0,
-        0,
-        lastLineNumber,
-        document.lineAt(lastLineNumber).text.length,
-      );
+      const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
       const result = [vscode.TextEdit.replace(replaceRange, newText)];
       this.#logger.logVerbose("Response - Formatted:", document.fileName);
       return result;

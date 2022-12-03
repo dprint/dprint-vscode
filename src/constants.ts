@@ -1,1 +1,1 @@
-export const DPRINT_CONFIG_FILENAME_GLOB = "{dprint,.dprint,.dprintrc}.json";
+export const DPRINT_CONFIG_FILEPATH_GLOB = "**/{dprint,.dprint,.dprintrc}.json";
