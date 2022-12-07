@@ -88,6 +88,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
           }),
         );
       }
+
+      // if the current workspace folder hasn't been added, then ensure
+      // it's added to the list of folders in order to allow someone
+      // formatting when the current open workspace is in a sub directory
+      // of a workspace
+      if (!this.#folders.some(f => f.uri === folder.uri)) {
+        this.#folders.push(
+          new FolderService({
+            workspaceFolder: folder,
+            configUri: undefined,
+            outputChannel: this.#outputChannel,
+          }),
+        );
+      }
     }
 
     // now initialize in parallel
