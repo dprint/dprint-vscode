@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.13.5
+
+- fix: regression opening a descendant directory of a folder with a config file
+
 ### 0.13.4
 
 - perf: reduce startup cpu usage with multiple workspace folders
