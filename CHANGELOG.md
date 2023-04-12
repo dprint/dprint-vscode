@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.13.6
+
+- fix: focus the dprint output window max one time per session
+
 ### 0.13.5
 
 - fix: regression opening a descendant directory of a folder with a config file
