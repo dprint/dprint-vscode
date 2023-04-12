@@ -4,6 +4,8 @@ export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
   #verbose = false;
 
+  static #hasFocused = false;
+
   constructor(outputChannel: vscode.OutputChannel) {
     this.#outputChannel = outputChannel;
   }
@@ -36,7 +38,11 @@ export class Logger {
 
   logErrorAndFocus(message: string, ...args: any[]) {
     this.logError(message, ...args);
-    this.#outputChannel.show();
+    // only focus max one time per session to not annoy people
+    if (!Logger.#hasFocused) {
+      Logger.#hasFocused = true;
+      this.#outputChannel.show();
+    }
   }
 }
 
