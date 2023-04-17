@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.14.0
+
+- feat: auto-discover dprint.jsonc config (supported in dprint 0.36+)
+
 ### 0.13.6
 
 - fix: focus the dprint output window max one time per session
