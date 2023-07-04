@@ -165,7 +165,20 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       return path == null ? undefined : shellExpand(path);
 
       function getRawPath() {
-        const path = config.get("path");
+        let path: string | undefined;
+        console.log(config.get("linuxPath"));
+        switch (process.platform) {
+          case "linux":
+            path = config.get("linuxPath");
+            break;
+          case "darwin":
+            path = config.get("macOsPath");
+            break;
+          case "win32":
+            path = config.get("windowsPath");
+            break;
+        }
+
         return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
       }
     }

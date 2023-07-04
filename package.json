@@ -32,16 +32,39 @@
       "type": "object",
       "title": "dprint",
       "properties": {
-        "dprint.path": {
+        "dprint.linuxPath": {
           "type": [
             "string",
             "null"
           ],
           "default": null,
-          "markdownDescription": "Specify a custom path for the dprint executable other than what's found on the path.",
+          "markdownDescription": "Specify a custom path for the dprint executable on Linux other than what's found on the path.",
           "scope": "resource",
           "examples": [
-            "/usr/bin/dprint",
+            "/usr/bin/dprint"
+          ]
+        },
+        "dprint.macOsPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Specify a custom path for the dprint executable on macOS other than what's found on the path.",
+          "scope": "resource",
+          "examples": [
+            "/usr/bin/dprint"
+          ]
+        },
+        "dprint.windowsPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Specify a custom path for the dprint executable on Windows other than what's found on the path.",
+          "scope": "resource",
+          "examples": [
             "C:\\some-dir\\dprint.exe"
           ]
         },
