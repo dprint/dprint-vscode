@@ -166,7 +166,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
       function getRawPath() {
         let path: string | undefined;
-        console.log(config.get("linuxPath"));
         switch (process.platform) {
           case "linux":
             path = config.get("linuxPath");
