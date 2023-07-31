@@ -7,21 +7,20 @@ import { Logger } from "../../logger";
 const textDecoder = new TextDecoder();
 
 export class EditorProcess {
-  private _process: ChildProcessByStdio<Writable, Readable, Readable>;
+  // lazily initialize the process
+  private _process: ChildProcessByStdio<Writable, Readable, Readable> | undefined;
   private _bufs: Buffer[] = [];
   private _listener: {
     resolve: () => void;
     reject: (err: unknown) => void;
   } | undefined;
   private _onExitHandlers: (() => void)[] = [];
-  private _isRunning = false;
 
   constructor(private readonly logger: Logger, private readonly dprintExecutable: DprintExecutable) {
-    this._process = this.createNewProcess();
   }
 
   get isRunning() {
-    return this._isRunning;
+    return this._process != null;
   }
 
   onExit(handler: () => void) {
@@ -30,7 +29,7 @@ export class EditorProcess {
 
   kill() {
     try {
-      this._process.kill();
+      this._process?.kill();
     } catch {
       // ignore
     }
@@ -38,10 +37,11 @@ export class EditorProcess {
   }
 
   startProcessIfNotRunning() {
-    if (!this._isRunning) {
+    if (this._process == null) {
       this.kill();
       this._process = this.createNewProcess();
     }
+    return this._process;
   }
 
   private createNewProcess() {
@@ -85,7 +85,6 @@ export class EditorProcess {
     });
 
     this._bufs.length = 0; // clear
-    this._isRunning = true;
 
     return childProcess;
   }
@@ -94,7 +93,7 @@ export class EditorProcess {
     const listener = this._listener;
     this._listener = undefined;
     this._bufs.length = 0; // clear
-    this._isRunning = false;
+    this._process = undefined;
     listener?.reject(new Error("Operation cancelled."));
   }
 
@@ -156,9 +155,9 @@ export class EditorProcess {
   }
 
   writeBuffer(buf: Buffer) {
-    this._throwIfNotRunning();
+    const process = this._throwIfNotRunning();
     return new Promise<void>((resolve, reject) => {
-      this._process.stdin.write(buf, err => {
+      process.stdin.write(buf, err => {
         if (err) {
           reject(err);
         } else {
@@ -169,8 +168,9 @@ export class EditorProcess {
   }
 
   private _throwIfNotRunning() {
-    if (!this._isRunning) {
+    if (this._process == null) {
       throw new Error("Editor service is not running.");
     }
+    return this._process;
   }
 }
