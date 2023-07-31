@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
 
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitializeEditorService));
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeEditorService));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
 
   // reinitialize on configuration file changes

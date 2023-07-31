@@ -24,8 +24,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "dprint.reset",
-        "title": "Dprint: Reset"
+        "command": "dprint.restart",
+        "title": "Dprint: Restart"
       }
     ],
     "configuration": {
