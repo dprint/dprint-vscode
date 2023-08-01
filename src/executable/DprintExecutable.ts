@@ -69,7 +69,7 @@ export class DprintExecutable {
       await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
       return true;
     } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err.toString());
+      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
       return false;
     }
   }
@@ -165,13 +165,18 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
   return cmd;
 }
 
-async function tryResolveNpmExecutable(cwd: vscode.Uri) {
-  const npmExecutablePath = vscode.Uri.joinPath(cwd, "node_modules", "dprint", getDprintExeName());
+async function tryResolveNpmExecutable(dir: vscode.Uri) {
+  const npmExecutablePath = vscode.Uri.joinPath(dir, "node_modules", "dprint", getDprintExeName());
 
   try {
     await vscode.workspace.fs.stat(npmExecutablePath);
     return npmExecutablePath.fsPath;
   } catch {
+    // check the ancestors for a node_modules directory
+    const parentDir = vscode.Uri.joinPath(dir, "../");
+    if (parentDir.fsPath !== dir.fsPath) {
+      return tryResolveNpmExecutable(parentDir);
+    }
     return undefined;
   }
 }
