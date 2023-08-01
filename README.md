@@ -59,6 +59,12 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.15.0
+
+- feat: auto-discover dprint in ancestor node_modules directories (#66)
+- feat: rename dprint.reset to dprint.restart (#65)
+- perf: lazily startup editor process (#64)
+
 ### 0.14.0
 
 - feat: auto-discover dprint.jsonc config (supported in dprint 0.36+)
