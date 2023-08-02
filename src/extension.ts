@@ -96,7 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
           // we can't use the "includes" and "excludes" patterns from the config file because we
           // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
           // pattern matching being the same.
-          const pattern = new vscode.RelativePattern(folderInfo.uri.path, `**/*`);
+          const pattern = new vscode.RelativePattern(folderInfo.uri, `**/*`);
           patterns.push(pattern);
         }
       }
