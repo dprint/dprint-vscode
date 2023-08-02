@@ -62,7 +62,7 @@ suite("Extension Test Suite", () => {
     },
     async openAndShowDocument(name: string) {
       const doc = await vscode.workspace.openTextDocument(this.getUri(name));
-      await vscode.window.showTextDocument(doc, 0, false);
+      await vscode.window.showTextDocument(doc, undefined, false);
       return doc;
     },
     async formatCommand(name: string | vscode.Uri) {
