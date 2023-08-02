@@ -23,6 +23,8 @@ export interface PluginInfo {
 export interface DprintExecutableOptions {
   /** The path to the dprint executable. */
   cmdPath: string | undefined;
+  /** Command that will execute dprint */
+  command: string | undefined;
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
   verbose: boolean;
@@ -37,7 +39,7 @@ export class DprintExecutable {
 
   private constructor(logger: Logger, options: DprintExecutableOptions) {
     this.#logger = logger;
-    this.#cmdPath = options.cmdPath ?? "dprint";
+    this.#cmdPath = options.cmdPath ?? options.command ?? "dprint";
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
     this.#verbose = options.verbose;

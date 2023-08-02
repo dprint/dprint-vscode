@@ -142,6 +142,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     return DprintExecutable.create(this.#logger, {
       cmdPath: config.path,
+      command: config.command,
       // It's important that we always use the workspace folder as the
       // cwd for the process instead of possibly the sub directory because
       // we don't want the dprint process to hold a resource lock on a
@@ -157,8 +158,14 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = vscode.workspace.getConfiguration("dprint", this.uri);
     return {
       path: getPath(),
+      command: getCommand(),
       verbose: getVerbose(),
     };
+
+    function getCommand() {
+      const command = config.command;
+      return typeof command === "string" && command.trim().length > 0 ? command.trim() : undefined;
+    }
 
     function getPath() {
       const path = getRawPath();
