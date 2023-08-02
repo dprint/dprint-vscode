@@ -165,8 +165,15 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
   return cmd;
 }
 
-async function tryResolveNpmExecutable(dir: vscode.Uri) {
-  const npmExecutablePath = vscode.Uri.joinPath(dir, "node_modules", "dprint", getDprintExeName());
+async function tryResolveNpmExecutable(
+  dir: vscode.Uri,
+): Promise<string | undefined> {
+  const npmExecutablePath = vscode.Uri.joinPath(
+    dir,
+    "node_modules",
+    "dprint",
+    getDprintExeName(),
+  );
 
   try {
     await vscode.workspace.fs.stat(npmExecutablePath);
