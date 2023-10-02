@@ -59,6 +59,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.15.1
+
+- fix: exclude searching for dprint config files in node_modules folders
+
 ### 0.15.0
 
 - feat: auto-discover dprint in ancestor node_modules directories (#66)
