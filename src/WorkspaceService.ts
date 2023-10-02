@@ -73,7 +73,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    const configFiles = await vscode.workspace.findFiles(DPRINT_CONFIG_FILEPATH_GLOB);
+    const configFiles = await vscode.workspace.findFiles(
+      /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
+      /* exclude */ "**/node_modules/**",
+    );
 
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
