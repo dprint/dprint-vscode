@@ -23,6 +23,8 @@ export interface PluginInfo {
 export interface DprintExecutableOptions {
   /** The path to the dprint executable. */
   cmdPath: string | undefined;
+  /** Command that will execute dprint */
+  command: string | undefined;
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
   verbose: boolean;
@@ -35,8 +37,18 @@ export class DprintExecutable {
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
+  readonly #command: string | undefined;
+  readonly #commandArguments: string[] | undefined;
+
   private constructor(logger: Logger, options: DprintExecutableOptions) {
     this.#logger = logger;
+
+    if (options.command && options.command.length > 0) {
+      const cmd = options.command.split(/\s/);
+      this.#command = cmd[0];
+      this.#commandArguments = cmd.slice(1);
+    }
+
     this.#cmdPath = options.cmdPath ?? "dprint";
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
@@ -46,10 +58,11 @@ export class DprintExecutable {
   static async create(logger: Logger, options: DprintExecutableOptions) {
     return new DprintExecutable(logger, {
       ...options,
-      cmdPath: options.cmdPath != null
-        ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
-        // attempt to use the npm executable if it exists
-        : await tryResolveNpmExecutable(options.cwd),
+      cmdPath: options.command
+        ?? (options.cmdPath != null
+          ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
+          // attempt to use the npm executable if it exists
+          : await tryResolveNpmExecutable(options.cwd)),
     });
   }
 
@@ -66,7 +79,13 @@ export class DprintExecutable {
 
   async checkInstalled() {
     try {
-      await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
+      await this.#execShell(
+        this.#command
+          ? [this.#command, ...this.#commandArguments!, "-v"]
+          : [this.#cmdPath, "-v"],
+        undefined,
+        undefined,
+      );
       return true;
     } catch (err: any) {
       this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
@@ -76,7 +95,9 @@ export class DprintExecutable {
 
   async getEditorInfo() {
     const stdout = await this.#execShell(
-      [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
+      this.#command
+        ? [this.#command, ...this.#commandArguments!, "editor-info", ...this.#getConfigArgs()]
+        : [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
       undefined,
       undefined,
     );
@@ -86,7 +107,9 @@ export class DprintExecutable {
       !(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number"
       || isNaN(editorInfo.schemaVersion)
     ) {
-      throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
+      throw new Error(
+        "Error getting editor info. Your editor extension or dprint CLI might be out of date.",
+      );
     }
 
     return editorInfo;
@@ -107,13 +130,19 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: this.#cwd.fsPath,
-      // Set to true, to ensure this resolves properly on windows.
-      // See https://github.com/denoland/vscode_deno/issues/361
-      shell: true,
-    });
+    return spawn(
+      this.#command ? this.#command : quoteCommandArg(this.#cmdPath),
+      (this.#commandArguments ? this.#commandArguments.concat(args) : args).map(
+        quoteCommandArg,
+      ),
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: this.#cwd.fsPath,
+        // Set to true, to ensure this resolves properly on windows.
+        // See https://github.com/denoland/vscode_deno/issues/361
+        shell: true,
+      },
+    );
   }
 
   #execShell(
@@ -165,8 +194,15 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
   return cmd;
 }
 
-async function tryResolveNpmExecutable(dir: vscode.Uri) {
-  const npmExecutablePath = vscode.Uri.joinPath(dir, "node_modules", "dprint", getDprintExeName());
+async function tryResolveNpmExecutable(
+  dir: vscode.Uri,
+): Promise<string | undefined> {
+  const npmExecutablePath = vscode.Uri.joinPath(
+    dir,
+    "node_modules",
+    "dprint",
+    getDprintExeName(),
+  );
 
   try {
     await vscode.workspace.fs.stat(npmExecutablePath);
