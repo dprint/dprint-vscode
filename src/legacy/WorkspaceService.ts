@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
-import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
-import { EditorInfo } from "./executable";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
+import { EditorInfo } from "../DprintExecutable";
+import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
-import { ObjectDisposedError } from "./utils";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 

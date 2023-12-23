@@ -1,3 +1,5 @@
+export * from "./TextDownloader.js";
+
 export class ObjectDisposedError extends Error {}
 
 /** For now, only expands ~/ to env.HOME */
