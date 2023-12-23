@@ -1,7 +1,7 @@
 import { TextDecoder, TextEncoder } from "util";
 import * as vscode from "vscode";
-import { DprintExecutable } from "../../executable";
-import { Logger } from "../../logger";
+import { DprintExecutable } from "../../../DprintExecutable";
+import { Logger } from "../../../logger";
 import { EditorProcess } from "../common";
 import { EditorService } from "../EditorService";
 

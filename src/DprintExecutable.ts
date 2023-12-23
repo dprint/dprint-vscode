@@ -1,7 +1,7 @@
 import { exec, spawn } from "child_process";
 import * as os from "os";
 import * as vscode from "vscode";
-import { Logger } from "../logger";
+import { Logger } from "./logger";
 
 export interface EditorInfo {
   schemaVersion: number;

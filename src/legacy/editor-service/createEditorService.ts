@@ -1,5 +1,5 @@
-import { DprintExecutable } from "../executable";
-import { Logger } from "../logger";
+import { DprintExecutable } from "../../DprintExecutable";
+import { Logger } from "../../logger";
 import { EditorService } from "./EditorService";
 import { EditorService4, EditorService5 } from "./implementations";
 

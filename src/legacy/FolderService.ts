@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
+import { DprintExecutable, EditorInfo } from "../DprintExecutable";
+import { Logger } from "../logger";
+import { ObjectDisposedError, shellExpand } from "../utils";
 import { createEditorService, EditorService } from "./editor-service";
-import { DprintExecutable, EditorInfo } from "./executable";
-import { Logger } from "./logger";
-import { ObjectDisposedError, shellExpand } from "./utils";
 
 export interface FolderServiceOptions {
   workspaceFolder: vscode.WorkspaceFolder;
