@@ -7,25 +7,19 @@ import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
 
 class GlobalPluginState {
-  private extensionBackend: ExtensionBackend | undefined;
-
   constructor(
     public readonly outputChannel: vscode.OutputChannel,
     public readonly logger: Logger,
+    public readonly extensionBackend: ExtensionBackend,
   ) {
   }
 
-  async changeBackend(backend: ExtensionBackend) {
+  async dispose() {
     try {
       await this.extensionBackend?.dispose();
-    } catch (err) {
-      this.logger.logWarn("Error disposing backend:", err);
+    } catch {
+      // ignore
     }
-    this.extensionBackend = backend;
-  }
-
-  async dispose() {
-    await this.extensionBackend?.dispose();
     this.outputChannel.dispose();
   }
 }
@@ -33,8 +27,9 @@ class GlobalPluginState {
 let globalState: GlobalPluginState | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-  const globalState = await getAndSetNewGlobalState();
-  let backend: ExtensionBackend | undefined = undefined;
+  const globalState = await getAndSetNewGlobalState(context);
+  const backend = globalState.extensionBackend;
+  const logger = globalState.logger;
 
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
@@ -47,53 +42,54 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
 
   // reinitialize when the vscode configuration changes
+  let hasShownLspWarning = false;
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
-      try {
-        if (isLsp() !== backend?.isLsp) {
-          await setupNewBackend();
-        }
+      if (isLsp() !== backend?.isLsp && !hasShownLspWarning) {
+        // I tried really hard to not have to reload, but having everything clean up
+        // properly was a pain and I think there might be stuff going on in the
+        // vscode-languageclient that I don't know about. So, just prompt the user
+        // to reload the vscode window when they change this option.
+        // https://stackoverflow.com/a/47189404/188246
+        const action = "Reload";
+        vscode.window.showInformationMessage(
+          "Changing dprint.experimentalLsp requires reloading the vscode window.",
+          action,
+        ).then(selectedAction => {
+          if (selectedAction === action) {
+            vscode.commands.executeCommand("workbench.action.reloadWindow");
+          }
+        });
+
+        hasShownLspWarning = true;
+      } else {
+        hasShownLspWarning = false;
         await reInitializeBackend();
-      } catch (err) {
-        globalState.logger.logError("Failed reinitializing:", err);
       }
     }
   }));
+
   context.subscriptions.push({
     async dispose() {
       await clearGlobalState();
     },
   });
 
-  await reInitializeBackend().then((success) => {
-    if (success) {
-      globalState.logger.logInfo(`Extension active!`);
-    } else {
-      globalState.logger.logWarn(`Extension failed to start.`);
-    }
-  });
+  const success = await reInitializeBackend();
+  if (success) {
+    logger.logInfo("Extension active!");
+  } else {
+    logger.logWarn("Extension failed to start.");
+  }
 
   async function reInitializeBackend() {
     try {
-      if (backend == null) {
-        backend = await setupNewBackend();
-      }
       await backend.reInitialize();
       return true;
     } catch (err) {
-      backend?.dispose();
-      backend = undefined;
-      globalState.logger.logError("Error initializing:", err);
+      logger.logError("Error initializing:", err);
       return false;
     }
-  }
-
-  async function setupNewBackend() {
-    const backend = isLsp()
-      ? activateLsp(context, globalState.logger, globalState.outputChannel)
-      : activateLegacy(context, globalState.logger, globalState.outputChannel);
-    await globalState.changeBackend(backend);
-    return backend;
   }
 }
 
@@ -102,19 +98,23 @@ export async function deactivate() {
   await clearGlobalState();
 }
 
-async function getAndSetNewGlobalState() {
+async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
   await clearGlobalState();
 
   let outputChannel: vscode.OutputChannel | undefined = undefined;
   let logger: Logger | undefined = undefined;
+  let backend: ExtensionBackend | undefined = undefined;
   try {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
+    backend = isLsp()
+      ? activateLsp(context, logger, outputChannel)
+      : activateLegacy(context, logger, outputChannel);
   } catch (err) {
     outputChannel?.dispose();
     throw err;
   }
-  globalState = new GlobalPluginState(outputChannel, logger);
+  globalState = new GlobalPluginState(outputChannel, logger, backend);
   return globalState;
 }
 

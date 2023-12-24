@@ -25,10 +25,13 @@ export function activateLsp(
         cmdPath: config?.path,
         cwd: rootUri,
       });
+      const args = ["lsp"];
+      if (config?.verbose) {
+        args.push("--verbose");
+      }
       const serverOptions: ServerOptions = {
         command: cmdPath ?? "dprint",
-        args: ["lsp"],
-        transport: TransportKind.stdio,
+        args,
       };
       const clientOptions: LanguageClientOptions = {
         synchronize: {
