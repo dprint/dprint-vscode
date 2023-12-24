@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
-import { getDprintConfig } from "./config";
+import { getCombinedDprintConfig, getDprintConfig } from "./config";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { DprintExecutable } from "./DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
@@ -16,11 +16,11 @@ export function activateLsp(
   return {
     isLsp: true,
     async reInitialize() {
-      await client?.stop();
+      await client?.stop(2_000);
       client = undefined;
       // todo: make this handle multiple workspace folders
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
-      const config = rootUri != null ? getDprintConfig(rootUri) : undefined;
+      const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
       const cmdPath = await DprintExecutable.resolveCmdPath({
         cmdPath: config?.path,
         cwd: rootUri,
@@ -34,6 +34,7 @@ export function activateLsp(
         args,
       };
       const clientOptions: LanguageClientOptions = {
+        documentSelector: [{ scheme: "file" }],
         synchronize: {
           // todo: remove this?
           fileEvents: vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB),
@@ -49,7 +50,8 @@ export function activateLsp(
       logger.logInfo("Started experimental language server.");
     },
     async dispose() {
-      await client?.stop();
+      await client?.stop(2_000);
+      await client?.dispose(2_000);
     },
   };
 }

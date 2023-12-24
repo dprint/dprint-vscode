@@ -37,7 +37,7 @@ export function activateLegacy(
           logger.logError("Error initializing:", err);
         }
       }
-      logger.logVerbose("Initialized legacy backend.");
+      logger.logDebug("Initialized legacy backend.");
     },
     dispose() {
       setFormattingSubscription(undefined);
@@ -49,7 +49,7 @@ export function activateLegacy(
         }
       }
       subscriptions.length = 0; // clear
-      logger.logVerbose("Disposed legacy backend.");
+      logger.logDebug("Disposed legacy backend.");
     },
   };
 

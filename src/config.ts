@@ -1,7 +1,36 @@
 import * as vscode from "vscode";
 import { shellExpand } from "./utils";
 
-export function getDprintConfig(scope: vscode.Uri) {
+export interface DprintExtensionConfig {
+  path: string | undefined;
+  verbose: boolean;
+  experimentalLsp: boolean;
+}
+
+export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder[]) {
+  const combinedConfig: DprintExtensionConfig = {
+    path: undefined,
+    verbose: false,
+    experimentalLsp: false,
+  };
+
+  for (const folder of folders) {
+    const config = getDprintConfig(folder.uri);
+    if (config.verbose) {
+      combinedConfig.verbose = true;
+    }
+    if (config.experimentalLsp) {
+      combinedConfig.experimentalLsp = true;
+    }
+    if (config.path != null) {
+      combinedConfig.path = config.path;
+    }
+  }
+
+  return combinedConfig;
+}
+
+export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
   const config = vscode.workspace.getConfiguration("dprint", scope);
   return {
     path: getPath(),

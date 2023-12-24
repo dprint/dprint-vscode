@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 
 export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
-  #verbose = false;
+  #debug = false;
 
   static #hasFocused = false;
 
@@ -10,17 +10,17 @@ export class Logger {
     this.#outputChannel = outputChannel;
   }
 
-  setVerbose(enabled: boolean) {
-    this.#verbose = enabled;
+  setDebug(enabled: boolean) {
+    this.#debug = enabled;
   }
 
   log(message: string, ...args: any[]) {
     this.#outputChannel.appendLine(getFormattedArgs(message, args));
   }
 
-  logVerbose(message: string, ...args: any[]) {
-    if (this.#verbose) {
-      this.#outputChannel.appendLine(getFormattedMessageWithLevel("verbose", message, args));
+  logDebug(message: string, ...args: any[]) {
+    if (this.#debug) {
+      this.#outputChannel.appendLine(getFormattedMessageWithLevel("debug", message, args));
     }
   }
 
@@ -46,7 +46,7 @@ export class Logger {
   }
 }
 
-function getFormattedMessageWithLevel(level: "verbose" | "info" | "warn" | "error", message: string, args: any[]) {
+function getFormattedMessageWithLevel(level: "debug" | "info" | "warn" | "error", message: string, args: any[]) {
   return `[${level.toUpperCase()}] ${getFormattedArgs(message, args)}`;
 }
 

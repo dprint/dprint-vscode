@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getDprintConfig } from "./config";
+import { getCombinedDprintConfig } from "./config";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
@@ -124,11 +124,5 @@ async function clearGlobalState() {
 }
 
 function isLsp() {
-  // enable if any folder has this
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    if (getDprintConfig(folder.uri).experimentalLsp) {
-      return true;
-    }
-  }
-  return false;
+  return getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []).experimentalLsp;
 }

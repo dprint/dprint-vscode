@@ -52,7 +52,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   async initialize() {
     this.#assertNotDisposed();
     const config = this.#getConfig();
-    this.#logger.setVerbose(config.verbose);
+    this.#logger.setDebug(config.verbose);
     this.#setEditorService(undefined);
     const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
@@ -113,20 +113,20 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       if (!(await this.#editorService.canFormat(document.fileName))) {
-        this.#logger.logVerbose("Response - File not matched:", document.fileName);
+        this.#logger.logDebug("Response - File not matched:", document.fileName);
         return undefined;
       }
 
       const newText = await this.#editorService.formatText(document.fileName, document.getText(), token);
       if (newText == null) {
-        this.#logger.logVerbose("Response - Formatted (No change):", document.fileName);
+        this.#logger.logDebug("Response - Formatted (No change):", document.fileName);
         return [];
       }
 
       const lastLineNumber = document.lineCount - 1;
       const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
       const result = [vscode.TextEdit.replace(replaceRange, newText)];
-      this.#logger.logVerbose("Response - Formatted:", document.fileName);
+      this.#logger.logDebug("Response - Formatted:", document.fileName);
       return result;
     } catch (err: any) {
       this.#logger.logError("Error formatting text.", err);
