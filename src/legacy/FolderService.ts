@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { getDprintConfig } from "../config";
 import { DprintExecutable, EditorInfo } from "../DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError, shellExpand } from "../utils";
@@ -154,26 +155,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   #getConfig() {
-    const config = vscode.workspace.getConfiguration("dprint", this.uri);
-    return {
-      path: getPath(),
-      verbose: getVerbose(),
-    };
-
-    function getPath() {
-      const path = getRawPath();
-      return path == null ? undefined : shellExpand(path);
-
-      function getRawPath() {
-        const path = config.get("path");
-        return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
-      }
-    }
-
-    function getVerbose() {
-      const verbose = config.get("verbose");
-      return verbose === true;
-    }
+    return getDprintConfig(this.uri);
   }
 
   #logErrorAndMaybeFocus(message: string, ...args: any[]) {

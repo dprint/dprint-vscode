@@ -46,11 +46,20 @@ export class DprintExecutable {
   static async create(logger: Logger, options: DprintExecutableOptions) {
     return new DprintExecutable(logger, {
       ...options,
-      cmdPath: options.cmdPath != null
-        ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
-        // attempt to use the npm executable if it exists
-        : await tryResolveNpmExecutable(options.cwd),
+      cmdPath: await DprintExecutable.resolveCmdPath(options),
     });
+  }
+
+  static async resolveCmdPath(options: {
+    cmdPath: string | undefined;
+    cwd: vscode.Uri | undefined;
+  }) {
+    return options.cmdPath != null
+      ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
+      // attempt to use the npm executable if it exists
+      : options.cwd != null
+      ? await tryResolveNpmExecutable(options.cwd)
+      : undefined;
   }
 
   get cmdPath() {
@@ -157,8 +166,8 @@ export class DprintExecutable {
   }
 }
 
-function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
-  if (cmd.startsWith("./") || cmd.startsWith("../")) {
+function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) {
+  if (cwd != null && (cmd.startsWith("./") || cmd.startsWith("../"))) {
     return vscode.Uri.joinPath(cwd, cmd).fsPath;
   }
 

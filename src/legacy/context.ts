@@ -25,6 +25,7 @@ export function activateLegacy(
   );
 
   return {
+    isLsp: false,
     async reInitialize() {
       setFormattingSubscription(undefined);
       try {
