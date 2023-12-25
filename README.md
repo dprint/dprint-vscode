@@ -44,7 +44,9 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
   "dprint.path": "/home/david/otherPath/dprint",
   // Change this to `true` to get verbose logging
-  "dprint.verbose": false
+  "dprint.verbose": false,
+  // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
+  "dprint.experimentalLsp": false
 }
 ```
 
@@ -58,6 +60,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 2. Go to "Run and debug" in VS code and run the "Run Extension" task.
 
 ## Release Notes
+
+### 0.16.0
+
+- feat: add `dprint.experimentalLsp`
 
 ### 0.15.1
 

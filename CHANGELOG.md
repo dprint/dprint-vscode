@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.0
+
+- feat: add `dprint.experimentalLsp`
+
 ### 0.15.1
 
 - fix: exclude searching for dprint config files in node_modules folders
