@@ -32,6 +32,15 @@
       "type": "object",
       "title": "dprint",
       "properties": {
+        "dprint.experimentalLsp": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": false,
+          "markdownDescription": "Use dprint's experimental LSP (requires dprint 0.45+)",
+          "scope": "resource"
+        },
         "dprint.path": {
           "type": [
             "string",
@@ -71,16 +80,19 @@
     "pretest": "tsc -p ./",
     "test": "node ./out/test/runTest.js"
   },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
   "devDependencies": {
     "@types/glob": "^7.1.4",
     "@types/mocha": "^9.0.0",
     "@types/node": "^16.11.1",
     "@types/vscode": "^1.45.0",
+    "@vscode/test-electron": "^2.1.5",
     "esbuild": "^0.14.29",
     "glob": "^7.2.0",
     "mocha": "^9.2.2",
-    "typescript": "^4.6.3",
-    "@vscode/test-electron": "^2.1.5"
+    "typescript": "^4.6.3"
   },
   "__metadata": {
     "id": "a71f21fc-951b-4829-92f5-ba423b77109f",

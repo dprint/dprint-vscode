@@ -72,7 +72,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     }
 
     try {
-      this.#logger.logVerbose("Fetching JSON schema:", configSchemaUrl);
+      this.#logger.logDebug("Fetching JSON schema:", configSchemaUrl);
       const text = await this.#cachedTextDownloader.get(configSchemaUrl);
       return JSON.parse(text);
     } catch (err) {
