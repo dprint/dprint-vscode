@@ -7,7 +7,7 @@ import type { ExtensionBackend } from "./ExtensionBackend";
 import { Logger } from "./logger";
 
 export function activateLsp(
-  context: vscode.ExtensionContext,
+  _context: vscode.ExtensionContext,
   logger: Logger,
   outputChannel: vscode.OutputChannel,
 ): ExtensionBackend {
@@ -35,10 +35,6 @@ export function activateLsp(
       };
       const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: "file" }],
-        synchronize: {
-          // todo: remove this?
-          fileEvents: vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB),
-        },
         outputChannel,
       };
       client = new LanguageClient(
