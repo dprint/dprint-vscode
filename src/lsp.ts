@@ -48,6 +48,7 @@ export function activateLsp(
     async dispose() {
       await client?.stop(2_000);
       await client?.dispose(2_000);
+      client = undefined;
     },
   };
 }
