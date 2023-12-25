@@ -22,7 +22,7 @@ export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder
     if (config.experimentalLsp) {
       combinedConfig.experimentalLsp = true;
     }
-    if (config.path != null) {
+    if (config.path != null && combinedConfig.path == null) {
       combinedConfig.path = config.path;
     }
   }
