@@ -80,7 +80,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const configFiles = await vscode.workspace.findFiles(
     /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
     /* exclude */ "**/node_modules/**",
-    1,
+    /* maxResults */ 1,
   );
   let configFileExists = configFiles.length > 0;
   if (!configFileExists) {
