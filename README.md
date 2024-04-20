@@ -61,6 +61,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.16.1
+
+- fix: initialize backend only if configuration file exists (#80)
+
 ### 0.16.0
 
 - feat: add `dprint.experimentalLsp`
