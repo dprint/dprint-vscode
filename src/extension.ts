@@ -1,8 +1,6 @@
-import { existsSync } from "fs";
-import { dirname, join } from "path";
 import * as vscode from "vscode";
 import { getCombinedDprintConfig } from "./config";
-import { DPRINT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
