@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.1
+
+- fix: initialize backend only if configuration file exists (#80)
+
 ### 0.16.0
 
 - feat: add `dprint.experimentalLsp`
