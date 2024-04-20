@@ -32,6 +32,9 @@ export function activateLegacy(
         const folderInfos = await workspaceService.initializeFolders();
         configSchemaProvider.setFolderInfos(folderInfos);
         trySetFormattingSubscriptionFromFolderInfos(folderInfos);
+        if (folderInfos.length === 0) {
+          logger.logInfo("Configuration file not found.");
+        }
       } catch (err) {
         if (!(err instanceof ObjectDisposedError)) {
           logger.logError("Error initializing:", err);

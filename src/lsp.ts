@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 import { getCombinedDprintConfig, getDprintConfig } from "./config";
+import { ancestorDirsContainConfigFile } from "./configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { DprintExecutable } from "./DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
@@ -18,6 +19,10 @@ export function activateLsp(
     async reInitialize() {
       await client?.stop(2_000);
       client = undefined;
+      if (!(await workspaceHasConfigFile())) {
+        logger.logInfo("Configuration file not found.");
+        return;
+      }
       // todo: make this handle multiple workspace folders
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
@@ -51,4 +56,20 @@ export function activateLsp(
       client = undefined;
     },
   };
+}
+
+async function workspaceHasConfigFile() {
+  const configFiles = await vscode.workspace.findFiles(
+    /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
+    /* exclude */ "**/node_modules/**",
+    /* maxResults */ 1,
+  );
+  if (configFiles.length > 0) {
+    return true;
+  }
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (workspaceFolder == null) {
+    return false;
+  }
+  return ancestorDirsContainConfigFile(workspaceFolder.uri);
 }

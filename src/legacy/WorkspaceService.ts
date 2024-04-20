@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { ancestorDirsContainConfigFile } from "../configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
 import { EditorInfo } from "../DprintExecutable";
 import { ObjectDisposedError } from "../utils";
@@ -96,7 +97,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       // it's added to the list of folders in order to allow someone
       // formatting when the current open workspace is in a sub directory
       // of a workspace
-      if (!this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))) {
+      if (
+        !this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))
+        && ancestorDirsContainConfigFile(folder.uri)
+      ) {
         this.#folders.push(
           new FolderService({
             workspaceFolder: folder,
