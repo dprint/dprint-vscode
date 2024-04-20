@@ -77,30 +77,11 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
-  const configFiles = await vscode.workspace.findFiles(
-    /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
-    /* exclude */ "**/node_modules/**",
-    /* maxResults */ 1,
-  );
-  let configFileExists = configFiles.length > 0;
-  if (!configFileExists) {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (workspaceFolder !== undefined) {
-      const rootPath = workspaceFolder.uri.fsPath;
-      configFileExists = ancestorDirectoriesContainConfigurationFile(rootPath);
-    }
-  }
-
-  if (configFileExists) {
-    const success = await reInitializeBackend();
-    if (success) {
-      logger.logInfo("Extension active!");
-    } else {
-      logger.logWarn("Extension failed to start.");
-    }
-  } else {
+  const success = await reInitializeBackend();
+  if (success) {
     logger.logInfo("Extension active!");
-    logger.logInfo("Waiting for the configuration file to be created.");
+  } else {
+    logger.logWarn("Extension failed to start.");
   }
 
   async function reInitializeBackend() {
@@ -146,39 +127,4 @@ async function clearGlobalState() {
 
 function isLsp() {
   return getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []).experimentalLsp;
-}
-
-function ancestorDirectoriesContainConfigurationFile(path: string): boolean {
-  for (const ancestorDirectoryPath of enumerateAncestorDirectories(path)) {
-    if (directoryContainsConfigurationFile(ancestorDirectoryPath)) {
-      return true;
-    }
-  }
-  return false;
-
-  function* enumerateAncestorDirectories(path: string): Iterable<string> {
-    let currentPath = path;
-    while (true) {
-      const ancestorDirectoryPath = dirname(currentPath);
-      if (ancestorDirectoryPath === currentPath) {
-        break;
-      }
-      yield ancestorDirectoryPath;
-      currentPath = ancestorDirectoryPath;
-    }
-  }
-
-  function directoryContainsConfigurationFile(path: string): boolean {
-    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
-      const configFilePath = join(path, configFileName);
-      try {
-        if (existsSync(configFilePath)) {
-          return true;
-        }
-      } catch {
-        // Continue to next path.
-      }
-    }
-    return false;
-  }
 }
