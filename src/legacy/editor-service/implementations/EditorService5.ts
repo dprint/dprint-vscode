@@ -13,6 +13,7 @@ export class EditorService5 implements EditorService {
   private _pendingMessages = new PendingMessages();
   private _currentMessageId = 0;
   private _logger: Logger;
+  private _disposed = false;
 
   constructor(logger: Logger, dprintExecutable: DprintExecutable) {
     this._logger = logger;
@@ -27,7 +28,7 @@ export class EditorService5 implements EditorService {
   }
 
   private async startReadingStdout() {
-    while (true) {
+    while (!this._disposed) {
       try {
         this._process.startProcessIfNotRunning();
         const messageId = await this._process.readInt();
@@ -74,6 +75,9 @@ export class EditorService5 implements EditorService {
             break;
         }
       } catch (err) {
+        if (this._disposed) {
+          return;
+        }
         this._logger.logError("Read task failed:", err);
         this._process.kill();
 
@@ -95,15 +99,17 @@ export class EditorService5 implements EditorService {
     }
   }
 
-  kill() {
+  killAndDispose() {
     // If graceful shutdown doesn't work soon enough
     // then kill the process
     const killTimeout = setTimeout(() => {
+      this._disposed = true;
       this._process.kill();
     }, 1_000);
 
     // send a graceful shutdown signal
     this.gracefulClose().finally(() => {
+      this._disposed = true;
       this._process.kill();
       clearTimeout(killTimeout);
     }).catch(() => {/* ignore */});

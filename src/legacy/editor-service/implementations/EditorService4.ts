@@ -17,7 +17,7 @@ export class EditorService4 implements EditorService {
     this._process.onExit(() => this._serialExecutor.clear());
   }
 
-  kill() {
+  killAndDispose() {
     // If graceful shutdown doesn't work soon enough
     // then kill the process
     const killTimeout = setTimeout(() => {

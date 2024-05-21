@@ -135,7 +135,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   #setEditorService(newService: EditorService | undefined) {
-    this.#editorService?.kill();
+    this.#editorService?.killAndDispose();
     this.#editorService = newService;
   }
 
