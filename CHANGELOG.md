@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.2
+
+- fix: ensure duplicate processes don't appear when restarting or changing config (#85)
+
 ### 0.16.1
 
 - fix: initialize backend only if configuration file exists (#80)
