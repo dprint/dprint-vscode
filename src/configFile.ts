@@ -1,5 +1,5 @@
-import { existsSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type * as vscode from "vscode";
 import { DPRINT_CONFIG_FILE_NAMES } from "./constants";
 
