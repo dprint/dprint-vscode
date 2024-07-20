@@ -1,7 +1,7 @@
-import cp from "node:child_process";
-import crypto from "node:crypto";
-import os from "node:os";
-import process from "node:process";
+import * as cp from "node:child_process";
+import * as crypto from "node:crypto";
+import * as process from "node:process";
+import * as os from "os";
 import * as vscode from "vscode";
 import type { Logger } from "./logger";
 

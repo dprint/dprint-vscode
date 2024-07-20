@@ -2,6 +2,8 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { Environment } from "./environment";
 
+// This isn't used yet, but in the future it should be used for unit testing.
+
 class Directory {
   entries: Map<string, string | Directory> = new Map();
 }
@@ -20,24 +22,31 @@ export class TestEnvironment implements Environment {
   readTextFile(path: vscode.Uri): Promise<string | undefined> {
     throw new Error("Method not implemented.");
   }
+
   atomicCopyFile(from: vscode.Uri, to: vscode.Uri): Promise<void> {
     throw new Error("Method not implemented.");
   }
+
   mkdir(uri: vscode.Uri): Promise<void> {
     throw new Error("Method not implemented.");
   }
+
   isWritableFileSystem(): boolean {
     throw new Error("Method not implemented.");
   }
+
   tmpdir(): string {
     throw new Error("Method not implemented.");
   }
+
   arch(): string {
     throw new Error("Method not implemented.");
   }
+
   platform(): NodeJS.Platform {
     throw new Error("Method not implemented.");
   }
+
   getLinuxFamily(): Promise<"musl" | "glibc"> {
     throw new Error("Method not implemented.");
   }

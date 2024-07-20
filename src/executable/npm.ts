@@ -2,30 +2,38 @@ import * as vscode from "vscode";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 
+// todo: I'd write unit tests for these using the Environment, but setting up
+// unit tests seems like a huge pain... so I'm just manually testing this for now
+
 export async function tryResolveNpmExecutable(
   dir: vscode.Uri,
   env: Environment,
   logger: Logger,
 ) {
-  const packageName = await getDprintPackageName(env);
-  const nodeModulesExec = await tryResolveInNodeModules(dir, packageName, env, logger);
-  if (nodeModulesExec == null) {
+  try {
+    const packageName = await getDprintPackageName(env);
+    const nodeModulesExec = await tryResolveInNodeModules(dir, packageName, env, logger);
+    if (nodeModulesExec == null) {
+      return undefined;
+    }
+
+    if (env.platform() === "win32" && env.isWritableFileSystem()) {
+      const tempDir = vscode.Uri.joinPath(vscode.Uri.file(env.tmpdir()), "dprint");
+      await env.mkdir(tempDir);
+      const tempFile = vscode.Uri.joinPath(tempDir, `${packageName}-${nodeModulesExec.version}.exe`);
+      if (await env.fileExists(tempFile)) {
+        return tempFile.fsPath;
+      }
+      logger.logDebug("Copying npm executable at", nodeModulesExec.path, "to", tempFile.fsPath);
+      await env.atomicCopyFile(vscode.Uri.file(nodeModulesExec.path), tempFile);
+      return tempFile.fsPath;
+    } else {
+      return nodeModulesExec.path;
+    }
+  } catch (err) {
+    logger.logError("Error resolving npm executable", err);
     return undefined;
   }
-  if (!env.isWritableFileSystem()) {
-    return nodeModulesExec.path;
-  }
-
-  const tempDir = vscode.Uri.joinPath(vscode.Uri.file(env.tmpdir()), "dprint");
-  await env.mkdir(tempDir);
-  const suffix = env.platform() === "win32" ? ".exe" : "";
-  const tempFile = vscode.Uri.joinPath(tempDir, `${packageName}-${nodeModulesExec.version}${suffix}`);
-  if (await env.fileExists(tempFile)) {
-    return tempFile.fsPath;
-  }
-  logger.logDebug("Copying npm executable at", nodeModulesExec.path, "to", tempFile.fsPath);
-  await env.atomicCopyFile(vscode.Uri.file(nodeModulesExec.path), tempFile);
-  return tempFile.fsPath;
 }
 
 async function tryResolveInNodeModules(

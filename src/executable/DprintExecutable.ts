@@ -1,5 +1,5 @@
 import { exec, spawn } from "node:child_process";
-import process from "node:process";
+import * as process from "node:process";
 import * as vscode from "vscode";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";

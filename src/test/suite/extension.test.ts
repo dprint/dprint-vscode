@@ -3,7 +3,7 @@ import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import process from "node:process";
+import * as process from "node:process";
 import * as vscode from "vscode";
 // import * as myExtension from '../../extension';
 
