@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ancestorDirsContainConfigFile } from "../configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
-import { EditorInfo } from "../DprintExecutable";
+import { EditorInfo } from "../executable/DprintExecutable";
 import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
 

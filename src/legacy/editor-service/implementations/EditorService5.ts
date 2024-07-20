@@ -1,9 +1,9 @@
 import { TextDecoder, TextEncoder } from "util";
 import * as vscode from "vscode";
-import { DprintExecutable } from "../../../DprintExecutable";
+import { DprintExecutable } from "../../../executable/DprintExecutable";
 import { Logger } from "../../../logger";
 import { EditorProcess } from "../common";
-import { EditorService } from "../EditorService";
+import type { EditorService } from "../EditorService";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -115,7 +115,7 @@ export class EditorService5 implements EditorService {
     }).catch(() => {/* ignore */});
   }
 
-  async canFormat(filePath: string) {
+  canFormat(filePath: string) {
     const message = this.getMessageForKind(MessageKind.CanFormat);
     message.addPart(textEncoder.encode(filePath));
     const buf = message.build();

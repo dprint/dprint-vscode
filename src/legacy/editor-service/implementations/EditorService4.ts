@@ -1,6 +1,7 @@
-import { TextDecoder, TextEncoder } from "util";
+import { Buffer } from "node:buffer";
+import { TextDecoder, TextEncoder } from "node:util";
 import * as vscode from "vscode";
-import { DprintExecutable } from "../../../DprintExecutable";
+import { DprintExecutable } from "../../../executable/DprintExecutable";
 import { Logger } from "../../../logger";
 import { EditorProcess, SerialExecutor } from "../common";
 import { EditorService } from "../EditorService";
@@ -43,7 +44,7 @@ export class EditorService4 implements EditorService {
     });
   }
 
-  formatText(filePath: string, fileText: string, token: vscode.CancellationToken) {
+  formatText(filePath: string, fileText: string, _token: vscode.CancellationToken) {
     this._process.startProcessIfNotRunning();
     return this._serialExecutor.execute(async () => {
       await writeInt(this._process, 2);
@@ -52,17 +53,22 @@ export class EditorService4 implements EditorService {
       await this.writeSuccessBytes();
       const response = await this._process.readInt();
       switch (response) {
-        case 0: // no change
+        // no change
+        case 0:
           await this.assertSuccessBytes();
           return undefined;
-        case 1: // formatted
-          let result = await readString(this._process);
+          // formatted
+        case 1: {
+          const result = await readString(this._process);
           await this.assertSuccessBytes();
           return result;
-        case 2: // error
+        }
+        // error
+        case 2: {
           const errorText = await readString(this._process);
           await this.assertSuccessBytes();
           throw errorText;
+        }
         default:
           throw new Error(`Unknown format text response kind: ${response}`);
       }

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { getDprintConfig } from "../config";
-import { DprintExecutable, EditorInfo } from "../DprintExecutable";
+import { DprintExecutable, EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError, shellExpand } from "../utils";
 import { createEditorService, EditorService } from "./editor-service";

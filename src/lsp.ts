@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
-import { getCombinedDprintConfig, getDprintConfig } from "./config";
+import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
+import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile } from "./configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
-import { DprintExecutable } from "./DprintExecutable";
+import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { Logger } from "./logger";
 
