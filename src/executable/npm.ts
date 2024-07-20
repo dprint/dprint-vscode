@@ -18,6 +18,9 @@ export async function tryResolveNpmExecutable(
     }
 
     if (env.platform() === "win32" && env.isWritableFileSystem()) {
+      // On windows we want to copy the dprint executable to a temporary directory and run
+      // it from there so that if someone goes to delete their node_modules folder it won't
+      // stop them from doing so because the dprint executable is in use by us.
       const tempDir = vscode.Uri.joinPath(vscode.Uri.file(env.tmpdir()), "dprint");
       await env.mkdir(tempDir);
       const tempFile = vscode.Uri.joinPath(tempDir, `${packageName}-${nodeModulesExec.version}.exe`);
