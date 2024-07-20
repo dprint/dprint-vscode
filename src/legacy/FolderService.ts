@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { getDprintConfig } from "../config";
 import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
-import { ObjectDisposedError, type shellExpand } from "../utils";
+import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 
 export interface FolderServiceOptions {

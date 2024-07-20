@@ -1,4 +1,5 @@
-import { TextDecoder, TextEncoder } from "util";
+import { Buffer } from "node:buffer";
+import { TextDecoder, TextEncoder } from "node:util";
 import type * as vscode from "vscode";
 import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";

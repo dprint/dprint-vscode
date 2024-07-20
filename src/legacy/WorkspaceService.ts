@@ -38,7 +38,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
-  async provideDocumentFormattingEdits(
+  provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,

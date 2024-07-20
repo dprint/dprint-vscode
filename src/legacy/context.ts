@@ -67,7 +67,7 @@ export function activateLegacy(
       vscode.languages.registerDocumentFormattingEditProvider(
         formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
         {
-          async provideDocumentFormattingEdits(document, options, token) {
+          provideDocumentFormattingEdits(document, options, token) {
             return workspaceService.provideDocumentFormattingEdits(document, options, token);
           },
         },
