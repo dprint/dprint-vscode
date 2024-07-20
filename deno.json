@@ -1,0 +1,16 @@
+{
+  "lint": {
+    "rules": {
+      "include": ["verbatim-module-syntax"],
+      "exclude": ["no-explicit-any", "no-async-promise-executor"]
+    }
+  },
+  "unstable": [
+    "byonm",
+    "sloppy-imports"
+  ],
+  "exclude": [
+    ".vscode-test",
+    "out"
+  ]
+}

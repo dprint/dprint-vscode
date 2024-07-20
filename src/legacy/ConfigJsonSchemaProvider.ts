@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { Logger } from "../logger";
-import { RacyCacheTextDownloader, TextDownloader } from "../utils";
-import { FolderInfos } from "./WorkspaceService";
+import type { Logger } from "../logger";
+import { RacyCacheTextDownloader, type TextDownloader } from "../utils";
+import type { FolderInfos } from "./WorkspaceService";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {

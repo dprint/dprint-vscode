@@ -1,8 +1,8 @@
-import { ChildProcessByStdio } from "child_process";
-import { Readable, Writable } from "stream";
+import type { ChildProcessByStdio } from "child_process";
+import type { Readable, Writable } from "stream";
 import { TextDecoder } from "util";
-import { DprintExecutable } from "../../../DprintExecutable";
-import { Logger } from "../../../logger";
+import type { DprintExecutable } from "../../../executable/DprintExecutable";
+import type { Logger } from "../../../logger";
 
 const textDecoder = new TextDecoder();
 

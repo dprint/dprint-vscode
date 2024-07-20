@@ -1,7 +1,8 @@
-import { exec, spawn } from "child_process";
-import * as os from "os";
+import { exec, spawn } from "node:child_process";
+import process from "node:process";
 import * as vscode from "vscode";
-import { Logger } from "./logger";
+import type { Logger } from "../logger";
+import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
   schemaVersion: number;
@@ -172,26 +173,6 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) 
   }
 
   return cmd;
-}
-
-async function tryResolveNpmExecutable(dir: vscode.Uri) {
-  const npmExecutablePath = vscode.Uri.joinPath(dir, "node_modules", "dprint", getDprintExeName());
-
-  try {
-    await vscode.workspace.fs.stat(npmExecutablePath);
-    return npmExecutablePath.fsPath;
-  } catch {
-    // check the ancestors for a node_modules directory
-    const parentDir = vscode.Uri.joinPath(dir, "../");
-    if (parentDir.fsPath !== dir.fsPath) {
-      return tryResolveNpmExecutable(parentDir);
-    }
-    return undefined;
-  }
-}
-
-function getDprintExeName() {
-  return os.platform() === "win32" ? "dprint.exe" : "dprint";
 }
 
 function quoteCommandArg(arg: string) {

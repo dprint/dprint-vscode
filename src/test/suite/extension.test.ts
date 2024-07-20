@@ -1,8 +1,9 @@
-import * as assert from "assert";
-import * as cp from "child_process";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as assert from "node:assert";
+import * as cp from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import process from "node:process";
 import * as vscode from "vscode";
 // import * as myExtension from '../../extension';
 
@@ -62,7 +63,7 @@ suite("Extension Test Suite", () => {
     },
     async openAndShowDocument(name: string) {
       const doc = await vscode.workspace.openTextDocument(this.getUri(name));
-      await vscode.window.showTextDocument(doc, 0, false);
+      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One, false);
       return doc;
     },
     async formatCommand(name: string | vscode.Uri) {
@@ -71,7 +72,7 @@ suite("Extension Test Suite", () => {
         name instanceof vscode.Uri ? name : this.getUri(name),
       );
     },
-    async killAllDprintProcesses() {
+    killAllDprintProcesses() {
       return new Promise<void>((resolve, reject) => {
         const command = os.platform() === "win32"
           ? "taskkill /im dprint.exe /f"

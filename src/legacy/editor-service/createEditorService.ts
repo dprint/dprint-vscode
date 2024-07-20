@@ -1,6 +1,6 @@
-import { DprintExecutable } from "../../DprintExecutable";
-import { Logger } from "../../logger";
-import { EditorService } from "./EditorService";
+import type { DprintExecutable } from "../../executable/DprintExecutable";
+import type { Logger } from "../../logger";
+import type { EditorService } from "./EditorService";
 import { EditorService4, EditorService5 } from "./implementations";
 
 export function createEditorService(

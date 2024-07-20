@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ancestorDirsContainConfigFile } from "../configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
-import { EditorInfo } from "../DprintExecutable";
+import type { EditorInfo } from "../executable/DprintExecutable";
 import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
 
@@ -38,7 +38,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
-  async provideDocumentFormattingEdits(
+  provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
