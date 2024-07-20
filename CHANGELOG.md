@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.3
+
+- fix(npm): run dprint from a temp directory on Windows (#92)
+
 ### 0.16.2
 
 - fix: ensure duplicate processes don't appear when restarting or changing config (#85)
