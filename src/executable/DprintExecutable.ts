@@ -1,7 +1,7 @@
 import { exec, spawn } from "node:child_process";
 import process from "node:process";
 import * as vscode from "vscode";
-import { Logger } from "../logger";
+import type { Logger } from "../logger";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {

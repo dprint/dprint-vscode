@@ -1,10 +1,10 @@
 import { Buffer } from "node:buffer";
 import { TextDecoder, TextEncoder } from "node:util";
-import * as vscode from "vscode";
-import { DprintExecutable } from "../../../executable/DprintExecutable";
-import { Logger } from "../../../logger";
+import type * as vscode from "vscode";
+import type { DprintExecutable } from "../../../executable/DprintExecutable";
+import type { Logger } from "../../../logger";
 import { EditorProcess, SerialExecutor } from "../common";
-import { EditorService } from "../EditorService";
+import type { EditorService } from "../EditorService";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

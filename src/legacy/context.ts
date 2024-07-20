@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
-import { ExtensionBackend } from "../ExtensionBackend";
-import { Logger } from "../logger";
+import type { ExtensionBackend } from "../ExtensionBackend";
+import type { Logger } from "../logger";
 import { HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { FolderInfos, WorkspaceService } from "./WorkspaceService";
+import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
   context: vscode.ExtensionContext,
