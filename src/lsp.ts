@@ -3,6 +3,7 @@ import { LanguageClient, type LanguageClientOptions, type ServerOptions } from "
 import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile } from "./configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
@@ -29,6 +30,8 @@ export function activateLsp(
       const cmdPath = await DprintExecutable.resolveCmdPath({
         cmdPath: config?.path,
         cwd: rootUri,
+        logger,
+        environment: new RealEnvironment(logger),
       });
       const args = ["lsp"];
       if (config?.verbose) {

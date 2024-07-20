@@ -84,9 +84,9 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@types/node": "^20.14.11",
     "@types/glob": "^7.1.4",
     "@types/mocha": "^9.0.0",
-    "@types/node": "^16.11.1",
     "@types/vscode": "^1.45.0",
     "@vscode/test-electron": "^2.1.5",
     "esbuild": "^0.14.29",

@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import process from "node:process";
+import * as process from "node:process";
 
 import { runTests } from "@vscode/test-electron";
 
