@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { getDprintConfig } from "../config";
+import { type Environment, RealEnvironment } from "../environment";
 import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
@@ -14,6 +15,7 @@ export interface FolderServiceOptions {
 /** Represents an instance of dprint for a single workspace folder */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
+  readonly #environment: Environment;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
   #disposed = false;
@@ -25,6 +27,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = new Logger(opts.outputChannel);
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
+    this.#environment = new RealEnvironment(this.#logger);
   }
 
   get uri() {
@@ -141,7 +144,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
-    return DprintExecutable.create(this.#logger, {
+    return DprintExecutable.create({
       cmdPath: config.path,
       // It's important that we always use the workspace folder as the
       // cwd for the process instead of possibly the sub directory because
@@ -151,6 +154,8 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       cwd: this.#workspaceFolder.uri,
       configUri: this.#configUri,
       verbose: config.verbose,
+      logger: this.#logger,
+      environment: this.#environment,
     });
   }
 
