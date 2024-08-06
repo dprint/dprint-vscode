@@ -167,6 +167,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
         description: "Plugin configuration.",
         type: "object",
       },
+      allowTrailingCommas: true,
     };
   }
 }
