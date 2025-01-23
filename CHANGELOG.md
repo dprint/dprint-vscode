@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.4
+
+- perf: avoid calling process.report.getReport() on startup (#99)
+
 ### 0.16.3
 
 - fix(npm): run dprint from a temp directory on Windows (#92)
