@@ -3,7 +3,7 @@ import * as crypto from "node:crypto";
 import * as process from "node:process";
 import * as os from "os";
 import * as vscode from "vscode";
-import type { Logger } from "./logger";
+import { Instant, type Logger } from "./logger";
 
 // Over time, update the codebase to use this so it can be unit testable
 
@@ -89,10 +89,9 @@ export class RealEnvironment implements Environment {
   async getLinuxFamily() {
     const logger = this.#logger;
     if (cachedFamily == null) {
-      const startTime = performance.now();
+      const start = Instant.now();
       cachedFamily = await innerGet();
-      const duration = performance.now() - startTime;
-      logger.logDebug(`Resolved linux family to ${cachedFamily} in ${duration}ms`);
+      logger.logDebug(`Resolved linux family to ${cachedFamily} in ${start.elapsedMs()}ms`);
     }
     return cachedFamily;
 
