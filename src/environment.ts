@@ -115,7 +115,6 @@ async function resolveLinuxFamily() {
   if (family != null) {
     return family;
   }
-
   return isProcessReportMusl() ? "musl" : "glibc";
 
   async function getFamilyFromLddPath() {
