@@ -89,7 +89,10 @@ export class RealEnvironment implements Environment {
   async getLinuxFamily() {
     const logger = this.#logger;
     if (cachedFamily == null) {
+      const startTime = performance.now();
       cachedFamily = await innerGet();
+      const duration = performance.now() - startTime;
+      logger.logDebug(`Resolved linux family to ${cachedFamily} in ${duration}ms`);
     }
     return cachedFamily;
 
