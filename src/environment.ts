@@ -7,6 +7,8 @@ import type { Logger } from "./logger";
 
 // Over time, update the codebase to use this so it can be unit testable
 
+export type LinuxFamily = "musl" | "glibc";
+
 export interface Environment {
   fileExists(path: vscode.Uri): Promise<boolean>;
   readTextFile(path: vscode.Uri): Promise<string | undefined>;
@@ -16,10 +18,10 @@ export interface Environment {
   tmpdir(): string;
   arch(): string;
   platform(): NodeJS.Platform;
-  getLinuxFamily(): Promise<"musl" | "glibc">;
+  getLinuxFamily(): Promise<LinuxFamily>;
 }
 
-let cachedIsMusl: boolean | undefined;
+let cachedFamily: "musl" | "glibc" | undefined;
 
 export class RealEnvironment implements Environment {
   #logger: Logger;
@@ -86,62 +88,117 @@ export class RealEnvironment implements Environment {
 
   async getLinuxFamily() {
     const logger = this.#logger;
-    return await getIsMusl() ? "musl" : "glibc";
+    if (cachedFamily == null) {
+      cachedFamily = await innerGet();
+    }
+    return cachedFamily;
 
-    async function getIsMusl() {
-      // code adapted from https://github.com/lovell/detect-libc
-      // Copyright Apache 2.0 license, the detect-libc maintainers
-      if (cachedIsMusl == null) {
-        cachedIsMusl = await innerGet();
-      }
-      return cachedIsMusl;
-
-      async function innerGet() {
-        try {
-          if (os.platform() !== "linux") {
-            return false;
-          }
-          return isProcessReportMusl() || await isConfMusl();
-        } catch (err) {
-          logger.logWarn("Error checking if musl. Assuming not.", err);
-          return false;
+    async function innerGet() {
+      try {
+        if (os.platform() !== "linux") {
+          logger.logWarn("Should not be checking linux family on non-linux system.");
+          return "glibc";
         }
-      }
-
-      function isProcessReportMusl() {
-        if (!process.report) {
-          return false;
-        }
-        const rawReport = process.report.getReport();
-        const report = typeof rawReport === "string" ? JSON.parse(rawReport) : rawReport;
-        if (!report || !(report.sharedObjects instanceof Array)) {
-          return false;
-        }
-        return report.sharedObjects.some((o: any) => o.includes("libc.musl-") || o.includes("ld-musl-"));
-      }
-
-      async function isConfMusl() {
-        const output = await getCommandOutput();
-        const [_, ldd1] = output.split(/[\r\n]+/);
-        return ldd1 && ldd1.includes("musl");
-      }
-
-      async function getCommandOutput() {
-        try {
-          const command = "getconf GNU_LIBC_VERSION 2>&1 || true; ldd --version 2>&1 || true";
-          return await new Promise<string>((resolve, reject) => {
-            cp.exec(command, { encoding: "utf8" }, (err, stdout) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(stdout);
-              }
-            });
-          });
-        } catch (_err) {
-          return "";
-        }
+        return resolveLinuxFamily();
+      } catch (err) {
+        logger.logWarn("Error checking if musl. Assuming not.", err);
+        return "glibc";
       }
     }
+  }
+}
+
+// code adapted from https://github.com/lovell/detect-libc
+// Copyright Apache 2.0 license, the detect-libc maintainers
+async function resolveLinuxFamily() {
+  const family = await getFamilyFromLddPath() ?? await checkWithExecutables();
+  if (family != null) {
+    return family;
+  }
+
+  return isProcessReportMusl() ? "musl" : "glibc";
+
+  async function getFamilyFromLddPath() {
+    function includes(bytes: Uint8Array, text: string) {
+      const sub = new TextEncoder().encode(text);
+      if (sub.length > bytes.length) {
+        return false;
+      }
+
+      for (let i = 0; i <= bytes.length - sub.length; i++) {
+        let match = true;
+
+        for (let j = 0; j < sub.length; j++) {
+          if (bytes[i + j] !== sub[j]) {
+            match = false;
+            break;
+          }
+        }
+
+        if (match) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file("/usr/bin/ldd"));
+      if (includes(bytes, "GLIBC") || includes(bytes, "libc")) {
+        return "glibc";
+      } else if (includes(bytes, "musl")) {
+        return "musl";
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }
+
+  async function checkWithExecutables() {
+    const output = await getCommandOutput();
+    if (output == null) {
+      return undefined;
+    }
+    const [_, ldd1] = output.split(/[\r\n]+/);
+    if (ldd1 && ldd1.includes("musl")) {
+      return "musl";
+    } else {
+      return "glibc";
+    }
+
+    async function getCommandOutput() {
+      try {
+        const command = "getconf GNU_LIBC_VERSION 2>&1 || true; ldd --version 2>&1 || true";
+        return await new Promise<string>((resolve, reject) => {
+          cp.exec(command, { encoding: "utf8" }, (err, stdout) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve(stdout);
+            }
+          });
+        });
+      } catch {
+        return undefined;
+      }
+    }
+  }
+
+  // note: this is extremely slow on WSL in some cases, so try to avoid it
+  // https://github.com/nodejs/node/issues/46060
+  function isProcessReportMusl() {
+    if (!process.report) {
+      return false;
+    }
+    const rawReport = process.report.getReport();
+    const report: {
+      sharedObjects: string[];
+    } = typeof rawReport === "string" ? JSON.parse(rawReport) : rawReport;
+    if (!report || !(report.sharedObjects instanceof Array)) {
+      return false;
+    }
+    return report.sharedObjects.some((o: any) => o.includes("libc.musl-") || o.includes("ld-musl-"));
   }
 }
