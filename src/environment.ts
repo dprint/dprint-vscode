@@ -101,7 +101,7 @@ export class RealEnvironment implements Environment {
           logger.logWarn("Should not be checking linux family on non-linux system.");
           return "glibc";
         }
-        return resolveLinuxFamily();
+        return resolveLinuxFamily(logger);
       } catch (err) {
         logger.logWarn("Error checking if musl. Assuming not.", err);
         return "glibc";
@@ -112,7 +112,7 @@ export class RealEnvironment implements Environment {
 
 // code adapted from https://github.com/lovell/detect-libc
 // Copyright Apache 2.0 license, the detect-libc maintainers
-async function resolveLinuxFamily() {
+async function resolveLinuxFamily(logger: Logger) {
   const family = await getFamilyFromLddPath() ?? await checkWithExecutables();
   if (family != null) {
     return family;
@@ -151,9 +151,10 @@ async function resolveLinuxFamily() {
       } else if (includes(bytes, "musl")) {
         return "musl";
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      logger.logDebug("Failed resolving family from lld path", err);
     }
+    logger.logDebug("Linux family not determined by lld path");
     return undefined;
   }
 
