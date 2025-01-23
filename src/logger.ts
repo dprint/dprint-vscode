@@ -1,5 +1,21 @@
 import type * as vscode from "vscode";
 
+export class Instant {
+  #time: number;
+
+  constructor(time: number) {
+    this.#time = time;
+  }
+
+  static now() {
+    return new Instant(performance.now());
+  }
+
+  elapsedMs() {
+    return performance.now() - this.#time;
+  }
+}
+
 export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
   #debug = false;
