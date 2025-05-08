@@ -1,4 +1,4 @@
-import type * as vscode from "vscode";
+import * as vscode from "vscode";
 
 export class Instant {
   #time: number;
@@ -16,14 +16,32 @@ export class Instant {
   }
 }
 
+export class DprintOutputChannel {
+  static #outputChannel: vscode.OutputChannel | undefined;
+
+  static getOutputChannel() {
+    if (!DprintOutputChannel.#outputChannel) {
+      DprintOutputChannel.#outputChannel = vscode.window.createOutputChannel("dprint");
+    }
+    return DprintOutputChannel.#outputChannel;
+  }
+}
 export class Logger {
+  static #Logger: Logger | undefined;
   readonly #outputChannel: vscode.OutputChannel;
   #debug = false;
 
   static #hasFocused = false;
 
-  constructor(outputChannel: vscode.OutputChannel) {
-    this.#outputChannel = outputChannel;
+  private constructor() {
+    this.#outputChannel = DprintOutputChannel.getOutputChannel();
+  }
+
+  static getLogger() {
+    if (!Logger.#Logger) {
+      Logger.#Logger = new Logger();
+    }
+    return Logger.#Logger;
   }
 
   setDebug(enabled: boolean) {

@@ -24,7 +24,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   #editorInfo: EditorInfo | undefined;
 
   constructor(opts: FolderServiceOptions) {
-    this.#logger = new Logger(opts.outputChannel);
+    this.#logger = Logger.getLogger();
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
     this.#environment = new RealEnvironment(this.#logger);
@@ -79,7 +79,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
-
       this.#logger.logInfo(
         `Initialized dprint ${editorInfo.cliVersion}\n`
           + `  Folder: ${dprintExe.initializationFolderUri.fsPath}\n`

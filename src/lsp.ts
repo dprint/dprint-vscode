@@ -7,12 +7,14 @@ import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
+import ActivatedDisposables from "./utils/ActivatedDisposables";
 
 export function activateLsp(
   _context: vscode.ExtensionContext,
   logger: Logger,
   outputChannel: vscode.OutputChannel,
 ): ExtensionBackend {
+  const resourceStores = new ActivatedDisposables();
   let client: LanguageClient | undefined;
 
   return {
@@ -51,11 +53,11 @@ export function activateLsp(
         clientOptions,
       );
       await client.start();
+      resourceStores.push(client);
       logger.logInfo("Started experimental language server.");
     },
     async dispose() {
-      await client?.stop(2_000);
-      await client?.dispose(2_000);
+      resourceStores.dispose();
       client = undefined;
     },
   };
