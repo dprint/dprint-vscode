@@ -74,7 +74,7 @@ export function activateLegacy(
           // This is necessary because by using the "associations" feature, a user may pattern
           // match against any file path then format that file using a certain plugin. Additionally,
           // we can't use the "includes" and "excludes" patterns from the config file because we
-          // want to ensure consistent path matching behavior... so don't want to rely on vscode's
+          // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
           // pattern matching being the same.
           const pattern = new vscode.RelativePattern(folderInfo.uri, `**/*`);
           patterns.push(pattern);
