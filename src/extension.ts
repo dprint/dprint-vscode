@@ -76,12 +76,16 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
-  const success = await reInitializeBackend();
-  if (success) {
-    logger.logInfo("Extension active!");
-  } else {
-    logger.logWarn("Extension failed to start.");
-  }
+  // initialize after a 1 second delay in order to work around
+  // https://github.com/dprint/dprint-vscode/issues/105
+  setTimeout(async () => {
+    const success = await reInitializeBackend();
+    if (success) {
+      logger.logInfo("Extension active!");
+    } else {
+      logger.logWarn("Extension failed to start.");
+    }
+  }, 1_000);
 
   async function reInitializeBackend() {
     try {
