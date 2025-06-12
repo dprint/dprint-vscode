@@ -51,8 +51,8 @@ export function activateLsp(
         serverOptions,
         clientOptions,
       );
-      await client.start();
       resourceStores.push(client);
+      await client.start();
       logger.logInfo("Started experimental language server.");
     },
     async dispose() {
