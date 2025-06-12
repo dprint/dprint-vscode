@@ -1,33 +1,30 @@
 import * as vscode from "vscode";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
-import { HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
   context: vscode.ExtensionContext,
   logger: Logger,
-  outputChannel: vscode.OutputChannel,
 ): ExtensionBackend {
-  const subscriptions: vscode.Disposable[] = [];
-  let formattingSubscription: vscode.Disposable | undefined = undefined;
+  const resourceStores = new ActivatedDisposables(logger);
   const workspaceService = new WorkspaceService({
-    outputChannel,
+    logger,
   });
-  subscriptions.push(workspaceService);
+  resourceStores.push(workspaceService);
 
   // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
   // for ConfigJsonSchemaProvider based on the file that's shown
   const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  subscriptions.push(
+  resourceStores.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
 
   return {
     isLsp: false,
     async reInitialize() {
-      setFormattingSubscription(undefined);
       try {
         const folderInfos = await workspaceService.initializeFolders();
         configSchemaProvider.setFolderInfos(folderInfos);
@@ -43,15 +40,7 @@ export function activateLegacy(
       logger.logDebug("Initialized legacy backend.");
     },
     dispose() {
-      setFormattingSubscription(undefined);
-      for (const subscription of subscriptions) {
-        try {
-          subscription.dispose();
-        } catch {
-          // ignore
-        }
-      }
-      subscriptions.length = 0; // clear
+      resourceStores.dispose();
       logger.logDebug("Disposed legacy backend.");
     },
   };
@@ -63,7 +52,7 @@ export function activateLegacy(
       return;
     }
 
-    setFormattingSubscription(
+    resourceStores.push(
       vscode.languages.registerDocumentFormattingEditProvider(
         formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
         {
@@ -89,31 +78,6 @@ export function activateLegacy(
         }
       }
       return patterns;
-    }
-  }
-
-  function setFormattingSubscription(newSubscription: vscode.Disposable | undefined) {
-    clear();
-    setNew();
-
-    function clear() {
-      if (formattingSubscription == null) {
-        return;
-      }
-      const subscriptionIndex = context.subscriptions.indexOf(formattingSubscription);
-      if (subscriptionIndex >= 0) {
-        context.subscriptions.splice(subscriptionIndex, 1);
-      }
-
-      formattingSubscription.dispose();
-      formattingSubscription = undefined;
-    }
-
-    function setNew() {
-      formattingSubscription = newSubscription;
-      if (newSubscription != null) {
-        context.subscriptions.push(newSubscription);
-      }
     }
   }
 }

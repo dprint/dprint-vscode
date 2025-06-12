@@ -31,6 +31,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const backend = globalState.extensionBackend;
   const logger = globalState.logger;
 
+  // reinitialize on workspace folder changes
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
@@ -108,8 +109,8 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
     backend = isLsp()
-      ? activateLsp(context, logger, outputChannel)
-      : activateLegacy(context, logger, outputChannel);
+      ? activateLsp(context, logger)
+      : activateLegacy(context, logger);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

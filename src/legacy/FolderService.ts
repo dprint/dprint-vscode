@@ -9,7 +9,7 @@ import { createEditorService, type EditorService } from "./editor-service";
 export interface FolderServiceOptions {
   workspaceFolder: vscode.WorkspaceFolder;
   configUri: vscode.Uri | undefined;
-  outputChannel: vscode.OutputChannel;
+  logger: Logger;
 }
 
 /** Represents an instance of dprint for a single workspace folder */
@@ -24,7 +24,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   #editorInfo: EditorInfo | undefined;
 
   constructor(opts: FolderServiceOptions) {
-    this.#logger = new Logger(opts.outputChannel);
+    this.#logger = opts.logger;
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
     this.#environment = new RealEnvironment(this.#logger);
@@ -79,7 +79,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
-
       this.#logger.logInfo(
         `Initialized dprint ${editorInfo.cliVersion}\n`
           + `  Folder: ${dprintExe.initializationFolderUri.fsPath}\n`

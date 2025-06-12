@@ -26,6 +26,10 @@ export class Logger {
     this.#outputChannel = outputChannel;
   }
 
+  getOutputChannel() {
+    return this.#outputChannel;
+  }
+
   setDebug(enabled: boolean) {
     this.#debug = enabled;
   }

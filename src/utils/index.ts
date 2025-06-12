@@ -1,3 +1,4 @@
+export * from "./ActivatedDisposables.js";
 export * from "./TextDownloader.js";
 
 export class ObjectDisposedError extends Error {}
