@@ -7,7 +7,7 @@ import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
-import { ActivatedDisposables } from "./utils";
+import { ActivatedDisposables, findFiles } from "./utils";
 
 export function activateLsp(
   _context: vscode.ExtensionContext,
@@ -63,11 +63,11 @@ export function activateLsp(
 }
 
 async function workspaceHasConfigFile() {
-  const configFiles = await vscode.workspace.findFiles(
-    /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
-    /* exclude */ "**/node_modules/**",
-    /* maxResults */ 1,
-  );
+  const configFiles = await findFiles({
+    include: DPRINT_CONFIG_FILEPATH_GLOB,
+    exclude: "**/node_modules/**",
+    maxResults: 1,
+  });
   if (configFiles.length > 0) {
     return true;
   }
