@@ -76,12 +76,13 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
-  const success = await reInitializeBackend();
-  if (success) {
-    logger.logInfo("Extension active!");
-  } else {
-    logger.logWarn("Extension failed to start.");
-  }
+  reInitializeBackend().then(success => {
+    if (success) {
+      logger.logInfo("Extension active!");
+    } else {
+      logger.logWarn("Extension failed to start.");
+    }
+  });
 
   async function reInitializeBackend() {
     try {
