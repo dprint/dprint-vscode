@@ -15,7 +15,7 @@ export function shellExpand(path: string, env: { [prop: string]: string | undefi
 
 export async function waitWorkspaceInitialized() {
   while (vscode.workspace.workspaceFolders == null || vscode.workspace.workspaceFolders.length === 0) {
-    await delay(500);
+    await delay(1_00);
   }
 }
 
