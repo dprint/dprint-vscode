@@ -1,20 +1,17 @@
 import * as vscode from "vscode";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
-import { HttpsTextDownloader, ObjectDisposedError } from "../utils";
-import ActivatedDisposables from "../utils/ActivatedDisposables";
+import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
   context: vscode.ExtensionContext,
   logger: Logger,
-  outputChannel: vscode.OutputChannel,
 ): ExtensionBackend {
-  const resourceStores = new ActivatedDisposables();
-  let formattingSubscription: vscode.Disposable | undefined = undefined;
+  const resourceStores = new ActivatedDisposables(logger);
   const workspaceService = new WorkspaceService({
-    outputChannel,
+    logger,
   });
   resourceStores.push(workspaceService);
 

@@ -1,9 +1,9 @@
 import { Disposable } from "vscode";
 import { Logger } from "../logger";
 
-type ExtendedDisposable = Disposable & {
-  stop?: () => Promise<void>;
-};
+interface ExtendedDisposable extends Disposable {
+  stop(): Promise<void>;
+}
 
 /**
  * ActivatedDisposables
@@ -12,43 +12,47 @@ type ExtendedDisposable = Disposable & {
  * Automatically disposes all registered resources when the parent is disposed.
  */
 export class ActivatedDisposables {
-  private readonly _resourceStores: Disposable[] = [];
-  private readonly _logger = Logger.getLogger();
+  readonly #resourceStores: Disposable[] = [];
+  readonly #logger: Logger;
 
-  public push(...disposables: Disposable[]) {
-    this._resourceStores.push(...disposables);
+  constructor(logger: Logger) {
+    this.#logger = logger;
   }
 
-  public dispose() {
-    for (const disposable of this._resourceStores) {
+  push(...disposables: Disposable[]) {
+    this.#resourceStores.push(...disposables);
+  }
+
+  dispose() {
+    for (const disposable of this.#resourceStores) {
       try {
         disposable.dispose();
       } catch (err) {
-        this._logger.logWarn("Dispose failed (sync):", err);
+        this.#logger.logWarn("Dispose failed (sync):", err);
       }
     }
-    this._resourceStores.length = 0;
+    this.#resourceStores.length = 0;
   }
 
-  public async disposeAsync(timeoutMs = 2000): Promise<void> {
+  async disposeAsync(timeoutMs = 2000): Promise<void> {
     const results = await Promise.allSettled(
-      this._resourceStores.map(d => this.#disposeWithStopSupport(d as ExtendedDisposable, timeoutMs)),
+      this.#resourceStores.map(d => this.#disposeWithStopSupport(d, timeoutMs)),
     );
-    this._resourceStores.length = 0;
+    this.#resourceStores.length = 0;
 
     for (const res of results) {
       if (res.status === "rejected") {
-        this._logger.logWarn("Dispose failed (async):", res.reason);
+        this.#logger.logWarn("Dispose failed (async):", res.reason);
       }
     }
   }
 
   async #disposeWithStopSupport(
-    disposable: ExtendedDisposable,
+    disposable: Disposable,
     timeoutMs: number,
   ): Promise<void> {
     try {
-      if (typeof disposable.stop === "function") {
+      if (isExtendedDisposable(disposable)) {
         await Promise.race([
           disposable.stop(),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Stop timeout exceeded")), timeoutMs)),
@@ -63,9 +67,14 @@ export class ActivatedDisposables {
         ]);
       }
     } catch (err) {
-      this._logger.logWarn("Failed to dispose/stop resource:", err);
+      this.#logger.logWarn("Failed to dispose/stop resource:", err);
     }
   }
 }
 
-export default ActivatedDisposables;
+function isExtendedDisposable(disposable: unknown): disposable is ExtendedDisposable {
+  return disposable != null
+    && typeof disposable === "object"
+    && "stop" in disposable
+    && typeof disposable.stop === "function";
+}

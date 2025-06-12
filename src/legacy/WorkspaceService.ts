@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { ancestorDirsContainConfigFile } from "../configFile";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
 import type { EditorInfo } from "../executable/DprintExecutable";
+import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
 
@@ -13,18 +14,18 @@ export interface FolderInfo {
 }
 
 export interface WorkspaceServiceOptions {
-  outputChannel: vscode.OutputChannel;
+  logger: Logger;
 }
 
 /** Handles creating dprint instances for each workspace folder. */
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
-  readonly #outputChannel: vscode.OutputChannel;
+  readonly #logger: Logger;
   readonly #folders: FolderService[] = [];
 
   #disposed = false;
 
   constructor(opts: WorkspaceServiceOptions) {
-    this.#outputChannel = opts.outputChannel;
+    this.#logger = opts.logger;
   }
 
   dispose() {
@@ -88,7 +89,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
           new FolderService({
             workspaceFolder: folder,
             configUri: subConfigUri,
-            outputChannel: this.#outputChannel,
+            logger: this.#logger,
           }),
         );
       }
@@ -105,7 +106,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
           new FolderService({
             workspaceFolder: folder,
             configUri: undefined,
-            outputChannel: this.#outputChannel,
+            logger: this.#logger,
           }),
         );
       }

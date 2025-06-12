@@ -7,14 +7,13 @@ import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
-import ActivatedDisposables from "./utils/ActivatedDisposables";
+import { ActivatedDisposables } from "./utils";
 
 export function activateLsp(
   _context: vscode.ExtensionContext,
   logger: Logger,
-  outputChannel: vscode.OutputChannel,
 ): ExtensionBackend {
-  const resourceStores = new ActivatedDisposables();
+  const resourceStores = new ActivatedDisposables(logger);
   let client: LanguageClient | undefined;
 
   return {
@@ -45,7 +44,7 @@ export function activateLsp(
       };
       const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: "file" }],
-        outputChannel,
+        outputChannel: logger.getOutputChannel(),
       };
       client = new LanguageClient(
         "dprint",

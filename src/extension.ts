@@ -3,7 +3,7 @@ import { getCombinedDprintConfig } from "./config";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
-import { DprintOutputChannel, Logger } from "./logger";
+import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
 
 class GlobalPluginState {
@@ -106,11 +106,11 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
   let logger: Logger | undefined = undefined;
   let backend: ExtensionBackend | undefined = undefined;
   try {
-    outputChannel = DprintOutputChannel.getOutputChannel();
-    logger = Logger.getLogger();
+    outputChannel = vscode.window.createOutputChannel("dprint");
+    logger = new Logger(outputChannel);
     backend = isLsp()
-      ? activateLsp(context, logger, outputChannel)
-      : activateLegacy(context, logger, outputChannel);
+      ? activateLsp(context, logger)
+      : activateLegacy(context, logger);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

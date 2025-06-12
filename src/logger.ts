@@ -16,32 +16,18 @@ export class Instant {
   }
 }
 
-export class DprintOutputChannel {
-  static #outputChannel: vscode.OutputChannel | undefined;
-
-  static getOutputChannel() {
-    if (!DprintOutputChannel.#outputChannel) {
-      DprintOutputChannel.#outputChannel = vscode.window.createOutputChannel("dprint");
-    }
-    return DprintOutputChannel.#outputChannel;
-  }
-}
 export class Logger {
-  static #Logger: Logger | undefined;
   readonly #outputChannel: vscode.OutputChannel;
   #debug = false;
 
   static #hasFocused = false;
 
-  private constructor() {
-    this.#outputChannel = DprintOutputChannel.getOutputChannel();
+  constructor(outputChannel: vscode.OutputChannel) {
+    this.#outputChannel = outputChannel;
   }
 
-  static getLogger() {
-    if (!Logger.#Logger) {
-      Logger.#Logger = new Logger();
-    }
-    return Logger.#Logger;
+  getOutputChannel() {
+    return this.#outputChannel;
   }
 
   setDebug(enabled: boolean) {
