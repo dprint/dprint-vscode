@@ -27,7 +27,7 @@ export async function findFiles(opts: {
   // See https://github.com/dprint/dprint-vscode/issues/105 -- for some reason findFiles would
   // return no results on very large projects when called too early on startup
   await waitWorkspaceInitialized();
-  // just in case, mitigate chance of findFiles not being ready by waiting a little bit of time
+  // just in case, mitigate more by waiting a little bit of time
   await delay(250);
   return await vscode.workspace.findFiles(
     opts.include,
