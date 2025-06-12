@@ -1,5 +1,10 @@
 # Change Log
 
+### 0.16.5
+
+- fix: wait for workspace to be initialized before checking for configuration files (#106)
+- fix: prevent logger debug output loss (#103)
+
 ### 0.16.4
 
 - perf: avoid calling process.report.getReport() on startup (#99)
