@@ -59,18 +59,19 @@ export function activateLsp(
       client = undefined;
     },
   };
-}
 
-async function workspaceHasConfigFile() {
-  const configFiles = await discoverWorkspaceConfigFiles({
-    maxResults: 1,
-  });
-  if (configFiles.length > 0) {
-    return true;
+  async function workspaceHasConfigFile() {
+    const configFiles = await discoverWorkspaceConfigFiles({
+      maxResults: 1,
+      logger,
+    });
+    if (configFiles.length > 0) {
+      return true;
+    }
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder == null) {
+      return false;
+    }
+    return ancestorDirsContainConfigFile(workspaceFolder.uri);
   }
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (workspaceFolder == null) {
-    return false;
-  }
-  return ancestorDirsContainConfigFile(workspaceFolder.uri);
 }

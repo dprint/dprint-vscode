@@ -74,7 +74,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    const configFiles = await discoverWorkspaceConfigFiles();
+    const configFiles = await discoverWorkspaceConfigFiles({
+      logger: this.#logger,
+    });
 
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
