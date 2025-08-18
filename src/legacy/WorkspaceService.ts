@@ -1,9 +1,8 @@
 import * as vscode from "vscode";
-import { ancestorDirsContainConfigFile } from "../configFile";
-import { DPRINT_CONFIG_FILEPATH_GLOB } from "../constants";
+import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
-import { findFiles, ObjectDisposedError } from "../utils";
+import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
@@ -75,10 +74,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return [];
     }
 
-    const configFiles = await findFiles({
-      include: DPRINT_CONFIG_FILEPATH_GLOB,
-      exclude: "**/node_modules/**",
-    });
+    const configFiles = await discoverWorkspaceConfigFiles();
 
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
