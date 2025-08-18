@@ -61,6 +61,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 ## Release Notes
 
+### 0.16.6
+
+- fix: retry trying to find config files with vscode API if one found in root with fs api (#109)
+
 ### 0.16.5
 
 - fix: wait for workspace to be initialized before checking for configuration files (#106)
