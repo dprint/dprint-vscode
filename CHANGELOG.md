@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.7
+
+- fix: improve config discovery (#111)
+
 ### 0.16.6
 
 - fix: retry trying to find config files with vscode API if one found in root with fs api (#109)
