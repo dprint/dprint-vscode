@@ -12,24 +12,49 @@ export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; 
   await waitWorkspaceInitialized();
   // just in case, mitigate more by waiting a little bit of time
   await delay(250);
-  let foundFiles = await vscodeFindFiles();
-  let retryCount = 0;
-  // retry trying to find a config file a bunch of times if there's one found in the root directory
-  while (foundFiles.length === 0 && await workspaceHasConfigFileInRoot() && ++retryCount < 30) {
-    logger.logDebug("Found config file in root with fs API. Waiting 1 second then retrying...");
-    await delay(1_000);
-    foundFiles = await vscodeFindFiles();
-  }
+  // now try to find the files
+  return await attemptFindFiles();
 
-  if (retryCount > 0) {
-    if (foundFiles.length) {
-      logger.logDebug("Gave up trying to find config file.");
+  async function attemptFindFiles() {
+    const foundFiles = await vscodeFindFiles();
+    if (foundFiles.length === 0) {
+      return await attemptFindViaFallback();
     } else {
-      logger.logDebug("Found config file after retrying.");
+      return foundFiles;
     }
   }
 
-  return foundFiles;
+  async function attemptFindViaFallback() {
+    // retry trying to find a config file a few times if there's one found in the root directory
+    const rootConfigFile = await getWorkspaceConfigFileInRoot();
+    if (rootConfigFile == null) {
+      return [];
+    }
+    if (opts.maxResults === 1) {
+      // only searching for one config file, so exit fast
+      return [rootConfigFile];
+    }
+    let retryCount = 0;
+    while (retryCount++ < 4) {
+      logger.logDebug("Found config file in root with fs API. Waiting a bit then retrying...");
+      await delay(1_000);
+      const foundFiles = await vscodeFindFiles();
+      if (foundFiles.length > 0) {
+        logger.logDebug("Found config file after retrying.");
+        return foundFiles;
+      }
+    }
+
+    // we don't glob for files because it's potentially incredibly slow in very large
+    // projects
+    logger.logWarn(
+      "Gave up trying to find config file. Using only root discovered via file system API. "
+        + "Maybe you have the dprint config file excluded from vscode? "
+        + "Don't do that because then vscode hides the file from the extension and the "
+        + "extension otherwise doesn't use the file system APIs to find config files.",
+    );
+    return [rootConfigFile];
+  }
 
   function vscodeFindFiles() {
     return vscode.workspace.findFiles(
@@ -39,11 +64,11 @@ export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; 
     );
   }
 
-  async function workspaceHasConfigFileInRoot() {
+  async function getWorkspaceConfigFileInRoot() {
     const dprintConfigFileNames = ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"];
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) {
-      return false;
+      return undefined;
     }
     for (const folder of folders) {
       for (const fileName of dprintConfigFileNames) {
@@ -51,14 +76,14 @@ export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; 
         try {
           const stat = await vscode.workspace.fs.stat(uri);
           if (stat.type === vscode.FileType.File) {
-            return true;
+            return uri;
           }
         } catch {
           // does not exist
         }
       }
     }
-    return false;
+    return undefined;
   }
 }
 
