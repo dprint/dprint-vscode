@@ -44,7 +44,7 @@ async function tryResolveInNodeModules(
   packageName: string,
   env: Environment,
   logger: Logger,
-) {
+): Promise<{ version: string; path: string } | undefined> {
   const packagePath = vscode.Uri.joinPath(dir, "node_modules", "@dprint", packageName);
   const npmExecutablePath = vscode.Uri.joinPath(packagePath, getDprintExeName(env));
 

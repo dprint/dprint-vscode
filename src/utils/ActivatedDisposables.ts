@@ -76,5 +76,5 @@ function isExtendedDisposable(disposable: unknown): disposable is ExtendedDispos
   return disposable != null
     && typeof disposable === "object"
     && "stop" in disposable
-    && typeof disposable.stop === "function";
+    && typeof (disposable as any).stop === "function";
 }
