@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.16.8
+
+- fix: improve how dprint executable is launched
+
 ### 0.16.7
 
 - fix: improve config discovery (#111)
