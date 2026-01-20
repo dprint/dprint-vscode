@@ -1,4 +1,4 @@
-import { exec, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { Environment } from "../environment";
@@ -81,7 +81,7 @@ export class DprintExecutable {
 
   async checkInstalled() {
     try {
-      await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
+      await this.#execProcess([this.#cmdPath, "-v"], undefined, undefined);
       return true;
     } catch (err: any) {
       this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
@@ -90,7 +90,7 @@ export class DprintExecutable {
   }
 
   async getEditorInfo() {
-    const stdout = await this.#execShell(
+    const stdout = await this.#execProcess(
       [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
       undefined,
       undefined,
@@ -122,16 +122,14 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
+    return spawn(this.#cmdPath, args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
-      // Set to true, to ensure this resolves properly on windows.
-      // See https://github.com/denoland/vscode_deno/issues/361
-      shell: true,
+      shell: false,
     });
   }
 
-  #execShell(
+  #execProcess(
     command: string[],
     stdin: string | undefined,
     token: vscode.CancellationToken | undefined,
@@ -139,7 +137,8 @@ export class DprintExecutable {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const process = exec(command.map(quoteCommandArg).join(" "), {
+        const [cmd, ...args] = command;
+        const process = execFile(cmd, args, {
           cwd: this.#cwd.fsPath,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
@@ -178,8 +177,4 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) 
   }
 
   return cmd;
-}
-
-function quoteCommandArg(arg: string) {
-  return `"${arg.replace(/"/g, "\\\"")}"`;
 }
