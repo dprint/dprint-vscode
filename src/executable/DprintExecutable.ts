@@ -3,6 +3,7 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
+import { useShellForCmd, windowsQuoteArg } from "../utils/index.js";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -122,10 +123,12 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(this.#cmdPath, args, {
+    const useShell = useShellForCmd(this.#cmdPath);
+    const cmd = useShell ? windowsQuoteArg(this.#cmdPath) : this.#cmdPath;
+    return spawn(cmd, useShell ? args.map(windowsQuoteArg) : args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
-      shell: false,
+      shell: useShell,
     });
   }
 
@@ -137,10 +140,13 @@ export class DprintExecutable {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const [cmd, ...args] = command;
-        const process = execFile(cmd, args, {
+        const [cmdPath, ...args] = command;
+        const useShell = useShellForCmd(cmdPath);
+        const cmd = useShell ? windowsQuoteArg(cmdPath) : cmdPath;
+        const childProcess = execFile(cmd, useShell ? args.map(windowsQuoteArg) : args, {
           cwd: this.#cwd.fsPath,
           encoding: "utf8",
+          shell: useShell,
         }, (err, stdout, stderr) => {
           if (err) {
             cancellationDisposable?.dispose();
@@ -150,10 +156,10 @@ export class DprintExecutable {
           resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
           cancellationDisposable?.dispose();
         });
-        cancellationDisposable = token?.onCancellationRequested(() => process.kill());
+        cancellationDisposable = token?.onCancellationRequested(() => childProcess.kill());
         if (stdin != null) {
-          process.stdin!.write(stdin);
-          process.stdin!.end();
+          childProcess.stdin!.write(stdin);
+          childProcess.stdin!.end();
         }
       } catch (err) {
         reject(err);

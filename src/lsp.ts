@@ -6,7 +6,7 @@ import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
-import { ActivatedDisposables } from "./utils";
+import { ActivatedDisposables, useShellForCmd, windowsQuoteArg } from "./utils";
 
 export function activateLsp(
   _context: vscode.ExtensionContext,
@@ -37,9 +37,14 @@ export function activateLsp(
       if (config?.verbose) {
         args.push("--verbose");
       }
+      const command = cmdPath ?? "dprint";
+      const useShell = useShellForCmd(command);
       const serverOptions: ServerOptions = {
-        command: cmdPath ?? "dprint",
-        args,
+        command: useShell ? windowsQuoteArg(command) : command,
+        args: useShell ? args.map(windowsQuoteArg) : args,
+        options: {
+          shell: useShell,
+        },
       };
       const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: "file" }],

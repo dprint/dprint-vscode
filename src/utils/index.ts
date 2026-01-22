@@ -22,3 +22,12 @@ export async function waitWorkspaceInitialized() {
 export function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+export function windowsQuoteArg(arg: string) {
+  return `"${arg.replace(/"/g, "\"\"")}"`;
+}
+
+export function useShellForCmd(cmd: string) {
+  // use shell on windows to support cmd/bat files
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
+}
