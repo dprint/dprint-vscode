@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig } from "./config";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import type { ExtensionBackend } from "./ExtensionBackend";
@@ -109,9 +110,10 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
   try {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
+    const approvedPaths = new ApprovedConfigPaths(context);
     backend = isLsp()
-      ? activateLsp(context, logger)
-      : activateLegacy(context, logger);
+      ? activateLsp(logger, approvedPaths)
+      : activateLegacy(logger, approvedPaths);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

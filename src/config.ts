@@ -1,15 +1,20 @@
 import * as vscode from "vscode";
 import { shellExpand } from "./utils";
 
+export interface DprintExtensionConfigPathInfo {
+  path: string;
+  isFromWorkspace: boolean;
+}
+
 export interface DprintExtensionConfig {
-  path: string | undefined;
+  pathInfo: DprintExtensionConfigPathInfo | undefined;
   verbose: boolean;
   experimentalLsp: boolean;
 }
 
 export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder[]) {
   const combinedConfig: DprintExtensionConfig = {
-    path: undefined,
+    pathInfo: undefined,
     verbose: false,
     experimentalLsp: false,
   };
@@ -22,8 +27,8 @@ export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder
     if (config.experimentalLsp) {
       combinedConfig.experimentalLsp = true;
     }
-    if (config.path != null && combinedConfig.path == null) {
-      combinedConfig.path = config.path;
+    if (config.pathInfo != null && combinedConfig.pathInfo == null) {
+      combinedConfig.pathInfo = config.pathInfo;
     }
   }
 
@@ -32,19 +37,29 @@ export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder
 
 export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
   const config = vscode.workspace.getConfiguration("dprint", scope);
+  const pathInfo = getPathInfo();
   return {
-    path: getPath(),
+    pathInfo,
     verbose: getBool("verbose"),
     experimentalLsp: getBool("experimentalLsp"),
   };
 
-  function getPath() {
-    const path = getRawPath();
-    return path == null ? undefined : shellExpand(path);
+  function getPathInfo(): DprintExtensionConfigPathInfo | undefined {
+    const inspection = config.inspect<string>("path");
 
-    function getRawPath() {
-      const path = config.get("path");
-      return typeof path === "string" && path.trim().length > 0 ? path.trim() : undefined;
+    const rawPath = config.get("path");
+    if (typeof rawPath === "string" && rawPath.trim().length > 0) {
+      // check if path is set in workspace or folder settings (not global/user)
+      const workspaceValue = inspection?.workspaceValue;
+      const folderValue = inspection?.workspaceFolderValue;
+      const isFromWorkspace = (typeof workspaceValue === "string" && workspaceValue.trim().length > 0)
+        || (typeof folderValue === "string" && folderValue.trim().length > 0);
+      return {
+        path: shellExpand(rawPath.trim()),
+        isFromWorkspace,
+      };
+    } else {
+      return undefined;
     }
   }
 

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
@@ -6,11 +7,12 @@ import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
-  context: vscode.ExtensionContext,
   logger: Logger,
+  approvedPaths: ApprovedConfigPaths,
 ): ExtensionBackend {
   const resourceStores = new ActivatedDisposables(logger);
   const workspaceService = new WorkspaceService({
+    approvedPaths,
     logger,
   });
   resourceStores.push(workspaceService);
