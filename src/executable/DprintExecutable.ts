@@ -1,6 +1,8 @@
 import { exec, spawn } from "node:child_process";
 import * as process from "node:process";
 import * as vscode from "vscode";
+import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
+import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { tryResolveNpmExecutable } from "./npm";
@@ -23,8 +25,8 @@ export interface PluginInfo {
 }
 
 export interface DprintExecutableOptions {
-  /** The path to the dprint executable. */
-  cmdPath: string | undefined;
+  approvedPaths: ApprovedConfigPaths;
+  pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
   verbose: boolean;
@@ -39,33 +41,41 @@ export class DprintExecutable {
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
-  private constructor(options: DprintExecutableOptions) {
+  private constructor(cmdPath: string, options: DprintExecutableOptions) {
     this.#logger = options.logger;
-    this.#cmdPath = options.cmdPath ?? "dprint";
+    this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
     this.#verbose = options.verbose;
   }
 
   static async create(options: DprintExecutableOptions) {
-    return new DprintExecutable({
-      ...options,
-      cmdPath: await DprintExecutable.resolveCmdPath(options),
-    });
+    const cmdPath = await DprintExecutable.resolveCmdPath(options);
+    return new DprintExecutable(cmdPath, options);
   }
 
-  static async resolveCmdPath(options: {
-    cmdPath: string | undefined;
-    cwd: vscode.Uri | undefined;
-    logger: Logger;
-    environment: Environment;
-  }) {
-    return options.cmdPath != null
-      ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
-      // attempt to use the npm executable if it exists
-      : options.cwd != null
-      ? await tryResolveNpmExecutable(options.cwd, options.environment, options.logger)
-      : undefined;
+  static async resolveCmdPath(options: DprintExecutableOptions) {
+    const { approvedPaths, pathInfo, cwd, logger, environment } = options;
+
+    // if a custom path is configured, check approval
+    if (pathInfo != null) {
+      const approved = await approvedPaths.promptForApproval(pathInfo);
+      if (approved) {
+        return getCommandNameOrAbsolutePath(pathInfo.path, cwd);
+      }
+      // not approved - fall through to regular resolution
+    }
+
+    // attempt to use the npm executable if it exists
+    if (cwd != null) {
+      const npmExec = await tryResolveNpmExecutable(cwd, environment, logger);
+      if (npmExec != null) {
+        return npmExec;
+      }
+    }
+
+    // fall back to "dprint" command
+    return "dprint";
   }
 
   get cmdPath() {
