@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.17.1
+
+- fix: fallback to global dprint when disallowing workspace `"dprint.path"` config (#128)
+
 ### 0.17.0
 
 - feat: prompt for custom workspace `"dprint.path"` setting (#126)
