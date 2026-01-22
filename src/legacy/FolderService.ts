@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
 import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
@@ -7,6 +8,7 @@ import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 
 export interface FolderServiceOptions {
+  approvedPaths: ApprovedConfigPaths;
   workspaceFolder: vscode.WorkspaceFolder;
   configUri: vscode.Uri | undefined;
   logger: Logger;
@@ -14,6 +16,7 @@ export interface FolderServiceOptions {
 
 /** Represents an instance of dprint for a single workspace folder */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
+  readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
   readonly #environment: Environment;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
@@ -24,6 +27,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   #editorInfo: EditorInfo | undefined;
 
   constructor(opts: FolderServiceOptions) {
+    this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
@@ -57,6 +61,14 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     this.#logger.setDebug(config.verbose);
     this.#setEditorService(undefined);
+
+    // prompt for approval if using a workspace-configured path
+    const approved = await this.#approvedPaths.promptForApproval(config.pathInfo);
+    if (!approved) {
+      this.#logger.logWarn("Custom dprint path was not approved by user.");
+      return false;
+    }
+
     const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
     this.#assertNotDisposed();
@@ -144,7 +156,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   #getDprintExecutable() {
     const config = this.#getConfig();
     return DprintExecutable.create({
-      cmdPath: config.path,
+      cmdPath: config.pathInfo?.path,
       // It's important that we always use the workspace folder as the
       // cwd for the process instead of possibly the sub directory because
       // we don't want the dprint process to hold a resource lock on a

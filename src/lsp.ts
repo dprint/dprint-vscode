@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { LanguageClient, type LanguageClientOptions, type ServerOptions } from "vscode-languageclient/node";
+import type { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "./configFile";
 import { RealEnvironment } from "./environment";
@@ -9,8 +10,8 @@ import type { Logger } from "./logger";
 import { ActivatedDisposables } from "./utils";
 
 export function activateLsp(
-  _context: vscode.ExtensionContext,
   logger: Logger,
+  approvedPaths: ApprovedConfigPaths,
 ): ExtensionBackend {
   const resourceStores = new ActivatedDisposables(logger);
   let client: LanguageClient | undefined;
@@ -27,8 +28,16 @@ export function activateLsp(
       // todo: make this handle multiple workspace folders
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
+
+      // prompt for approval if using a workspace-configured path
+      const approved = await approvedPaths.promptForApproval(config.pathInfo);
+      if (!approved) {
+        logger.logWarn("Custom dprint path was not approved by user.");
+        return;
+      }
+
       const cmdPath = await DprintExecutable.resolveCmdPath({
-        cmdPath: config?.path,
+        cmdPath: config.pathInfo?.path,
         cwd: rootUri,
         logger,
         environment: new RealEnvironment(logger),
@@ -40,6 +49,9 @@ export function activateLsp(
       const serverOptions: ServerOptions = {
         command: cmdPath ?? "dprint",
         args,
+        options: {
+          shell: true,
+        },
       };
       const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: "file" }],

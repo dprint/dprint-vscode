@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
@@ -13,17 +14,20 @@ export interface FolderInfo {
 }
 
 export interface WorkspaceServiceOptions {
+  approvedPaths: ApprovedConfigPaths;
   logger: Logger;
 }
 
 /** Handles creating dprint instances for each workspace folder. */
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
+  readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
   readonly #folders: FolderService[] = [];
 
   #disposed = false;
 
   constructor(opts: WorkspaceServiceOptions) {
+    this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
   }
 
@@ -85,6 +89,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       for (const subConfigUri of subConfigUris) {
         this.#folders.push(
           new FolderService({
+            approvedPaths: this.#approvedPaths,
             workspaceFolder: folder,
             configUri: subConfigUri,
             logger: this.#logger,
@@ -102,6 +107,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       ) {
         this.#folders.push(
           new FolderService({
+            approvedPaths: this.#approvedPaths,
             workspaceFolder: folder,
             configUri: undefined,
             logger: this.#logger,
