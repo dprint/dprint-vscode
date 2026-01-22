@@ -1,8 +1,15 @@
 # Change Log
 
+### 0.17.0
+
+- feat: prompt for custom workspace `"dprint.path"` setting (#126)
+- Revert "fix: improve how dprint executable is launched (#121)" (#125)
+
+Adds a security measure to prompt when someone provides a custom `"dprint.path"` vscode workspace setting so that this extension doesn't launch a workspace defined executable on startup without explicit user approval.
+
 ### 0.16.8
 
-- fix: improve how dprint executable is launched
+- fix: improve how dprint executable is launched (#121)
 
 ### 0.16.7
 
