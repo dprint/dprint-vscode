@@ -62,13 +62,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger.setDebug(config.verbose);
     this.#setEditorService(undefined);
 
-    // prompt for approval if using a workspace-configured path
-    const approved = await this.#approvedPaths.promptForApproval(config.pathInfo);
-    if (!approved) {
-      this.#logger.logWarn("Custom dprint path was not approved by user.");
-      return false;
-    }
-
     const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
     this.#assertNotDisposed();
@@ -156,7 +149,8 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   #getDprintExecutable() {
     const config = this.#getConfig();
     return DprintExecutable.create({
-      cmdPath: config.pathInfo?.path,
+      approvedPaths: this.#approvedPaths,
+      pathInfo: config.pathInfo,
       // It's important that we always use the workspace folder as the
       // cwd for the process instead of possibly the sub directory because
       // we don't want the dprint process to hold a resource lock on a

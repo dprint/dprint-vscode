@@ -29,16 +29,12 @@ export function activateLsp(
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
 
-      // prompt for approval if using a workspace-configured path
-      const approved = await approvedPaths.promptForApproval(config.pathInfo);
-      if (!approved) {
-        logger.logWarn("Custom dprint path was not approved by user.");
-        return;
-      }
-
       const cmdPath = await DprintExecutable.resolveCmdPath({
-        cmdPath: config.pathInfo?.path,
-        cwd: rootUri,
+        approvedPaths,
+        pathInfo: config.pathInfo,
+        cwd: rootUri!,
+        configUri: undefined,
+        verbose: config.verbose,
         logger,
         environment: new RealEnvironment(logger),
       });
@@ -47,7 +43,7 @@ export function activateLsp(
         args.push("--verbose");
       }
       const serverOptions: ServerOptions = {
-        command: cmdPath ?? "dprint",
+        command: cmdPath,
         args,
         options: {
           shell: true,
