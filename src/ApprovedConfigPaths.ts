@@ -19,48 +19,50 @@ export class ApprovedConfigPaths {
     return value.filter((item): item is string => typeof item === "string");
   }
 
-  isPathApproved(pathInfo: DprintExtensionConfigPathInfo): boolean {
+  isPathApproved(path: string): boolean {
     const approvedPaths = this.#getApprovedPaths();
-    return approvedPaths.includes(pathInfo.path);
+    return approvedPaths.includes(path);
   }
 
-  async #approvePath(pathInfo: DprintExtensionConfigPathInfo): Promise<void> {
+  async #approvePath(path: string): Promise<void> {
     const approvedPaths = this.#getApprovedPaths();
-    if (!approvedPaths.includes(pathInfo.path)) {
-      approvedPaths.push(pathInfo.path);
+    if (!approvedPaths.includes(path)) {
+      approvedPaths.push(path);
       await this.#context.workspaceState.update(APPROVED_PATHS_KEY, approvedPaths);
     }
   }
 
   /** Prompts the user for approval if the path hasn't been approved yet. */
-  async promptForApproval(pathInfo: DprintExtensionConfigPathInfo): Promise<boolean> {
-    if (!pathInfo.isFromWorkspace) {
-      return true; // global paths don't need approval
+  async promptForApproval(pathInfo: DprintExtensionConfigPathInfo | undefined): Promise<boolean> {
+    // null and global paths don't need approval
+    if (pathInfo == null || !pathInfo.isFromWorkspace) {
+      return true;
     }
 
-    if (this.isPathApproved(pathInfo)) {
+    const path = pathInfo.path;
+    if (this.isPathApproved(path)) {
       return true;
     }
 
     // already denied for this session
-    if (this.#sessionDeniedPaths.has(pathInfo.path)) {
+    if (this.#sessionDeniedPaths.has(path)) {
       return false;
     }
 
     const allow = "Allow";
     const deny = "Don't Allow";
     const result = await vscode.window.showWarningMessage(
-      `A workspace setting wants to run a custom dprint executable: ${pathInfo.path}`,
+      `A workspace setting wants to run a custom dprint executable: ${path}`,
       allow,
       deny,
     );
 
     if (result === allow) {
-      await this.#approvePath(pathInfo);
+      await this.#approvePath(path);
       return true;
     }
     if (result === deny) {
-      this.#sessionDeniedPaths.add(pathInfo.path);
+      this.#sessionDeniedPaths.add(path);
     }
     return false;
   }

@@ -30,12 +30,10 @@ export function activateLsp(
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
 
       // prompt for approval if using a workspace-configured path
-      if (config.pathInfo != null) {
-        const approved = await approvedPaths.promptForApproval(config.pathInfo);
-        if (!approved) {
-          logger.logWarn("Custom dprint path was not approved by user.");
-          return;
-        }
+      const approved = await approvedPaths.promptForApproval(config.pathInfo);
+      if (!approved) {
+        logger.logWarn("Custom dprint path was not approved by user.");
+        return;
       }
 
       const cmdPath = await DprintExecutable.resolveCmdPath({

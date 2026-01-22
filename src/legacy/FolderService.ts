@@ -63,12 +63,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#setEditorService(undefined);
 
     // prompt for approval if using a workspace-configured path
-    if (config.pathInfo != null) {
-      const approved = await this.#approvedPaths.promptForApproval(config.pathInfo);
-      if (!approved) {
-        this.#logger.logWarn("Custom dprint path was not approved by user.");
-        return false;
-      }
+    const approved = await this.#approvedPaths.promptForApproval(config.pathInfo);
+    if (!approved) {
+      this.#logger.logWarn("Custom dprint path was not approved by user.");
+      return false;
     }
 
     const dprintExe = await this.#getDprintExecutable();
