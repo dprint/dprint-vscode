@@ -7,20 +7,19 @@ import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
-import { ActivatedDisposables } from "./utils";
 
 export function activateLsp(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
 ): ExtensionBackend {
-  const resourceStores = new ActivatedDisposables(logger);
   let client: LanguageClient | undefined;
 
   return {
     isLsp: true,
     async reInitialize() {
-      await client?.stop(2_000);
+      const oldClient = client;
       client = undefined;
+      await oldClient?.dispose(2_000);
       if (!(await workspaceHasConfigFile())) {
         logger.logInfo("Configuration file not found.");
         return;
@@ -58,13 +57,13 @@ export function activateLsp(
         serverOptions,
         clientOptions,
       );
-      resourceStores.push(client);
       await client.start();
       logger.logInfo("Started experimental language server.");
     },
     async dispose() {
-      resourceStores.dispose();
+      const oldClient = client;
       client = undefined;
+      await oldClient?.dispose(2_000);
     },
   };
 

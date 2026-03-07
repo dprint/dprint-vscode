@@ -10,17 +10,18 @@ export function activateLegacy(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
 ): ExtensionBackend {
-  const resourceStores = new ActivatedDisposables(logger);
+  const resourceDisposables = new ActivatedDisposables(logger);
+  const initializationDisposables = new ActivatedDisposables(logger);
   const workspaceService = new WorkspaceService({
     approvedPaths,
     logger,
   });
-  resourceStores.push(workspaceService);
+  resourceDisposables.push(workspaceService);
 
   // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
   // for ConfigJsonSchemaProvider based on the file that's shown
   const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  resourceStores.push(
+  resourceDisposables.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
 
@@ -28,6 +29,7 @@ export function activateLegacy(
     isLsp: false,
     async reInitialize() {
       try {
+        initializationDisposables.dispose();
         const folderInfos = await workspaceService.initializeFolders();
         configSchemaProvider.setFolderInfos(folderInfos);
         trySetFormattingSubscriptionFromFolderInfos(folderInfos);
@@ -42,7 +44,8 @@ export function activateLegacy(
       logger.logDebug("Initialized legacy backend.");
     },
     dispose() {
-      resourceStores.dispose();
+      initializationDisposables.dispose();
+      resourceDisposables.dispose();
       logger.logDebug("Disposed legacy backend.");
     },
   };
@@ -54,16 +57,14 @@ export function activateLegacy(
       return;
     }
 
-    resourceStores.push(
-      vscode.languages.registerDocumentFormattingEditProvider(
-        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
-        {
-          provideDocumentFormattingEdits(document, options, token) {
-            return workspaceService.provideDocumentFormattingEdits(document, options, token);
-          },
+    initializationDisposables.push(vscode.languages.registerDocumentFormattingEditProvider(
+      formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
+      {
+        provideDocumentFormattingEdits(document, options, token) {
+          return workspaceService.provideDocumentFormattingEdits(document, options, token);
         },
-      ),
-    );
+      },
+    ));
 
     function getFormattingPatterns() {
       const patterns: vscode.RelativePattern[] = [];

@@ -15,6 +15,7 @@ export class EditorService5 implements EditorService {
   private _currentMessageId = 0;
   private _logger: Logger;
   private _disposed = false;
+  private _disposing = false;
 
   constructor(logger: Logger, dprintExecutable: DprintExecutable) {
     this._logger = logger;
@@ -31,7 +32,7 @@ export class EditorService5 implements EditorService {
   private async startReadingStdout() {
     while (!this._disposed) {
       try {
-        this._process.startProcessIfNotRunning();
+        this.startProcessIfNotRunning();
         const messageId = await this._process.readInt();
         const messageKind = await this._process.readInt();
         const bodyLength = await this._process.readInt();
@@ -76,7 +77,7 @@ export class EditorService5 implements EditorService {
             break;
         }
       } catch (err) {
-        if (this._disposed) {
+        if (this._disposed || this._disposing) {
           return;
         }
         this._logger.logError("Read task failed:", err);
@@ -101,6 +102,8 @@ export class EditorService5 implements EditorService {
   }
 
   killAndDispose() {
+    this._disposing = true;
+
     // If graceful shutdown doesn't work soon enough
     // then kill the process
     const killTimeout = setTimeout(() => {
@@ -120,7 +123,7 @@ export class EditorService5 implements EditorService {
     const message = this.getMessageForKind(MessageKind.CanFormat);
     message.addPart(textEncoder.encode(filePath));
     const buf = message.build();
-    this._process.startProcessIfNotRunning();
+    this.startProcessIfNotRunning();
     return new Promise<boolean>(async (resolve, reject) => {
       this._pendingMessages.store(message.id, { resolve, reject });
       await this._process.writeBuffer(buf);
@@ -136,7 +139,7 @@ export class EditorService5 implements EditorService {
     message.addPart(new Uint8Array(0)); // override config
     message.addPart(encodedFileText);
     const buf = message.build();
-    this._process.startProcessIfNotRunning();
+    this.startProcessIfNotRunning();
     return new Promise<string | undefined>(async (resolve, reject) => {
       const disposable = token.onCancellationRequested(() => {
         resolve(undefined);
@@ -195,6 +198,13 @@ export class EditorService5 implements EditorService {
 
   private getMessageForKind(kind: MessageKind) {
     return new Message(++this._currentMessageId, kind);
+  }
+
+  private startProcessIfNotRunning() {
+    if (this._disposed || this._disposing)
+      return;
+
+    this._process.startProcessIfNotRunning();
   }
 }
 
