@@ -2,6 +2,7 @@ import * as assert from "node:assert";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  findClosestFolder,
   findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
   isPathWithin,
@@ -239,6 +240,38 @@ describe("findGlobalConfigFile", () => {
 
       assert.strictEqual(await findGlobalConfigFile(env), undefined);
     });
+  });
+});
+
+describe("findClosestFolder", () => {
+  const folders = [
+    { name: "root", path: path.resolve("/a") },
+    { name: "nested", path: path.resolve("/a/b") },
+    { name: "sibling", path: path.resolve("/a/bc") },
+  ];
+  const find = (filePath: string, items = folders) => findClosestFolder(items, f => f.path, filePath)?.name;
+
+  it("finds the most nested folder containing the file", () => {
+    assert.strictEqual(find(path.resolve("/a/b/c/file.ts")), "nested");
+    assert.strictEqual(find(path.resolve("/a/file.ts")), "root");
+  });
+
+  it("does not match a sibling folder that shares a prefix", () => {
+    assert.strictEqual(find(path.resolve("/a/bc/file.ts")), "sibling");
+    assert.strictEqual(find(path.resolve("/a/bcd/file.ts")), "root");
+  });
+
+  it("finds the most nested folder regardless of order", () => {
+    assert.strictEqual(find(path.resolve("/a/b/file.ts"), [...folders].reverse()), "nested");
+  });
+
+  it("uses the last folder when multiple have the same path", () => {
+    const duplicates = [{ name: "first", path: path.resolve("/a") }, { name: "second", path: path.resolve("/a") }];
+    assert.strictEqual(find(path.resolve("/a/file.ts"), duplicates), "second");
+  });
+
+  it("returns undefined when no folder contains the file", () => {
+    assert.strictEqual(find(path.resolve("/other/file.ts")), undefined);
   });
 });
 

@@ -71,6 +71,23 @@ export async function findGlobalConfigFile(env: Environment) {
   return undefined;
 }
 
+/**
+ * Finds the folder that most closely contains the file path. When multiple
+ * folders have the same path, the last one wins.
+ */
+export function findClosestFolder<T>(folders: Iterable<T>, getFolderPath: (folder: T) => string, filePath: string) {
+  let bestMatch: T | undefined;
+  let bestMatchPath: string | undefined;
+  for (const folder of folders) {
+    const folderPath = getFolderPath(folder);
+    if (isPathWithin(folderPath, filePath) && (bestMatchPath == null || isPathWithin(bestMatchPath, folderPath))) {
+      bestMatch = folder;
+      bestMatchPath = folderPath;
+    }
+  }
+  return bestMatch;
+}
+
 /** Gets if the candidate path is the parent path or a descendant of it. */
 export function isPathWithin(parentPath: string, candidatePath: string) {
   const relativePath = path.relative(parentPath, candidatePath);

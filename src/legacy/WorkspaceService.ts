@@ -2,12 +2,13 @@ import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
-import { findGlobalConfigFile, isPathWithin, resolveLooseFolderCwd } from "../configPaths";
+import { findClosestFolder, findGlobalConfigFile, isPathWithin, resolveLooseFolderCwd } from "../configPaths";
 import { type Environment, RealEnvironment } from "../environment";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
+import { getNoConfigMessage } from "./noConfigMessage";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 
@@ -103,15 +104,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   #getFolderForUri(uri: vscode.Uri) {
-    let bestMatch: FolderService | undefined;
-    for (const folder of this.#folders) {
-      if (isPathWithin(folder.uri.fsPath, uri.fsPath)) {
-        if (bestMatch == null || isPathWithin(bestMatch.uri.fsPath, folder.uri.fsPath)) {
-          bestMatch = folder;
-        }
-      }
-    }
-    return bestMatch;
+    return findClosestFolder(this.#folders, folder => folder.uri.fsPath, uri.fsPath);
   }
 
   /**
@@ -179,15 +172,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return;
     }
     this.#hasNotifiedNoConfig = true;
-    let message = "No dprint configuration file found. Run \"dprint init\" in your project to create one";
-    if (useGlobalConfig) {
-      message += " or \"dprint init --global\" to create a global one.";
-    } else if (await findGlobalConfigFile(this.#environment) != null) {
-      message += " or enable the \"dprint.useGlobalConfig\" setting to use your global one.";
-    } else {
-      message += ".";
-    }
-    vscode.window.showInformationMessage(message);
+    const hasGlobalConfig = !useGlobalConfig && await findGlobalConfigFile(this.#environment) != null;
+    vscode.window.showInformationMessage(getNoConfigMessage({ useGlobalConfig, hasGlobalConfig }));
   }
 
   #clearFolders() {

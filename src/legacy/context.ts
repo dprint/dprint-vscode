@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
-import { DPRINT_EXTENSION_ID } from "../constants";
+import { isDprintExtensionId } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
@@ -130,8 +130,6 @@ export function activateLegacy(
 async function getDefaultFormatterLanguageIds() {
   const languageIds = await vscode.languages.getLanguages();
   return languageIds.filter(languageId => {
-    const defaultFormatter = vscode.workspace.getConfiguration("editor", { languageId }).get("defaultFormatter");
-    // extension ids are case insensitive
-    return typeof defaultFormatter === "string" && defaultFormatter.toLowerCase() === DPRINT_EXTENSION_ID;
+    return isDprintExtensionId(vscode.workspace.getConfiguration("editor", { languageId }).get("defaultFormatter"));
   }).sort();
 }
