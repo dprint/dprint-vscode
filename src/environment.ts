@@ -18,6 +18,8 @@ export interface Environment {
   mkdir(path: string): Promise<void>;
   isWritableFileSystem(): boolean;
   tmpdir(): string;
+  homeDir(): string | undefined;
+  envVar(name: string): string | undefined;
   arch(): string;
   platform(): NodeJS.Platform;
   getLinuxFamily(): Promise<LinuxFamily>;
@@ -86,6 +88,18 @@ export class RealEnvironment implements Environment {
 
   tmpdir(): string {
     return os.tmpdir();
+  }
+
+  homeDir() {
+    try {
+      return os.homedir();
+    } catch {
+      return undefined;
+    }
+  }
+
+  envVar(name: string) {
+    return process.env[name];
   }
 
   arch() {

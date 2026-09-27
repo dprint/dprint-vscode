@@ -54,6 +54,15 @@
             "C:\\some-dir\\dprint.exe"
           ]
         },
+        "dprint.useGlobalConfig": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": false,
+          "markdownDescription": "Format files that don't have a dprint configuration file in their directory or an ancestor directory using the global configuration file (created by `dprint init --global`). Only applies to languages where dprint is the default formatter (`#editor.defaultFormatter#`).",
+          "scope": "resource"
+        },
         "dprint.verbose": {
           "type": [
             "boolean",

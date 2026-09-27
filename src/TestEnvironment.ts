@@ -13,20 +13,25 @@ export interface TestEnvironmentOptions {
   arch?: string;
   linuxFamily?: LinuxFamily;
   tmpdir?: string;
+  homeDir?: string;
+  envVars?: Record<string, string>;
   isWritableFileSystem?: boolean;
 }
 
 /** An in-memory environment for unit tests. */
 export class TestEnvironment implements Environment {
   readonly #entries = new Map<string, Entry>();
-  readonly #options: Required<TestEnvironmentOptions>;
+  readonly #options: Required<Omit<TestEnvironmentOptions, "homeDir">>;
+  readonly #homeDir: string | undefined;
 
   constructor(options: TestEnvironmentOptions = {}) {
+    this.#homeDir = options.homeDir;
     this.#options = {
       platform: options.platform ?? "linux",
       arch: options.arch ?? "x64",
       linuxFamily: options.linuxFamily ?? "glibc",
       tmpdir: options.tmpdir ?? path.resolve("/tmp"),
+      envVars: options.envVars ?? {},
       isWritableFileSystem: options.isWritableFileSystem ?? true,
     };
   }
@@ -92,6 +97,14 @@ export class TestEnvironment implements Environment {
 
   tmpdir() {
     return this.#options.tmpdir;
+  }
+
+  homeDir() {
+    return this.#homeDir;
+  }
+
+  envVar(name: string) {
+    return this.#options.envVars[name];
   }
 
   arch() {
