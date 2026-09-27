@@ -39,36 +39,97 @@ export async function tryResolveNpmExecutable(
   }
 }
 
+interface NpmExecutable {
+  version: string;
+  path: string;
+}
+
 async function tryResolveInNodeModules(
   dir: vscode.Uri,
   packageName: string,
   env: Environment,
   logger: Logger,
-) {
-  const packagePath = vscode.Uri.joinPath(dir, "node_modules", "@dprint", packageName);
-  const npmExecutablePath = vscode.Uri.joinPath(packagePath, getDprintExeName(env));
-
-  const exists = await env.fileExists(npmExecutablePath);
-  if (exists) {
-    const pkgJsonPath = vscode.Uri.joinPath(packagePath, "package.json");
-    const packageJsonText = await env.readTextFile(pkgJsonPath);
-    if (packageJsonText != null) {
-      try {
-        return {
-          version: JSON.parse(packageJsonText).version,
-          path: npmExecutablePath.fsPath,
-        };
-      } catch (err) {
-        logger.logWarn("Failed resolving package.json", pkgJsonPath, " - Error:", err);
-      }
-    }
+): Promise<NpmExecutable | undefined> {
+  const nodeModulesDir = vscode.Uri.joinPath(dir, "node_modules");
+  const hoistedExec = await tryResolvePlatformPackage(
+    vscode.Uri.joinPath(nodeModulesDir, "@dprint", packageName),
+    env,
+    logger,
+  );
+  if (hoistedExec != null) {
+    return hoistedExec;
   }
+
+  const dprintPackageExec = await tryResolveFromDprintPackage(nodeModulesDir, packageName, env, logger);
+  if (dprintPackageExec != null) {
+    return dprintPackageExec;
+  }
+
   // check the ancestors for a node_modules directory
   const parentDir = vscode.Uri.joinPath(dir, "../");
   if (parentDir.fsPath !== dir.fsPath) {
     return tryResolveInNodeModules(parentDir, packageName, env, logger);
   }
   return undefined;
+}
+
+/**
+ * Resolves the platform package relative to the real location of the `dprint` package.
+ *
+ * This handles package managers that don't hoist the platform package to the
+ * top level node_modules folder (ex. pnpm symlinks `node_modules/dprint` into
+ * `node_modules/.pnpm/dprint@<version>/node_modules/dprint` and places the
+ * platform package beside it).
+ */
+async function tryResolveFromDprintPackage(
+  nodeModulesDir: vscode.Uri,
+  packageName: string,
+  env: Environment,
+  logger: Logger,
+): Promise<NpmExecutable | undefined> {
+  const realDprintPackagePath = await env.realPath(vscode.Uri.joinPath(nodeModulesDir, "dprint"));
+  if (realDprintPackagePath == null) {
+    return undefined;
+  }
+  const candidates = [
+    // nested install (ex. node_modules/dprint/node_modules/@dprint/<package>)
+    vscode.Uri.joinPath(realDprintPackagePath, "node_modules", "@dprint", packageName),
+    // sibling install (ex. pnpm's node_modules/.pnpm/dprint@<version>/node_modules/@dprint/<package>)
+    vscode.Uri.joinPath(realDprintPackagePath, "..", "@dprint", packageName),
+  ];
+  for (const candidate of candidates) {
+    const exec = await tryResolvePlatformPackage(candidate, env, logger);
+    if (exec != null) {
+      logger.logDebug("Resolved npm executable via real path of dprint package at", realDprintPackagePath.fsPath);
+      return exec;
+    }
+  }
+  return undefined;
+}
+
+async function tryResolvePlatformPackage(
+  packagePath: vscode.Uri,
+  env: Environment,
+  logger: Logger,
+): Promise<NpmExecutable | undefined> {
+  const npmExecutablePath = vscode.Uri.joinPath(packagePath, getDprintExeName(env));
+  if (!await env.fileExists(npmExecutablePath)) {
+    return undefined;
+  }
+  const pkgJsonPath = vscode.Uri.joinPath(packagePath, "package.json");
+  const packageJsonText = await env.readTextFile(pkgJsonPath);
+  if (packageJsonText == null) {
+    return undefined;
+  }
+  try {
+    return {
+      version: JSON.parse(packageJsonText).version,
+      path: npmExecutablePath.fsPath,
+    };
+  } catch (err) {
+    logger.logWarn("Failed resolving package.json", pkgJsonPath, " - Error:", err);
+    return undefined;
+  }
 }
 
 function getDprintExeName(env: Environment) {

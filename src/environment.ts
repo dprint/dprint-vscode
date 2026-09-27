@@ -1,5 +1,6 @@
 import * as cp from "node:child_process";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as process from "node:process";
 import * as os from "os";
 import * as vscode from "vscode";
@@ -12,6 +13,7 @@ export type LinuxFamily = "musl" | "glibc";
 export interface Environment {
   fileExists(path: vscode.Uri): Promise<boolean>;
   readTextFile(path: vscode.Uri): Promise<string | undefined>;
+  realPath(path: vscode.Uri): Promise<vscode.Uri | undefined>;
   atomicCopyFile(from: vscode.Uri, to: vscode.Uri): Promise<void>;
   mkdir(uri: vscode.Uri): Promise<void>;
   isWritableFileSystem(): boolean;
@@ -34,6 +36,18 @@ export class RealEnvironment implements Environment {
     try {
       const bytes = await vscode.workspace.fs.readFile(path);
       return new TextDecoder().decode(bytes);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async realPath(path: vscode.Uri) {
+    // vscode.workspace.fs has no realpath api
+    if (path.scheme !== "file") {
+      return undefined;
+    }
+    try {
+      return vscode.Uri.file(await fs.promises.realpath(path.fsPath));
     } catch {
       return undefined;
     }

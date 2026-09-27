@@ -23,6 +23,10 @@ export class TestEnvironment implements Environment {
     throw new Error("Method not implemented.");
   }
 
+  realPath(path: vscode.Uri): Promise<vscode.Uri | undefined> {
+    throw new Error("Method not implemented.");
+  }
+
   atomicCopyFile(from: vscode.Uri, to: vscode.Uri): Promise<void> {
     throw new Error("Method not implemented.");
   }
