@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { type NpmResolveOptions, tryResolveInNodeModules } from "../../executable/npmResolve";
+import { type NpmResolveOptions, tryResolveInNodeModules } from "./npmResolve";
 
 // use names that won't match any real package installed in an ancestor of the temp directory
 const packageName = "dprint-vscode-test-platform";
