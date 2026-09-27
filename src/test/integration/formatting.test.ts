@@ -31,6 +31,14 @@ suite(`${backend} formatting (${hasWorkspace ? "workspace" : "empty window"})`, 
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   });
 
+  test("provides the dprint configuration schema", async () => {
+    const uri = vscode.Uri.parse("dprint://schemas/config.json");
+    const document = await vscode.workspace.openTextDocument(uri);
+    const schema = JSON.parse(document.getText());
+    assert.equal(schema.$id, uri.toString());
+    assert.equal(schema.type, "object");
+  });
+
   test("repeatedly leaves a loose file unchanged without config", async () => {
     const document = await createDocument(
       vscode.Uri.joinPath(missingFilesUri, "missing.dprint-test"),

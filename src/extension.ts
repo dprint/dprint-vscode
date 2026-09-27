@@ -1,17 +1,21 @@
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig } from "./config";
+import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
+import { HttpsTextDownloader } from "./utils";
 
 class GlobalPluginState {
   constructor(
     public readonly outputChannel: vscode.OutputChannel,
     public readonly logger: Logger,
     public readonly extensionBackend: ExtensionBackend,
+    public readonly configSchemaProvider: ConfigJsonSchemaProvider,
+    public readonly configSchemaRegistration: vscode.Disposable,
   ) {
   }
 
@@ -21,6 +25,8 @@ class GlobalPluginState {
     } catch {
       // ignore
     }
+    this.configSchemaRegistration.dispose();
+    this.configSchemaProvider.dispose();
     this.outputChannel.dispose();
   }
 }
@@ -111,18 +117,27 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
   let outputChannel: vscode.OutputChannel | undefined = undefined;
   let logger: Logger | undefined = undefined;
   let backend: ExtensionBackend | undefined = undefined;
+  let configSchemaProvider: ConfigJsonSchemaProvider | undefined;
+  let configSchemaRegistration: vscode.Disposable | undefined;
   try {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
     const approvedPaths = new ApprovedConfigPaths(context);
+    configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
+    configSchemaRegistration = vscode.workspace.registerTextDocumentContentProvider(
+      ConfigJsonSchemaProvider.scheme,
+      configSchemaProvider,
+    );
     backend = isLsp()
       ? activateLsp(logger, approvedPaths)
-      : activateLegacy(logger, approvedPaths);
+      : activateLegacy(logger, approvedPaths, configSchemaProvider);
   } catch (err) {
+    configSchemaRegistration?.dispose();
+    configSchemaProvider?.dispose();
     outputChannel?.dispose();
     throw err;
   }
-  globalState = new GlobalPluginState(outputChannel, logger, backend);
+  globalState = new GlobalPluginState(outputChannel, logger, backend, configSchemaProvider, configSchemaRegistration);
   return globalState;
 }
 
