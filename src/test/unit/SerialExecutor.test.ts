@@ -37,10 +37,12 @@ test("SerialExecutor rejects queued work when cleared", async () => {
   const queued = executor.execute(async () => "not reached");
 
   executor.clear();
-  await Promise.all([first, queued].map(promise => promise.then(
-    () => assert.fail("Expected queued work to be cancelled."),
-    reason => assert.equal(reason, "Cancelling all pending tasks."),
-  )));
+  await Promise.all([first, queued].map(promise =>
+    promise.then(
+      () => assert.fail("Expected queued work to be cancelled."),
+      reason => assert.equal(reason, "Cancelling all pending tasks."),
+    )
+  ));
   releaseFirst?.();
   await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(executor.isEmpty(), true);

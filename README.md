@@ -70,9 +70,3 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 
 1. `npm install`
 2. Go to "Run and debug" in VS code and run the "Run Extension" task.
-
-## Release Notes
-
-### 0.0.1
-
-Fork's initial release, from [the original's 0.17.2](https://github.com/dprint/dprint-vscode/tree/4d1992624bbdd71f5349aed0b79fc77141219b3d#0172)
