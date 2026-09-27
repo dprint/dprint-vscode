@@ -13,7 +13,9 @@ export interface ResolveLooseFolderCwdOptions {
 
 export interface LooseFolderCwd {
   cwd: string;
-  /** Whether the cli will use the global config file in the cwd. */
+  /** The config file the cli will use. */
+  configFilePath: string;
+  /** Whether the config file is the global config file. */
   isGlobalConfig: boolean;
 }
 
@@ -31,12 +33,13 @@ export async function resolveLooseFolderCwd(
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line
-    return { cwd: path.dirname(configFilePath), isGlobalConfig: false };
+    return { cwd: path.dirname(configFilePath), configFilePath, isGlobalConfig: false };
   }
-  if (options.useGlobalConfig && await findGlobalConfigFile(env) != null) {
+  const globalConfigFilePath = options.useGlobalConfig ? await findGlobalConfigFile(env) : undefined;
+  if (globalConfigFilePath != null) {
     // the cli uses the global config file with its cwd as the base path, so run
     // it at the file system root to allow formatting any file on that drive
-    return { cwd: path.parse(filePath).root, isGlobalConfig: true };
+    return { cwd: path.parse(filePath).root, configFilePath: globalConfigFilePath, isGlobalConfig: true };
   }
   return undefined;
 }

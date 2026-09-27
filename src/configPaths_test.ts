@@ -21,7 +21,11 @@ describe("resolveLooseFolderCwd", () => {
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
     env.writeFile(path.resolve("/project/dprint.json"), "{}");
 
-    const expected = { cwd: path.resolve("/project"), isGlobalConfig: false };
+    const expected = {
+      cwd: path.resolve("/project"),
+      configFilePath: path.resolve("/project/dprint.json"),
+      isGlobalConfig: false,
+    };
     assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), expected);
     assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }), expected);
   });
@@ -32,6 +36,7 @@ describe("resolveLooseFolderCwd", () => {
 
     assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), {
       cwd: rootDir,
+      configFilePath: path.join(homeDir, ".config/dprint/dprint.json"),
       isGlobalConfig: true,
     });
   });

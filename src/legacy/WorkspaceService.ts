@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
@@ -9,6 +10,7 @@ import {
   type LooseFolderCwd,
   resolveLooseFolderCwd,
 } from "../configPaths";
+import { DPRINT_CONFIG_FILE_NAME_GLOB } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
@@ -21,6 +23,11 @@ export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 export interface FolderInfo {
   uri: vscode.Uri;
   editorInfo: EditorInfo;
+}
+
+interface LooseFolderEntry {
+  folder: Promise<FolderService | undefined>;
+  configFileWatcher: vscode.Disposable;
 }
 
 export interface WorkspaceServiceOptions {
@@ -39,7 +46,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #environment: Environment;
   readonly #folders: FolderService[] = [];
   /** Folders for files not in a workspace folder with a config file, keyed by their cwd. */
-  readonly #looseFolders = new Map<string, Promise<FolderService | undefined>>();
+  readonly #looseFolders = new Map<string, LooseFolderEntry>();
 
   #disposed = false;
   #generation = 0;
@@ -131,13 +138,37 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
 
     const key = `${looseCwd.isGlobalConfig ? "global" : "config"}:${looseCwd.cwd}`;
-    let folder = this.#looseFolders.get(key);
-    if (folder == null) {
-      // failures are stored too so they're not retried on every format until a restart
-      folder = this.#initializeLooseFolder(looseCwd, generation);
-      this.#looseFolders.set(key, folder);
+    let entry = this.#looseFolders.get(key);
+    if (entry == null) {
+      // failures are stored too so they're not retried on every format until the config file changes
+      entry = this.#createLooseFolderEntry(key, looseCwd, generation);
+      this.#looseFolders.set(key, entry);
     }
-    return folder;
+    return entry.folder;
+  }
+
+  #createLooseFolderEntry(key: string, looseCwd: LooseFolderCwd, generation: number) {
+    // Watch the config files in the config file's directory because config files outside
+    // the workspace aren't otherwise watched. When one changes, remove the entry so the next
+    // format starts dprint again (ex. to retry after a failure or to stop using a deleted config).
+    const configFileWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(path.dirname(looseCwd.configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
+    );
+    const entry: LooseFolderEntry = {
+      folder: this.#initializeLooseFolder(looseCwd, generation),
+      configFileWatcher,
+    };
+    const removeEntry = () => {
+      if (this.#looseFolders.get(key) === entry) {
+        this.#logger.logDebug("Configuration file changed. Stopping dprint in:", looseCwd.cwd);
+        this.#looseFolders.delete(key);
+        disposeLooseFolderEntry(entry);
+      }
+    };
+    configFileWatcher.onDidCreate(removeEntry);
+    configFileWatcher.onDidChange(removeEntry);
+    configFileWatcher.onDidDelete(removeEntry);
+    return entry;
   }
 
   async #initializeLooseFolder({ cwd, isGlobalConfig }: LooseFolderCwd, generation: number) {
@@ -192,8 +223,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       folder.dispose();
     }
     this.#folders.length = 0; // clear
-    for (const folder of this.#looseFolders.values()) {
-      folder.then(f => f?.dispose());
+    for (const entry of this.#looseFolders.values()) {
+      disposeLooseFolderEntry(entry);
     }
     this.#looseFolders.clear();
   }
@@ -276,6 +307,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       logger: this.#logger,
     });
   }
+}
+
+function disposeLooseFolderEntry(entry: LooseFolderEntry) {
+  entry.configFileWatcher.dispose();
+  entry.folder.then(folder => folder?.dispose());
 }
 
 function areDirectoryUrisEqual(a: vscode.Uri, b: vscode.Uri) {
