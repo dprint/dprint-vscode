@@ -16,7 +16,7 @@ export function activateLegacy(
   const workspaceService = new WorkspaceService({
     approvedPaths,
     logger,
-    onAncestorConfigFileChanged: () => reInitialize(),
+    onAncestorConfigFileChanged: reInitialize,
   });
   resourceDisposables.push(workspaceService);
 

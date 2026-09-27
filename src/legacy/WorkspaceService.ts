@@ -13,7 +13,7 @@ import {
 } from "../configPaths";
 import { DPRINT_CONFIG_FILE_NAME_GLOB } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
-import type { EditorInfo } from "../executable/DprintExecutable";
+import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { FolderService } from "./FolderService";
@@ -29,7 +29,7 @@ export interface FolderInfo {
 export interface WorkspaceServiceOptions {
   approvedPaths: ApprovedConfigPaths;
   logger: Logger;
-  /** Called when a config file in an ancestor directory of a workspace folder changes. */
+  /** Called when a config file in an ancestor directory of a workspace folder is created, changed, or deleted. */
   onAncestorConfigFileChanged: () => void;
 }
 
@@ -41,12 +41,13 @@ export interface WorkspaceServiceOptions {
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
+  readonly #onAncestorConfigFileChanged: () => void;
   readonly #environment: Environment;
   readonly #folders: FolderService[] = [];
   /** Folders for files not in a workspace folder with a config file. */
   readonly #looseFolders = new Map<string, LooseFolderEntry>();
-  readonly #ancestorConfigFileWatchers: vscode.Disposable[] = [];
-  readonly #onAncestorConfigFileChanged: () => void;
+  /** Watchers for config files in ancestor directories of workspace folders, keyed by directory. */
+  readonly #ancestorConfigFileWatchers = new Map<string, vscode.Disposable>();
 
   #disposed = false;
   #generation = 0;
@@ -155,12 +156,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     // the workspace aren't otherwise watched. Remove the entry so the next format starts
     // dprint again when a config file is created or deleted, or when one changes after
     // dprint failed to start. A running dprint picks up changes to its config file itself.
-    const configFileWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(
-        vscode.Uri.file(path.dirname(looseConfig.configFilePath)),
-        DPRINT_CONFIG_FILE_NAME_GLOB,
-      ),
-    );
+    const configFileWatcher = createConfigFileWatcher(looseConfig.configFilePath);
     const entry: LooseFolderEntry = {
       folder: this.#initializeLooseFolder(looseConfig, generation),
       configFileWatcher,
@@ -240,10 +236,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       disposeLooseFolderEntry(entry);
     }
     this.#looseFolders.clear();
-    for (const watcher of this.#ancestorConfigFileWatchers) {
+    for (const watcher of this.#ancestorConfigFileWatchers.values()) {
       watcher.dispose();
     }
-    this.#ancestorConfigFileWatchers.length = 0; // clear
+    this.#ancestorConfigFileWatchers.clear();
   }
 
   async #initializeFolders(): Promise<FolderInfos> {
@@ -280,7 +276,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         this.#assertNotDisposed();
         this.#assertCurrentGeneration(generation);
         if (ancestorConfigFilePath != null) {
-          this.#folders.push(this.#createWorkspaceFolderService(folder, undefined));
+          // the cli finds the ancestor config file itself, but don't let it fall back to the
+          // global config file if that one's deleted because the global config file is opt-in
+          this.#folders.push(this.#createWorkspaceFolderService(folder, undefined, "ignore-descendants"));
           this.#watchAncestorConfigFile(ancestorConfigFilePath);
         }
       }
@@ -317,7 +315,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
-  #createWorkspaceFolderService(folder: vscode.WorkspaceFolder, configUri: vscode.Uri | undefined) {
+  #createWorkspaceFolderService(
+    folder: vscode.WorkspaceFolder,
+    configUri: vscode.Uri | undefined,
+    configDiscovery?: ConfigDiscovery,
+  ) {
     return new FolderService({
       approvedPaths: this.#approvedPaths,
       // It's important that we always use the workspace folder as the
@@ -327,28 +329,35 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       // they can't delete the sub directory.
       cwd: folder.uri,
       configUri,
-      // When there's no config file, the cli finds the one in an ancestor directory.
-      // Don't let it fall back to the global config file if that one's deleted
-      // because the global config file is opt-in.
-      configDiscovery: configUri == null ? "ignore-descendants" : undefined,
+      configDiscovery,
       logger: this.#logger,
     });
   }
 
   #watchAncestorConfigFile(configFilePath: string) {
-    // config files outside the workspace aren't otherwise watched, so reinitialize when one changes
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(path.dirname(configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
-    );
+    const dirPath = path.dirname(configFilePath);
+    // config files in workspace folders are already watched by the extension
+    const isInWorkspace = vscode.workspace.workspaceFolders?.some(f => isPathWithin(f.uri.fsPath, dirPath)) ?? false;
+    if (isInWorkspace || this.#ancestorConfigFileWatchers.has(dirPath)) {
+      return;
+    }
+    const watcher = createConfigFileWatcher(configFilePath);
     const onChange = () => {
-      this.#logger.logDebug("Ancestor configuration file changed:", configFilePath);
+      this.#logger.logDebug("Ancestor configuration file changed in:", dirPath);
       this.#onAncestorConfigFileChanged();
     };
     watcher.onDidCreate(onChange);
     watcher.onDidChange(onChange);
     watcher.onDidDelete(onChange);
-    this.#ancestorConfigFileWatchers.push(watcher);
+    this.#ancestorConfigFileWatchers.set(dirPath, watcher);
   }
+}
+
+/** Watches the config files in the config file's directory. */
+function createConfigFileWatcher(configFilePath: string) {
+  return vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(path.dirname(configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
+  );
 }
 
 interface LooseFolderEntry {
