@@ -16,6 +16,7 @@ export function activateLegacy(
   const workspaceService = new WorkspaceService({
     approvedPaths,
     logger,
+    onAncestorConfigFileChanged: () => reInitialize(),
   });
   resourceDisposables.push(workspaceService);
 
@@ -37,21 +38,7 @@ export function activateLegacy(
 
   return {
     isLsp: false,
-    async reInitialize() {
-      try {
-        folderInfos = await workspaceService.initializeFolders();
-        configSchemaProvider.setFolderInfos(folderInfos);
-        await scheduleFormattingRegistrationUpdate();
-        if (folderInfos.length === 0) {
-          logger.logInfo("Configuration file not found.");
-        }
-      } catch (err) {
-        if (!(err instanceof ObjectDisposedError)) {
-          logger.logError("Error initializing:", err);
-        }
-      }
-      logger.logDebug("Initialized legacy backend.");
-    },
+    reInitialize,
     dispose() {
       disposed = true;
       initializationDisposables.dispose();
@@ -59,6 +46,22 @@ export function activateLegacy(
       logger.logDebug("Disposed legacy backend.");
     },
   };
+
+  async function reInitialize() {
+    try {
+      folderInfos = await workspaceService.initializeFolders();
+      configSchemaProvider.setFolderInfos(folderInfos);
+      await scheduleFormattingRegistrationUpdate();
+      if (folderInfos.length === 0) {
+        logger.logInfo("Configuration file not found.");
+      }
+    } catch (err) {
+      if (!(err instanceof ObjectDisposedError)) {
+        logger.logError("Error initializing:", err);
+      }
+    }
+    logger.logDebug("Initialized legacy backend.");
+  }
 
   // Updates run one at a time because getting the languages is async and
   // concurrent updates would otherwise register the providers twice. The key

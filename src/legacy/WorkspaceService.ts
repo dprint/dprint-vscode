@@ -2,9 +2,10 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
-import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
+import { discoverWorkspaceConfigFiles } from "../configFile";
 import {
   findClosestFolder,
+  findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
   isPathWithin,
   type LooseFolderConfig,
@@ -28,6 +29,8 @@ export interface FolderInfo {
 export interface WorkspaceServiceOptions {
   approvedPaths: ApprovedConfigPaths;
   logger: Logger;
+  /** Called when a config file in an ancestor directory of a workspace folder changes. */
+  onAncestorConfigFileChanged: () => void;
 }
 
 /**
@@ -42,6 +45,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #folders: FolderService[] = [];
   /** Folders for files not in a workspace folder with a config file. */
   readonly #looseFolders = new Map<string, LooseFolderEntry>();
+  readonly #ancestorConfigFileWatchers: vscode.Disposable[] = [];
+  readonly #onAncestorConfigFileChanged: () => void;
 
   #disposed = false;
   #generation = 0;
@@ -51,6 +56,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   constructor(opts: WorkspaceServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
+    this.#onAncestorConfigFileChanged = opts.onAncestorConfigFileChanged;
     this.#environment = new RealEnvironment(opts.logger);
   }
 
@@ -234,6 +240,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       disposeLooseFolderEntry(entry);
     }
     this.#looseFolders.clear();
+    for (const watcher of this.#ancestorConfigFileWatchers) {
+      watcher.dispose();
+    }
+    this.#ancestorConfigFileWatchers.length = 0; // clear
   }
 
   async #initializeFolders(): Promise<FolderInfos> {
@@ -262,11 +272,17 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       // it's added to the list of folders in order to allow someone
       // formatting when the current open workspace is in a sub directory
       // of a workspace
-      if (
-        !this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))
-        && ancestorDirsContainConfigFile(folder.uri)
-      ) {
-        this.#folders.push(this.#createWorkspaceFolderService(folder, undefined));
+      if (!this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))) {
+        const ancestorConfigFilePath = await findConfigFileInAncestorDirectories(
+          this.#environment,
+          path.dirname(folder.uri.fsPath),
+        );
+        this.#assertNotDisposed();
+        this.#assertCurrentGeneration(generation);
+        if (ancestorConfigFilePath != null) {
+          this.#folders.push(this.#createWorkspaceFolderService(folder, undefined));
+          this.#watchAncestorConfigFile(ancestorConfigFilePath);
+        }
       }
     }
 
@@ -311,8 +327,27 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       // they can't delete the sub directory.
       cwd: folder.uri,
       configUri,
+      // When there's no config file, the cli finds the one in an ancestor directory.
+      // Don't let it fall back to the global config file if that one's deleted
+      // because the global config file is opt-in.
+      configDiscovery: configUri == null ? "ignore-descendants" : undefined,
       logger: this.#logger,
     });
+  }
+
+  #watchAncestorConfigFile(configFilePath: string) {
+    // config files outside the workspace aren't otherwise watched, so reinitialize when one changes
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(path.dirname(configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
+    );
+    const onChange = () => {
+      this.#logger.logDebug("Ancestor configuration file changed:", configFilePath);
+      this.#onAncestorConfigFileChanged();
+    };
+    watcher.onDidCreate(onChange);
+    watcher.onDidChange(onChange);
+    watcher.onDidDelete(onChange);
+    this.#ancestorConfigFileWatchers.push(watcher);
   }
 }
 
