@@ -12,3 +12,4 @@ vsc-extension-quickstart.md
 **/*.ts
 dprint.json
 .claude
+.github

@@ -104,7 +104,7 @@ async function runScenario(backend, hasWorkspace) {
     JSON.stringify({
       "dprint.experimentalLsp": backend === "lsp",
       "dprint.verbose": true,
-      "editor.defaultFormatter": "dprint.dprint",
+      "editor.defaultFormatter": "dante-marshal.dprint-vscode",
       "editor.formatOnSave": true,
       "files.eol": "\n",
     }),
@@ -116,7 +116,7 @@ async function runScenario(backend, hasWorkspace) {
       path.join(workspace, ".vscode", "settings.json"),
       JSON.stringify({
         "dprint.experimentalLsp": backend === "lsp",
-        "editor.defaultFormatter": "dprint.dprint",
+        "editor.defaultFormatter": "dante-marshal.dprint-vscode",
         "editor.formatOnSave": true,
         "files.eol": "\n",
       }),

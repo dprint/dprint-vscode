@@ -3,7 +3,7 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 
 const encoder = new TextEncoder();
-const extensionId = "dprint.dprint";
+const extensionId = "dante-marshal.dprint-vscode";
 const unformattedJson = "{\n       \"test\":     5\n}";
 const backend = requiredEnv("DPRINT_TEST_BACKEND");
 const hasWorkspace = requiredEnv("DPRINT_TEST_HAS_WORKSPACE") === "true";

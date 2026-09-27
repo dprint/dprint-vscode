@@ -48,7 +48,7 @@ suite("Extension Test Suite", () => {
       await vscode.workspace.getConfiguration("files").update("eol", "\n", vscode.ConfigurationTarget.Workspace);
       await vscode.workspace.getConfiguration("editor").update(
         "defaultFormatter",
-        "dprint.dprint",
+        "dante-marshal.dprint-vscode",
         vscode.ConfigurationTarget.Workspace,
       );
     },

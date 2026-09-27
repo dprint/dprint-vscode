@@ -1,14 +1,18 @@
 {
-  "name": "dprint",
+  "name": "dprint-vscode",
   "displayName": "Dprint Code Formatter",
   "description": "Formats code in VSCode using dprint.",
   "author": "David Sherret",
-  "publisher": "dprint",
-  "version": "0.17.2",
+  "publisher": "dante-marshal",
+  "version": "0.0.1",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dprint/dprint-vscode.git"
+    "url": "https://github.com/DanteMarshal/dprint-vscode.git"
+  },
+  "homepage": "https://github.com/DanteMarshal/dprint-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/DanteMarshal/dprint-vscode/issues"
   },
   "engines": {
     "vscode": "^1.82.0"
@@ -98,11 +102,5 @@
     "dprint": "0.57.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
-  },
-  "__metadata": {
-    "id": "a71f21fc-951b-4829-92f5-ba423b77109f",
-    "publisherDisplayName": "dprint",
-    "publisherId": "fbc6f234-24bc-436b-a1f7-81d06d444496",
-    "isPreReleaseVersion": false
   }
 }
