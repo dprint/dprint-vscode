@@ -1,5 +1,6 @@
 import * as cp from "node:child_process";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as process from "node:process";
 import * as os from "os";
 import * as vscode from "vscode";
@@ -10,10 +11,11 @@ import { Instant, type Logger } from "./logger";
 export type LinuxFamily = "musl" | "glibc";
 
 export interface Environment {
-  fileExists(path: vscode.Uri): Promise<boolean>;
-  readTextFile(path: vscode.Uri): Promise<string | undefined>;
-  atomicCopyFile(from: vscode.Uri, to: vscode.Uri): Promise<void>;
-  mkdir(uri: vscode.Uri): Promise<void>;
+  fileExists(path: string): Promise<boolean>;
+  readTextFile(path: string): Promise<string | undefined>;
+  realPath(path: string): Promise<string | undefined>;
+  atomicCopyFile(from: string, to: string): Promise<void>;
+  mkdir(path: string): Promise<void>;
   isWritableFileSystem(): boolean;
   tmpdir(): string;
   arch(): string;
@@ -30,35 +32,43 @@ export class RealEnvironment implements Environment {
     this.#logger = logger;
   }
 
-  async readTextFile(path: vscode.Uri) {
+  async readTextFile(path: string) {
     try {
-      const bytes = await vscode.workspace.fs.readFile(path);
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(path));
       return new TextDecoder().decode(bytes);
     } catch {
       return undefined;
     }
   }
 
-  async fileExists(path: vscode.Uri) {
+  async realPath(path: string) {
+    // vscode.workspace.fs has no realpath api
     try {
-      await vscode.workspace.fs.stat(path);
+      return await fs.promises.realpath(path);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async fileExists(path: string) {
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(path));
       return true;
     } catch {
       return false;
     }
   }
 
-  async atomicCopyFile(from: vscode.Uri, to: vscode.Uri) {
+  async atomicCopyFile(from: string, to: string) {
     const rand = crypto.randomBytes(4).toString("hex");
-    const tempFilePath = to.with({
-      path: to.path + "." + rand,
-    });
-    await vscode.workspace.fs.copy(from, tempFilePath, { overwrite: true });
+    const toUri = vscode.Uri.file(to);
+    const tempFileUri = vscode.Uri.file(to + "." + rand);
+    await vscode.workspace.fs.copy(vscode.Uri.file(from), tempFileUri, { overwrite: true });
     try {
-      await vscode.workspace.fs.rename(tempFilePath, to, { overwrite: true });
+      await vscode.workspace.fs.rename(tempFileUri, toUri, { overwrite: true });
     } catch (err) {
       try {
-        await vscode.workspace.fs.delete(tempFilePath);
+        await vscode.workspace.fs.delete(tempFileUri);
       } catch {
         // ignore
       }
@@ -70,8 +80,8 @@ export class RealEnvironment implements Environment {
     return vscode.workspace.fs.isWritableFileSystem("file") ?? true;
   }
 
-  async mkdir(uri: vscode.Uri) {
-    await vscode.workspace.fs.createDirectory(uri);
+  async mkdir(path: string) {
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(path));
   }
 
   tmpdir(): string {
