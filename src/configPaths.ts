@@ -6,19 +6,24 @@ import type { Environment } from "./environment";
 
 const GLOBAL_CONFIG_FILE_NAMES = ["dprint.jsonc", "dprint.json"];
 
+export interface ResolveLooseFolderCwdOptions {
+  /** Whether to fall back to the global config file. */
+  useGlobalConfig: boolean;
+}
+
 /**
  * Resolves the directory to run dprint in to format a file that's not in a
  * workspace folder with a config file, or undefined when there's no config
  * file to use.
  */
-export async function resolveLooseFolderCwd(env: Environment, filePath: string) {
+export async function resolveLooseFolderCwd(env: Environment, filePath: string, options: ResolveLooseFolderCwdOptions) {
   const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath));
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line
     return path.dirname(configFilePath);
   }
-  if (await findGlobalConfigFile(env) != null) {
+  if (options.useGlobalConfig && await findGlobalConfigFile(env) != null) {
     // the cli uses the global config file with its cwd as the base path, so run
     // it at the file system root to allow formatting any file on that drive
     return path.parse(filePath).root;

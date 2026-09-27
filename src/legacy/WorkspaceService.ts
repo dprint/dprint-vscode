@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
+import { getDprintConfig } from "../config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
-import { isPathWithin, resolveLooseFolderCwd } from "../configPaths";
+import { findGlobalConfigFile, isPathWithin, resolveLooseFolderCwd } from "../configPaths";
 import { type Environment, RealEnvironment } from "../environment";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
@@ -119,13 +120,14 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    */
   async #getLooseFolderForUri(uri: vscode.Uri) {
     const generation = this.#generation;
-    const cwd = await resolveLooseFolderCwd(this.#environment, uri.fsPath);
+    const { useGlobalConfig } = getDprintConfig(uri);
+    const cwd = await resolveLooseFolderCwd(this.#environment, uri.fsPath, { useGlobalConfig });
     if (this.#disposed || generation !== this.#generation) {
       return undefined;
     }
     if (cwd == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
-      this.#notifyNoConfig();
+      await this.#notifyNoConfig(useGlobalConfig);
       return undefined;
     }
 
@@ -171,16 +173,21 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return folder;
   }
 
-  #notifyNoConfig() {
+  async #notifyNoConfig(useGlobalConfig: boolean) {
     // only notify once per session to not annoy people
     if (this.#hasNotifiedNoConfig) {
       return;
     }
     this.#hasNotifiedNoConfig = true;
-    vscode.window.showInformationMessage(
-      "No dprint configuration file found. Run \"dprint init\" in your project "
-        + "or \"dprint init --global\" to create a global one.",
-    );
+    let message = "No dprint configuration file found. Run \"dprint init\" in your project to create one";
+    if (useGlobalConfig) {
+      message += " or \"dprint init --global\" to create a global one.";
+    } else if (await findGlobalConfigFile(this.#environment) != null) {
+      message += " or enable the \"dprint.useGlobalConfig\" setting to use your global one.";
+    } else {
+      message += ".";
+    }
+    vscode.window.showInformationMessage(message);
   }
 
   #clearFolders() {

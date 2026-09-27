@@ -13,26 +13,38 @@ const homeDir = path.resolve("/home/user");
 const rootDir = path.parse(path.resolve("/")).root;
 
 describe("resolveLooseFolderCwd", () => {
+  const filePath = path.resolve("/project/src/file.ts");
+
   it("uses the directory of the closest ancestor config file", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
     env.writeFile(path.resolve("/project/dprint.json"), "{}");
 
-    const filePath = path.resolve("/project/src/file.ts");
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath), path.resolve("/project"));
+    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), path.resolve("/project"));
+    assert.strictEqual(
+      await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }),
+      path.resolve("/project"),
+    );
   });
 
   it("uses the file system root when there's only a global config file", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, path.resolve("/project/src/file.ts")), rootDir);
+    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), rootDir);
+  });
+
+  it("does not use the global config file when disabled", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
+
+    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }), undefined);
   });
 
   it("returns undefined when there's no config file", async () => {
     const env = new TestEnvironment({ homeDir });
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, path.resolve("/project/src/file.ts")), undefined);
+    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), undefined);
   });
 });
 
