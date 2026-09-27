@@ -6,14 +6,14 @@ import {
   findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
   isPathWithin,
-  resolveLooseFolderCwd,
+  resolveLooseFolderConfig,
 } from "./configPaths";
 import { TestEnvironment } from "./TestEnvironment";
 
 const homeDir = path.resolve("/home/user");
 const rootDir = path.parse(path.resolve("/")).root;
 
-describe("resolveLooseFolderCwd", () => {
+describe("resolveLooseFolderConfig", () => {
   const filePath = path.resolve("/project/src/file.ts");
 
   it("uses the directory of the closest ancestor config file", async () => {
@@ -21,31 +21,37 @@ describe("resolveLooseFolderCwd", () => {
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
     env.writeFile(path.resolve("/project/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), path.resolve("/project"));
-    assert.strictEqual(
-      await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }),
-      path.resolve("/project"),
-    );
+    const expected = {
+      cwd: path.resolve("/project"),
+      configFilePath: path.resolve("/project/dprint.json"),
+      isGlobalConfig: false,
+    };
+    assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: true }), expected);
+    assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), expected);
   });
 
   it("uses the file system root when there's only a global config file", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), rootDir);
+    assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: true }), {
+      cwd: rootDir,
+      configFilePath: path.join(homeDir, ".config/dprint/dprint.json"),
+      isGlobalConfig: true,
+    });
   });
 
   it("does not use the global config file when disabled", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }), undefined);
+    assert.strictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), undefined);
   });
 
   it("returns undefined when there's no config file", async () => {
     const env = new TestEnvironment({ homeDir });
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), undefined);
+    assert.strictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: true }), undefined);
   });
 });
 
@@ -101,6 +107,14 @@ describe("findGlobalConfigFile", () => {
     env.writeFile(configPath, "{}");
 
     assert.strictEqual(await findGlobalConfigFile(env), configPath);
+  });
+
+  it("returns undefined for a relative DPRINT_CONFIG_DIR", async () => {
+    const env = new TestEnvironment({ homeDir, envVars: { DPRINT_CONFIG_DIR: "config" } });
+    env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
+    env.writeFile(path.join("config", "dprint.json"), "{}");
+
+    assert.strictEqual(await findGlobalConfigFile(env), undefined);
   });
 
   it("ignores an empty DPRINT_CONFIG_DIR", async () => {

@@ -1,8 +1,16 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "../configFile";
-import { findClosestFolder, findGlobalConfigFile, isPathWithin, resolveLooseFolderCwd } from "../configPaths";
+import {
+  findClosestFolder,
+  findGlobalConfigFile,
+  isPathWithin,
+  type LooseFolderConfig,
+  resolveLooseFolderConfig,
+} from "../configPaths";
+import { DPRINT_CONFIG_FILE_NAME_GLOB } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
@@ -32,8 +40,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #environment: Environment;
   readonly #folders: FolderService[] = [];
-  /** Folders for files outside the workspace folders, keyed by their cwd. */
-  readonly #looseFolders = new Map<string, Promise<FolderService | undefined>>();
+  /** Folders for files not in a workspace folder with a config file. */
+  readonly #looseFolders = new Map<string, LooseFolderEntry>();
 
   #disposed = false;
   #generation = 0;
@@ -114,32 +122,72 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   async #getLooseFolderForUri(uri: vscode.Uri) {
     const generation = this.#generation;
     const { useGlobalConfig } = getDprintConfig(uri);
-    const cwd = await resolveLooseFolderCwd(this.#environment, uri.fsPath, { useGlobalConfig });
+    const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
     if (this.#disposed || generation !== this.#generation) {
       return undefined;
     }
-    if (cwd == null) {
+    if (looseConfig == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
       await this.#notifyNoConfig(useGlobalConfig);
       return undefined;
     }
 
-    let folder = this.#looseFolders.get(cwd);
-    if (folder == null) {
-      // failures are stored too so they're not retried on every format until a restart
-      folder = this.#initializeLooseFolder(cwd, generation);
-      this.#looseFolders.set(cwd, folder);
+    // include whether it's the global config in the key because a config file at the file
+    // system root and the global config file have the same cwd, but run dprint differently
+    const key = `${looseConfig.isGlobalConfig ? "global" : "config"}:${looseConfig.cwd}`;
+    let entry = this.#looseFolders.get(key);
+    if (entry == null) {
+      // failures are stored too so they're not retried on every format until the config file changes
+      entry = this.#createLooseFolderEntry(key, looseConfig, generation);
+      this.#looseFolders.set(key, entry);
     }
-    return folder;
+    return entry.folder;
   }
 
-  async #initializeLooseFolder(cwd: string, generation: number) {
+  #createLooseFolderEntry(key: string, looseConfig: LooseFolderConfig, generation: number) {
+    // Watch the config files in the config file's directory because config files outside
+    // the workspace aren't otherwise watched. Remove the entry so the next format starts
+    // dprint again when a config file is created or deleted, or when one changes after
+    // dprint failed to start. A running dprint picks up changes to its config file itself.
+    const configFileWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        vscode.Uri.file(path.dirname(looseConfig.configFilePath)),
+        DPRINT_CONFIG_FILE_NAME_GLOB,
+      ),
+    );
+    const entry: LooseFolderEntry = {
+      folder: this.#initializeLooseFolder(looseConfig, generation),
+      configFileWatcher,
+    };
+    const removeEntry = () => {
+      if (this.#looseFolders.get(key) === entry) {
+        this.#logger.logDebug("Configuration file changed. Restarting dprint on next format in:", looseConfig.cwd);
+        this.#looseFolders.delete(key);
+        disposeLooseFolderEntry(entry);
+      }
+    };
+    configFileWatcher.onDidCreate(removeEntry);
+    configFileWatcher.onDidChange(() => {
+      entry.folder.then(folder => {
+        if (folder == null) {
+          removeEntry();
+        }
+      });
+    });
+    configFileWatcher.onDidDelete(removeEntry);
+    return entry;
+  }
+
+  async #initializeLooseFolder({ cwd, isGlobalConfig }: LooseFolderConfig, generation: number) {
     const folder = new FolderService({
       approvedPaths: this.#approvedPaths,
       cwd: vscode.Uri.file(cwd),
       configUri: undefined,
       // don't run executables from arbitrary node_modules folders outside the workspace
       resolveNpmExecutable: false,
+      // the extension resolves the config file itself, so don't let the cli fall back
+      // to the global config file (ex. when the config file is deleted while running)
+      configDiscovery: isGlobalConfig ? undefined : "ignore-descendants",
       // the user chose dprint to format this file, so tell them when it fails
       notifyOnError: true,
       logger: this.#logger,
@@ -182,8 +230,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       folder.dispose();
     }
     this.#folders.length = 0; // clear
-    for (const folder of this.#looseFolders.values()) {
-      folder.then(f => f?.dispose());
+    for (const entry of this.#looseFolders.values()) {
+      disposeLooseFolderEntry(entry);
     }
     this.#looseFolders.clear();
   }
@@ -266,6 +314,16 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       logger: this.#logger,
     });
   }
+}
+
+interface LooseFolderEntry {
+  folder: Promise<FolderService | undefined>;
+  configFileWatcher: vscode.Disposable;
+}
+
+function disposeLooseFolderEntry(entry: LooseFolderEntry) {
+  entry.configFileWatcher.dispose();
+  entry.folder.then(folder => folder?.dispose());
 }
 
 function areDirectoryUrisEqual(a: vscode.Uri, b: vscode.Uri) {

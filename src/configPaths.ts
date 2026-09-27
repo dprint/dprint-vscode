@@ -6,27 +6,41 @@ import type { Environment } from "./environment";
 
 const GLOBAL_CONFIG_FILE_NAMES = ["dprint.jsonc", "dprint.json"];
 
-export interface ResolveLooseFolderCwdOptions {
+export interface ResolveLooseFolderConfigOptions {
   /** Whether to fall back to the global config file. */
   useGlobalConfig: boolean;
 }
 
+export interface LooseFolderConfig {
+  /** The directory to run dprint in. */
+  cwd: string;
+  /** The config file the cli will use. */
+  configFilePath: string;
+  /** Whether the config file is the global config file. */
+  isGlobalConfig: boolean;
+}
+
 /**
- * Resolves the directory to run dprint in to format a file that's not in a
- * workspace folder with a config file, or undefined when there's no config
- * file to use.
+ * Resolves the config file to use and the directory to run dprint in to format
+ * a file that's not in a workspace folder with a config file, or undefined when
+ * there's no config file to use.
  */
-export async function resolveLooseFolderCwd(env: Environment, filePath: string, options: ResolveLooseFolderCwdOptions) {
+export async function resolveLooseFolderConfig(
+  env: Environment,
+  filePath: string,
+  options: ResolveLooseFolderConfigOptions,
+): Promise<LooseFolderConfig | undefined> {
   const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath));
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line
-    return path.dirname(configFilePath);
+    return { cwd: path.dirname(configFilePath), configFilePath, isGlobalConfig: false };
   }
-  if (options.useGlobalConfig && await findGlobalConfigFile(env) != null) {
+  const globalConfigFilePath = options.useGlobalConfig ? await findGlobalConfigFile(env) : undefined;
+  if (globalConfigFilePath != null) {
     // the cli uses the global config file with its cwd as the base path, so run
     // it at the file system root to allow formatting any file on that drive
-    return path.parse(filePath).root;
+    return { cwd: path.parse(filePath).root, configFilePath: globalConfigFilePath, isGlobalConfig: true };
   }
   return undefined;
 }
@@ -98,7 +112,9 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
 async function resolveGlobalConfigDir(env: Environment) {
   const dprintConfigDir = getNonEmptyEnvVar(env, "DPRINT_CONFIG_DIR");
   if (dprintConfigDir != null) {
-    return dprintConfigDir;
+    // The cli resolves a relative directory against its cwd, which differs from
+    // the extension's, so don't guess where it is in that case.
+    return path.isAbsolute(dprintConfigDir) ? dprintConfigDir : undefined;
   }
   const systemConfigDir = await resolveSystemConfigDir(env);
   return systemConfigDir == null ? undefined : path.join(systemConfigDir, "dprint");
