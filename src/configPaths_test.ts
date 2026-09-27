@@ -21,18 +21,19 @@ describe("resolveLooseFolderCwd", () => {
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
     env.writeFile(path.resolve("/project/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), path.resolve("/project"));
-    assert.strictEqual(
-      await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }),
-      path.resolve("/project"),
-    );
+    const expected = { cwd: path.resolve("/project"), isGlobalConfig: false };
+    assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), expected);
+    assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: false }), expected);
   });
 
   it("uses the file system root when there's only a global config file", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");
 
-    assert.strictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), rootDir);
+    assert.deepStrictEqual(await resolveLooseFolderCwd(env, filePath, { useGlobalConfig: true }), {
+      cwd: rootDir,
+      isGlobalConfig: true,
+    });
   });
 
   it("does not use the global config file when disabled", async () => {

@@ -16,6 +16,8 @@ export interface FolderServiceOptions {
   configUri: vscode.Uri | undefined;
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
+  /** The cli's config discovery mode. Defaults to the cli's default. */
+  configDiscovery?: "ignore-descendants";
   /** Whether to show a notification on errors. Defaults to only when there's a config file. */
   notifyOnError?: boolean;
   logger: Logger;
@@ -29,6 +31,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
   readonly #resolveNpmExecutable: boolean;
+  readonly #configDiscovery: "ignore-descendants" | undefined;
   readonly #notifyOnError: boolean;
   #disposed = false;
 
@@ -41,6 +44,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#cwd = opts.cwd;
     this.#configUri = opts.configUri;
     this.#resolveNpmExecutable = opts.resolveNpmExecutable ?? true;
+    this.#configDiscovery = opts.configDiscovery;
     this.#notifyOnError = opts.notifyOnError ?? opts.configUri != null;
     this.#environment = new RealEnvironment(this.#logger);
   }
@@ -205,6 +209,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       cwd: this.#cwd,
       configUri: this.#configUri,
       resolveNpmExecutable: this.#resolveNpmExecutable,
+      configDiscovery: this.#configDiscovery,
       verbose: config.verbose,
       logger: this.#logger,
       environment: this.#environment,

@@ -31,6 +31,8 @@ export interface DprintExecutableOptions {
   configUri: vscode.Uri | undefined;
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
+  /** The cli's config discovery mode. Defaults to the cli's default. */
+  configDiscovery?: "ignore-descendants";
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -40,6 +42,7 @@ export class DprintExecutable {
   readonly #cmdPath: string;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
+  readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
@@ -48,6 +51,11 @@ export class DprintExecutable {
     this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
+    // use the environment variable instead of the --config-discovery flag because
+    // older versions of the cli ignore it instead of erroring on an unknown flag
+    this.#env = options.configDiscovery == null
+      ? undefined
+      : { ...process.env, DPRINT_CONFIG_DISCOVERY: options.configDiscovery };
     this.#verbose = options.verbose;
   }
 
@@ -137,6 +145,7 @@ export class DprintExecutable {
     return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
+      env: this.#env,
       // Set to true, to ensure this resolves properly on windows.
       // See https://github.com/denoland/vscode_deno/issues/361
       shell: true,
@@ -153,6 +162,7 @@ export class DprintExecutable {
       try {
         const process = exec(command.map(quoteCommandArg).join(" "), {
           cwd: this.#cwd.fsPath,
+          env: this.#env,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
           if (err) {

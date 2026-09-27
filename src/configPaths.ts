@@ -11,22 +11,32 @@ export interface ResolveLooseFolderCwdOptions {
   useGlobalConfig: boolean;
 }
 
+export interface LooseFolderCwd {
+  cwd: string;
+  /** Whether the cli will use the global config file in the cwd. */
+  isGlobalConfig: boolean;
+}
+
 /**
  * Resolves the directory to run dprint in to format a file that's not in a
  * workspace folder with a config file, or undefined when there's no config
  * file to use.
  */
-export async function resolveLooseFolderCwd(env: Environment, filePath: string, options: ResolveLooseFolderCwdOptions) {
+export async function resolveLooseFolderCwd(
+  env: Environment,
+  filePath: string,
+  options: ResolveLooseFolderCwdOptions,
+): Promise<LooseFolderCwd | undefined> {
   const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath));
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line
-    return path.dirname(configFilePath);
+    return { cwd: path.dirname(configFilePath), isGlobalConfig: false };
   }
   if (options.useGlobalConfig && await findGlobalConfigFile(env) != null) {
     // the cli uses the global config file with its cwd as the base path, so run
     // it at the file system root to allow formatting any file on that drive
-    return path.parse(filePath).root;
+    return { cwd: path.parse(filePath).root, isGlobalConfig: true };
   }
   return undefined;
 }
