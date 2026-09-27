@@ -11,18 +11,25 @@ import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;
-  workspaceFolder: vscode.WorkspaceFolder;
+  /** Directory to run dprint in. */
+  cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
+  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
+  resolveNpmExecutable?: boolean;
+  /** Whether to show a notification on errors. Defaults to only when there's a config file. */
+  notifyOnError?: boolean;
   logger: Logger;
 }
 
-/** Represents an instance of dprint for a single workspace folder */
+/** Represents an instance of dprint for a single directory. */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
   readonly #environment: Environment;
-  readonly #workspaceFolder: vscode.WorkspaceFolder;
+  readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
+  readonly #resolveNpmExecutable: boolean;
+  readonly #notifyOnError: boolean;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -31,8 +38,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   constructor(opts: FolderServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
-    this.#workspaceFolder = opts.workspaceFolder;
+    this.#cwd = opts.cwd;
     this.#configUri = opts.configUri;
+    this.#resolveNpmExecutable = opts.resolveNpmExecutable ?? true;
+    this.#notifyOnError = opts.notifyOnError ?? opts.configUri != null;
     this.#environment = new RealEnvironment(this.#logger);
   }
 
@@ -40,7 +49,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     if (this.#configUri != null) {
       return vscode.Uri.joinPath(this.#configUri, "../");
     }
-    return this.#workspaceFolder.uri;
+    return this.#cwd;
   }
 
   dispose() {
@@ -193,13 +202,9 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     return DprintExecutable.create({
       approvedPaths: this.#approvedPaths,
       pathInfo: config.pathInfo,
-      // It's important that we always use the workspace folder as the
-      // cwd for the process instead of possibly the sub directory because
-      // we don't want the dprint process to hold a resource lock on a
-      // sub directory. That would give the user a bad experience where
-      // they can't delete the sub directory.
-      cwd: this.#workspaceFolder.uri,
+      cwd: this.#cwd,
       configUri: this.#configUri,
+      resolveNpmExecutable: this.#resolveNpmExecutable,
       verbose: config.verbose,
       logger: this.#logger,
       environment: this.#environment,
@@ -211,7 +216,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   #logErrorAndMaybeNotify(notificationMessage: string, message: string, ...args: any[]) {
-    if (this.#configUri == null) {
+    if (!this.#notifyOnError) {
       // only log... don't annoy people with notifications in this case
       this.#logger.logError(message, ...args);
     } else {
