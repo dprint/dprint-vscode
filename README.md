@@ -32,14 +32,14 @@ Visual Studio Code formatting extension for [dprint](https://dprint.dev/)—a pl
 
 Formats code in the editor using [dprint](https://dprint.dev/).
 
-Plugins are currently resolved based on the dprint configuration file in the current workspace folder.
+Plugins are resolved based on the dprint configuration file used for each file.
 
 Files opened outside the active workspace, including files opened in an empty window, use the nearest ancestor
 configuration file and then fall back to the global dprint configuration.
 
 ## Requirements
 
-You must have dprint installed globally on the path.
+For workspace files, dprint can be installed in the project's `node_modules`, found on the path, or specified with `dprint.path`. For files outside the workspace, dprint must be on the path or specified with `dprint.path`.
 
 Loose-file formatting requires dprint 0.57 or newer for reliable outside-path and global configuration resolution.
 
