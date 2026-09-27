@@ -24,6 +24,9 @@ export interface PluginInfo {
   helpUrl: string;
 }
 
+/** A config discovery mode supported by the cli. */
+export type ConfigDiscovery = "ignore-descendants";
+
 export interface DprintExecutableOptions {
   approvedPaths: ApprovedConfigPaths;
   pathInfo: DprintExtensionConfigPathInfo | undefined;
@@ -32,7 +35,7 @@ export interface DprintExecutableOptions {
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
   /** The cli's config discovery mode. Defaults to the cli's default. */
-  configDiscovery?: "ignore-descendants";
+  configDiscovery?: ConfigDiscovery;
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -51,8 +54,8 @@ export class DprintExecutable {
     this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
-    // use the environment variable instead of the --config-discovery flag because
-    // older versions of the cli ignore it instead of erroring on an unknown flag
+    // use the environment variable instead of the --config-discovery flag because cli
+    // versions before 0.50 error on an unknown flag, but ignore an unknown environment variable
     this.#env = options.configDiscovery == null
       ? undefined
       : { ...process.env, DPRINT_CONFIG_DISCOVERY: options.configDiscovery };

@@ -7,8 +7,8 @@ import {
   findClosestFolder,
   findGlobalConfigFile,
   isPathWithin,
-  type LooseFolderCwd,
-  resolveLooseFolderCwd,
+  type LooseFolderConfig,
+  resolveLooseFolderConfig,
 } from "../configPaths";
 import { DPRINT_CONFIG_FILE_NAME_GLOB } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
@@ -23,11 +23,6 @@ export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 export interface FolderInfo {
   uri: vscode.Uri;
   editorInfo: EditorInfo;
-}
-
-interface LooseFolderEntry {
-  folder: Promise<FolderService | undefined>;
-  configFileWatcher: vscode.Disposable;
 }
 
 export interface WorkspaceServiceOptions {
@@ -45,7 +40,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #environment: Environment;
   readonly #folders: FolderService[] = [];
-  /** Folders for files not in a workspace folder with a config file, keyed by their cwd. */
+  /** Folders for files not in a workspace folder with a config file. */
   readonly #looseFolders = new Map<string, LooseFolderEntry>();
 
   #disposed = false;
@@ -127,59 +122,71 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   async #getLooseFolderForUri(uri: vscode.Uri) {
     const generation = this.#generation;
     const { useGlobalConfig } = getDprintConfig(uri);
-    const looseCwd = await resolveLooseFolderCwd(this.#environment, uri.fsPath, { useGlobalConfig });
+    const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
     if (this.#disposed || generation !== this.#generation) {
       return undefined;
     }
-    if (looseCwd == null) {
+    if (looseConfig == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
       await this.#notifyNoConfig(useGlobalConfig);
       return undefined;
     }
 
-    const key = `${looseCwd.isGlobalConfig ? "global" : "config"}:${looseCwd.cwd}`;
+    // include whether it's the global config in the key because a config file at the file
+    // system root and the global config file have the same cwd, but run dprint differently
+    const key = `${looseConfig.isGlobalConfig ? "global" : "config"}:${looseConfig.cwd}`;
     let entry = this.#looseFolders.get(key);
     if (entry == null) {
       // failures are stored too so they're not retried on every format until the config file changes
-      entry = this.#createLooseFolderEntry(key, looseCwd, generation);
+      entry = this.#createLooseFolderEntry(key, looseConfig, generation);
       this.#looseFolders.set(key, entry);
     }
     return entry.folder;
   }
 
-  #createLooseFolderEntry(key: string, looseCwd: LooseFolderCwd, generation: number) {
+  #createLooseFolderEntry(key: string, looseConfig: LooseFolderConfig, generation: number) {
     // Watch the config files in the config file's directory because config files outside
-    // the workspace aren't otherwise watched. When one changes, remove the entry so the next
-    // format starts dprint again (ex. to retry after a failure or to stop using a deleted config).
+    // the workspace aren't otherwise watched. Remove the entry so the next format starts
+    // dprint again when a config file is created or deleted, or when one changes after
+    // dprint failed to start. A running dprint picks up changes to its config file itself.
     const configFileWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(path.dirname(looseCwd.configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
+      new vscode.RelativePattern(
+        vscode.Uri.file(path.dirname(looseConfig.configFilePath)),
+        DPRINT_CONFIG_FILE_NAME_GLOB,
+      ),
     );
     const entry: LooseFolderEntry = {
-      folder: this.#initializeLooseFolder(looseCwd, generation),
+      folder: this.#initializeLooseFolder(looseConfig, generation),
       configFileWatcher,
     };
     const removeEntry = () => {
       if (this.#looseFolders.get(key) === entry) {
-        this.#logger.logDebug("Configuration file changed. Stopping dprint in:", looseCwd.cwd);
+        this.#logger.logDebug("Configuration file changed. Restarting dprint on next format in:", looseConfig.cwd);
         this.#looseFolders.delete(key);
         disposeLooseFolderEntry(entry);
       }
     };
     configFileWatcher.onDidCreate(removeEntry);
-    configFileWatcher.onDidChange(removeEntry);
+    configFileWatcher.onDidChange(() => {
+      entry.folder.then(folder => {
+        if (folder == null) {
+          removeEntry();
+        }
+      });
+    });
     configFileWatcher.onDidDelete(removeEntry);
     return entry;
   }
 
-  async #initializeLooseFolder({ cwd, isGlobalConfig }: LooseFolderCwd, generation: number) {
+  async #initializeLooseFolder({ cwd, isGlobalConfig }: LooseFolderConfig, generation: number) {
     const folder = new FolderService({
       approvedPaths: this.#approvedPaths,
       cwd: vscode.Uri.file(cwd),
       configUri: undefined,
       // don't run executables from arbitrary node_modules folders outside the workspace
       resolveNpmExecutable: false,
-      // Prevent the cli from falling back to the global config file when the config
-      // file is deleted while it's running because the global config is opt-in.
+      // the extension resolves the config file itself, so don't let the cli fall back
+      // to the global config file (ex. when the config file is deleted while running)
       configDiscovery: isGlobalConfig ? undefined : "ignore-descendants",
       // the user chose dprint to format this file, so tell them when it fails
       notifyOnError: true,
@@ -307,6 +314,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       logger: this.#logger,
     });
   }
+}
+
+interface LooseFolderEntry {
+  folder: Promise<FolderService | undefined>;
+  configFileWatcher: vscode.Disposable;
 }
 
 function disposeLooseFolderEntry(entry: LooseFolderEntry) {

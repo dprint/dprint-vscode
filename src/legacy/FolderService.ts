@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
-import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
+import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
@@ -17,7 +17,7 @@ export interface FolderServiceOptions {
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
   /** The cli's config discovery mode. Defaults to the cli's default. */
-  configDiscovery?: "ignore-descendants";
+  configDiscovery?: ConfigDiscovery;
   /** Whether to show a notification on errors. Defaults to only when there's a config file. */
   notifyOnError?: boolean;
   logger: Logger;
@@ -31,7 +31,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
   readonly #resolveNpmExecutable: boolean;
-  readonly #configDiscovery: "ignore-descendants" | undefined;
+  readonly #configDiscovery: ConfigDiscovery | undefined;
   readonly #notifyOnError: boolean;
   #disposed = false;
 
