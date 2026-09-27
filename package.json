@@ -1,7 +1,8 @@
 {
   "name": "dprint-vscode",
-  "displayName": "Dprint Code Formatter",
+  "displayName": "dprint Formatter",
   "description": "Formats code in VSCode using dprint.",
+  "icon": "assets/icon.png",
   "author": "David Sherret",
   "publisher": "dante-marshal",
   "version": "0.0.1",
