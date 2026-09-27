@@ -57,11 +57,20 @@ export function activateLegacy(
       return;
     }
 
+    const documentSelector = formattingPatterns.map(pattern => ({ scheme: "file", pattern }));
     initializationDisposables.push(vscode.languages.registerDocumentFormattingEditProvider(
-      formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
+      documentSelector,
       {
         provideDocumentFormattingEdits(document, options, token) {
           return workspaceService.provideDocumentFormattingEdits(document, options, token);
+        },
+      },
+    ));
+    initializationDisposables.push(vscode.languages.registerDocumentRangeFormattingEditProvider(
+      documentSelector,
+      {
+        provideDocumentRangeFormattingEdits(document, range, options, token) {
+          return workspaceService.provideDocumentRangeFormattingEdits(document, range, options, token);
         },
       },
     ));

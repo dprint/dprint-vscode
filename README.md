@@ -29,6 +29,8 @@ Formats code in the editor using [dprint](https://dprint.dev/).
 
 Plugins are currently resolved based on the dprint configuration file in the current workspace folder.
 
+"Format Selection" formats the selected lines. Many plugins format the whole file even when given a range, so the result is only applied when formatting doesn't change any lines outside the selection. If nothing happens, try formatting the whole document.
+
 ## Requirements
 
 You must have dprint installed globally on the path.

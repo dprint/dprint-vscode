@@ -3,6 +3,7 @@ import { TextDecoder, TextEncoder } from "node:util";
 import type * as vscode from "vscode";
 import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { ByteRange } from "../byteRange";
 import { EditorProcess } from "../common";
 import type { EditorService } from "../EditorService";
 
@@ -130,12 +131,12 @@ export class EditorService5 implements EditorService {
     });
   }
 
-  formatText(filePath: string, fileText: string, token: vscode.CancellationToken) {
+  formatText(filePath: string, fileText: string, range: ByteRange | undefined, token: vscode.CancellationToken) {
     const message = this.getMessageForKind(MessageKind.FormatFile);
     const encodedFileText = textEncoder.encode(fileText);
     message.addPart(textEncoder.encode(filePath));
-    message.addPart(0); // start byte index (no range format support yet in the vscode plugin)
-    message.addPart(encodedFileText.byteLength); // end byte index
+    message.addPart(range?.start ?? 0); // start byte index
+    message.addPart(range?.end ?? encodedFileText.byteLength); // end byte index
     message.addPart(new Uint8Array(0)); // override config
     message.addPart(encodedFileText);
     const buf = message.build();
