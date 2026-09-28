@@ -128,21 +128,29 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
+  /** Gets if dprint was started for this folder (it may have exited since and will restart on demand). */
+  isRunning() {
+    return this.#editorService != null;
+  }
+
   /**
    * Refreshes the plugin information (ex. after the config file changed) without
    * restarting dprint since the running editor service reloads its config itself.
+   * Returns false when it's not running or refreshing failed.
    */
   async refreshEditorInfo() {
     if (this.#dprintExecutable == null || this.#editorService == null) {
-      return;
+      return false;
     }
     try {
       const editorInfo = await this.#dprintExecutable.getEditorInfo();
       if (!this.#disposed) {
         this.#editorInfo = editorInfo;
       }
+      return true;
     } catch (err) {
       this.#logger.logError("Error refreshing the plugin information:", err);
+      return false;
     }
   }
 

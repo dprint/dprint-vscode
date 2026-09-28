@@ -3,7 +3,8 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { isDprintExtensionId } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
-import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
@@ -19,7 +20,8 @@ export function activateLegacy(
   const workspaceService = new WorkspaceService({
     approvedPaths,
     logger,
-    onAncestorConfigFileChanged: reInitialize,
+    onAncestorConfigFileCreatedOrDeleted: reInitialize,
+    onAncestorConfigFileChanged: scheduleConfigFileRefresh,
     onLooseFolderChanged: scheduleUserDataFilePathsUpdate,
   });
   resourceDisposables.push(workspaceService);
@@ -35,6 +37,11 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
+  // coalesced because saving a config file often causes multiple change events
+  const configFileRefreshQueue = new CoalescingQueue({
+    action: refreshAfterConfigFileChange,
+    wait: () => delay(100),
+  });
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
 
@@ -47,6 +54,7 @@ export function activateLegacy(
   return {
     isLsp: false,
     reInitialize,
+    onConfigFileChanged: scheduleConfigFileRefresh,
     dispose() {
       disposed = true;
       initializationDisposables.dispose();
@@ -71,6 +79,25 @@ export function activateLegacy(
       }
     }
     logger.logDebug("Initialized legacy backend.");
+  }
+
+  function scheduleConfigFileRefresh() {
+    return configFileRefreshQueue.schedule();
+  }
+
+  /** Refreshes the plugin information after a config file's contents changed. */
+  async function refreshAfterConfigFileChange() {
+    try {
+      folderInfos = await workspaceService.refreshFolders();
+      configSchemaProvider.setFolderInfos(folderInfos);
+      await scheduleFormattingRegistrationUpdate();
+      scheduleUserDataFilePathsUpdate();
+      logger.logDebug("Refreshed the plugin information.");
+    } catch (err) {
+      if (!(err instanceof ObjectDisposedError)) {
+        logger.logError("Error refreshing:", err);
+      }
+    }
   }
 
   // Updates run one at a time because getting the languages is async and

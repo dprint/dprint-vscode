@@ -14,7 +14,7 @@ export function activateLsp(
 ): ExtensionBackend {
   let client: LanguageClient | undefined;
 
-  return {
+  const backend: ExtensionBackend = {
     isLsp: true,
     async reInitialize() {
       const oldClient = client;
@@ -60,12 +60,17 @@ export function activateLsp(
       await client.start();
       logger.logInfo("Started experimental language server.");
     },
+    onConfigFileChanged() {
+      // the language server is restarted to pick up config changes
+      return backend.reInitialize();
+    },
     async dispose() {
       const oldClient = client;
       client = undefined;
       await oldClient?.dispose(2_000);
     },
   };
+  return backend;
 
   async function workspaceHasConfigFile() {
     const configFiles = await discoverWorkspaceConfigFiles({
