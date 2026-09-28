@@ -1,6 +1,13 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // separate from the integration tests (src/test) which also use the .test.ts suffix
+    "outDir": "out/unit"
+  },
   "include": [
-    "src/**/*_test.ts"
+    "src/**/*.test.ts"
+  ],
+  "exclude": [
+    "src/test/**"
   ]
 }
