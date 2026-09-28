@@ -77,7 +77,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForDocument(document);
+    const folder = await this.#getFolderForUri(document.uri, { notifyNoConfig: true });
     if (folder == null || token.isCancellationRequested) {
       return [];
     }
@@ -90,11 +90,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForDocument(document);
+    const folder = await this.#getFolderForUri(document.uri, { notifyNoConfig: true });
     if (folder == null || token.isCancellationRequested) {
       return [];
     }
     return folder.provideDocumentRangeFormattingEdits(document, range, options, token);
+  }
+
+  /**
+   * Gets if a plugin can format the file. This starts dprint for the file's
+   * config file if necessary, but doesn't notify when there's no config file.
+   */
+  async canFormat(uri: vscode.Uri) {
+    const folder = await this.#getFolderForUri(uri, { notifyNoConfig: false });
+    return folder != null && await folder.canFormat(uri.fsPath);
   }
 
   initializeFolders(): Promise<FolderInfos> {
@@ -107,7 +116,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return initialization;
   }
 
-  async #getFolderForDocument(document: vscode.TextDocument) {
+  async #getFolderForUri(uri: vscode.Uri, options: { notifyNoConfig: boolean }) {
     // wait for the latest workspace folder initialization so a file in one doesn't get a loose folder
     while (this.#workspaceInitialization != null) {
       await this.#workspaceInitialization.catch(() => {/* ignore */});
@@ -115,10 +124,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     if (this.#disposed) {
       return undefined;
     }
-    return this.#getFolderForUri(document.uri) ?? await this.#getLooseFolderForUri(document.uri);
+    return this.#getWorkspaceFolderForUri(uri) ?? await this.#getLooseFolderForUri(uri, options);
   }
 
-  #getFolderForUri(uri: vscode.Uri) {
+  #getWorkspaceFolderForUri(uri: vscode.Uri) {
     return findClosestFolder(this.#folders, folder => folder.uri.fsPath, uri.fsPath);
   }
 
@@ -126,7 +135,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * Gets a folder for a file not in a workspace folder with a config file. It uses
    * the file's closest ancestor config file or otherwise the global config file.
    */
-  async #getLooseFolderForUri(uri: vscode.Uri) {
+  async #getLooseFolderForUri(uri: vscode.Uri, options: { notifyNoConfig: boolean }) {
     const generation = this.#generation;
     const { useGlobalConfig } = getDprintConfig(uri);
     const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
@@ -134,8 +143,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return undefined;
     }
     if (looseConfig == null) {
-      this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
-      await this.#notifyNoConfig(useGlobalConfig);
+      if (options.notifyNoConfig) {
+        this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
+        await this.#notifyNoConfig(useGlobalConfig);
+      }
       return undefined;
     }
 

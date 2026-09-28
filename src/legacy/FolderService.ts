@@ -4,6 +4,7 @@ import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
 import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
+import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
@@ -120,6 +121,22 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         `Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`,
         err,
       );
+      return false;
+    }
+  }
+
+  /**
+   * Gets if a plugin can format the file. This is stricter than the cli's check,
+   * which only checks the config's includes and excludes.
+   */
+  async canFormat(filePath: string) {
+    if (this.#editorService == null || !hasPluginForFile(this.#editorInfo?.plugins ?? [], filePath)) {
+      return false;
+    }
+    try {
+      return await this.#editorService.canFormat(filePath);
+    } catch (err) {
+      this.#logger.logError("Error checking if the file can be formatted.", err);
       return false;
     }
   }
