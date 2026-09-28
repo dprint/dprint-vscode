@@ -60,6 +60,10 @@ export function activateLsp(
       await client.start();
       logger.logInfo("Started experimental language server.");
     },
+    onConfigFileChanged() {
+      // the language server is restarted to pick up config changes
+      return this.reInitialize();
+    },
     async dispose() {
       const oldClient = client;
       client = undefined;

@@ -3,7 +3,7 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { isDprintExtensionId } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
-import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
@@ -19,7 +19,8 @@ export function activateLegacy(
   const workspaceService = new WorkspaceService({
     approvedPaths,
     logger,
-    onAncestorConfigFileChanged: reInitialize,
+    onAncestorConfigFileCreatedOrDeleted: reInitialize,
+    onAncestorConfigFileChanged: scheduleConfigFileRefresh,
     onLooseFolderChanged: scheduleUserDataFilePathsUpdate,
   });
   resourceDisposables.push(workspaceService);
@@ -35,6 +36,8 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
+  let configFileRefresh = Promise.resolve();
+  let hasPendingConfigFileRefresh = false;
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
 
@@ -47,6 +50,7 @@ export function activateLegacy(
   return {
     isLsp: false,
     reInitialize,
+    onConfigFileChanged: scheduleConfigFileRefresh,
     dispose() {
       disposed = true;
       initializationDisposables.dispose();
@@ -71,6 +75,40 @@ export function activateLegacy(
       }
     }
     logger.logDebug("Initialized legacy backend.");
+  }
+
+  // Refreshes are debounced because saving a config file often causes multiple change events.
+  function scheduleConfigFileRefresh() {
+    if (!hasPendingConfigFileRefresh) {
+      hasPendingConfigFileRefresh = true;
+      configFileRefresh = configFileRefresh.then(async () => {
+        await delay(100);
+        hasPendingConfigFileRefresh = false;
+        await refreshFolders();
+      });
+    }
+    return configFileRefresh;
+  }
+
+  /** Refreshes the plugin information after a config file changed, falling back to reinitializing. */
+  async function refreshFolders() {
+    try {
+      const refreshedFolderInfos = await workspaceService.refreshFolders();
+      if (refreshedFolderInfos == null) {
+        logger.logDebug("Reinitializing because the folders couldn't be refreshed.");
+        await reInitialize();
+        return;
+      }
+      folderInfos = refreshedFolderInfos;
+      configSchemaProvider.setFolderInfos(folderInfos);
+      await scheduleFormattingRegistrationUpdate();
+      scheduleUserDataFilePathsUpdate();
+      logger.logDebug("Refreshed the plugin information.");
+    } catch (err) {
+      if (!(err instanceof ObjectDisposedError)) {
+        logger.logError("Error refreshing:", err);
+      }
+    }
   }
 
   // Updates run one at a time because getting the languages is async and

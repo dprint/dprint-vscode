@@ -29,7 +29,9 @@ export interface FolderInfo {
 export interface WorkspaceServiceOptions {
   approvedPaths: ApprovedConfigPaths;
   logger: Logger;
-  /** Called when a config file in an ancestor directory of a workspace folder is created, changed, or deleted. */
+  /** Called when a config file in an ancestor directory of a workspace folder is created or deleted. */
+  onAncestorConfigFileCreatedOrDeleted: () => void;
+  /** Called when the contents of a config file in an ancestor directory of a workspace folder change. */
   onAncestorConfigFileChanged: () => void;
   /** Called when a folder for files not in a workspace folder with a config file changes (ex. its plugins). */
   onLooseFolderChanged: () => void;
@@ -43,6 +45,7 @@ export interface WorkspaceServiceOptions {
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
+  readonly #onAncestorConfigFileCreatedOrDeleted: () => void;
   readonly #onAncestorConfigFileChanged: () => void;
   readonly #onLooseFolderChanged: () => void;
   readonly #environment: Environment;
@@ -60,6 +63,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   constructor(opts: WorkspaceServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
+    this.#onAncestorConfigFileCreatedOrDeleted = opts.onAncestorConfigFileCreatedOrDeleted;
     this.#onAncestorConfigFileChanged = opts.onAncestorConfigFileChanged;
     this.#onLooseFolderChanged = opts.onLooseFolderChanged;
     this.#environment = new RealEnvironment(opts.logger);
@@ -110,6 +114,24 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return folder != null && await folder.canFormatWithPlugin(uri.fsPath);
   }
 
+  /**
+   * Refreshes the workspace folders' plugin information after a config file's contents
+   * changed without restarting dprint, which reloads its config itself. Returns undefined
+   * when the folders need to be reinitialized instead (ex. one isn't running).
+   */
+  async refreshFolders(): Promise<FolderInfos | undefined> {
+    await this.#waitWorkspaceInitialization();
+    this.#assertNotDisposed();
+    const generation = this.#generation;
+    if (this.#folders.some(folder => !folder.isRunning())) {
+      return undefined;
+    }
+    const results = await Promise.all(this.#folders.map(folder => folder.refreshEditorInfo()));
+    this.#assertNotDisposed();
+    this.#assertCurrentGeneration(generation);
+    return results.every(refreshed => refreshed) ? getFolderInfos(this.#folders) : undefined;
+  }
+
   initializeFolders(): Promise<FolderInfos> {
     const initialization: Promise<FolderInfos> = this.#initializeFolders().finally(() => {
       if (this.#workspaceInitialization === initialization) {
@@ -120,11 +142,16 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return initialization;
   }
 
-  async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
-    // wait for the latest workspace folder initialization so a file in one doesn't get a loose folder
+  async #waitWorkspaceInitialization() {
+    // wait for the latest one because a newer initialization may start while waiting
     while (this.#workspaceInitialization != null) {
       await this.#workspaceInitialization.catch(() => {/* ignore */});
     }
+  }
+
+  async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
+    // wait for the workspace folders so a file in one doesn't get a loose folder
+    await this.#waitWorkspaceInitialization();
     if (this.#disposed) {
       return undefined;
     }
@@ -320,17 +347,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
-
-    const allEditorInfos: FolderInfo[] = [];
-    for (const folder of initializedFolders) {
-      if (folder != null) {
-        const editorInfo = folder.getEditorInfo();
-        if (editorInfo != null) {
-          allEditorInfos.push({ uri: folder.uri, editorInfo: editorInfo });
-        }
-      }
-    }
-    return allEditorInfos;
+    return getFolderInfos(initializedFolders);
   }
 
   #assertCurrentGeneration(generation: number) {
@@ -367,15 +384,29 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       return;
     }
     const watcher = createConfigFileWatcher(configFilePath);
-    const onChange = () => {
+    const onCreateOrDelete = () => {
+      this.#logger.logDebug("Ancestor configuration file created or deleted in:", dirPath);
+      this.#onAncestorConfigFileCreatedOrDeleted();
+    };
+    watcher.onDidCreate(onCreateOrDelete);
+    watcher.onDidChange(() => {
       this.#logger.logDebug("Ancestor configuration file changed in:", dirPath);
       this.#onAncestorConfigFileChanged();
-    };
-    watcher.onDidCreate(onChange);
-    watcher.onDidChange(onChange);
-    watcher.onDidDelete(onChange);
+    });
+    watcher.onDidDelete(onCreateOrDelete);
     this.#ancestorConfigFileWatchers.set(dirPath, watcher);
   }
+}
+
+function getFolderInfos(folders: ReadonlyArray<FolderService | undefined>): FolderInfos {
+  const folderInfos: FolderInfo[] = [];
+  for (const folder of folders) {
+    const editorInfo = folder?.getEditorInfo();
+    if (folder != null && editorInfo != null) {
+      folderInfos.push({ uri: folder.uri, editorInfo });
+    }
+  }
+  return folderInfos;
 }
 
 /** Watches the config files in the config file's directory. */
