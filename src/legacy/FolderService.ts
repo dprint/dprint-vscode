@@ -4,6 +4,7 @@ import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
 import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
+import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
@@ -37,6 +38,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #editorService: EditorService | undefined;
   #editorInfo: EditorInfo | undefined;
+  #dprintExecutable: DprintExecutable | undefined;
 
   constructor(opts: FolderServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
@@ -76,6 +78,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     this.#logger.setDebug(config.verbose);
     this.#setEditorService(undefined);
+    this.#dprintExecutable = undefined;
 
     const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
@@ -100,6 +103,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
+      this.#dprintExecutable = dprintExe;
       this.#logger.logInfo(
         `Initialized dprint ${editorInfo.cliVersion}\n`
           + `  Folder: ${dprintExe.initializationFolderUri.fsPath}\n`
@@ -120,6 +124,40 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         `Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`,
         err,
       );
+      return false;
+    }
+  }
+
+  /**
+   * Refreshes the plugin information (ex. after the config file changed) without
+   * restarting dprint since the running editor service reloads its config itself.
+   */
+  async refreshEditorInfo() {
+    if (this.#dprintExecutable == null || this.#editorService == null) {
+      return;
+    }
+    try {
+      const editorInfo = await this.#dprintExecutable.getEditorInfo();
+      if (!this.#disposed) {
+        this.#editorInfo = editorInfo;
+      }
+    } catch (err) {
+      this.#logger.logError("Error refreshing the plugin information:", err);
+    }
+  }
+
+  /**
+   * Gets if a plugin can format the file. This is stricter than the cli's check,
+   * which only checks the config's includes and excludes.
+   */
+  async canFormatWithPlugin(filePath: string) {
+    if (this.#editorService == null || !hasPluginForFile(this.#editorInfo?.plugins ?? [], filePath)) {
+      return false;
+    }
+    try {
+      return await this.#editorService.canFormat(filePath);
+    } catch (err) {
+      this.#logger.logError("Error checking if the file can be formatted.", err);
       return false;
     }
   }

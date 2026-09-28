@@ -31,6 +31,8 @@ export interface WorkspaceServiceOptions {
   logger: Logger;
   /** Called when a config file in an ancestor directory of a workspace folder is created, changed, or deleted. */
   onAncestorConfigFileChanged: () => void;
+  /** Called when a folder for files not in a workspace folder with a config file changes (ex. its plugins). */
+  onLooseFolderChanged: () => void;
 }
 
 /**
@@ -42,6 +44,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
   readonly #onAncestorConfigFileChanged: () => void;
+  readonly #onLooseFolderChanged: () => void;
   readonly #environment: Environment;
   readonly #folders: FolderService[] = [];
   /** Folders for files not in a workspace folder with a config file. */
@@ -58,6 +61,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
     this.#onAncestorConfigFileChanged = opts.onAncestorConfigFileChanged;
+    this.#onLooseFolderChanged = opts.onLooseFolderChanged;
     this.#environment = new RealEnvironment(opts.logger);
   }
 
@@ -77,7 +81,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForDocument(document);
+    const folder = await this.#getFolderForUri(document.uri, { notify: true });
     if (folder == null || token.isCancellationRequested) {
       return [];
     }
@@ -90,11 +94,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForDocument(document);
+    const folder = await this.#getFolderForUri(document.uri, { notify: true });
     if (folder == null || token.isCancellationRequested) {
       return [];
     }
     return folder.provideDocumentRangeFormattingEdits(document, range, options, token);
+  }
+
+  /**
+   * Gets if a plugin can format the file. This starts dprint for the file's config
+   * file if necessary, but doesn't notify when there's no config file or it fails.
+   */
+  async canFormatWithPlugin(uri: vscode.Uri) {
+    const folder = await this.#getFolderForUri(uri, { notify: false });
+    return folder != null && await folder.canFormatWithPlugin(uri.fsPath);
   }
 
   initializeFolders(): Promise<FolderInfos> {
@@ -107,7 +120,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return initialization;
   }
 
-  async #getFolderForDocument(document: vscode.TextDocument) {
+  async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
     // wait for the latest workspace folder initialization so a file in one doesn't get a loose folder
     while (this.#workspaceInitialization != null) {
       await this.#workspaceInitialization.catch(() => {/* ignore */});
@@ -115,10 +128,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     if (this.#disposed) {
       return undefined;
     }
-    return this.#getFolderForUri(document.uri) ?? await this.#getLooseFolderForUri(document.uri);
+    return this.#getWorkspaceFolderForUri(uri) ?? await this.#getLooseFolderForUri(uri, options);
   }
 
-  #getFolderForUri(uri: vscode.Uri) {
+  #getWorkspaceFolderForUri(uri: vscode.Uri) {
     return findClosestFolder(this.#folders, folder => folder.uri.fsPath, uri.fsPath);
   }
 
@@ -126,7 +139,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * Gets a folder for a file not in a workspace folder with a config file. It uses
    * the file's closest ancestor config file or otherwise the global config file.
    */
-  async #getLooseFolderForUri(uri: vscode.Uri) {
+  async #getLooseFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
     const generation = this.#generation;
     const { useGlobalConfig } = getDprintConfig(uri);
     const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
@@ -135,7 +148,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
     if (looseConfig == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
-      await this.#notifyNoConfig(useGlobalConfig);
+      if (options.notify) {
+        await this.#notifyNoConfig(useGlobalConfig);
+      }
       return undefined;
     }
 
@@ -148,14 +163,21 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       entry = this.#createLooseFolderEntry(key, looseConfig, generation);
       this.#looseFolders.set(key, entry);
     }
-    return entry.folder;
+    const folder = await entry.folder;
+    if (folder == null && options.notify) {
+      // these folders don't notify on errors themselves because they may be created
+      // without the user formatting (ex. to check if a user data file can be formatted)
+      this.#logger.logErrorAndNotify("Failed initializing dprint.", "Failed initializing dprint in:", looseConfig.cwd);
+    }
+    return folder;
   }
 
   #createLooseFolderEntry(key: string, looseConfig: LooseFolderConfig, generation: number) {
     // Watch the config files in the config file's directory because config files outside
     // the workspace aren't otherwise watched. Remove the entry so the next format starts
     // dprint again when a config file is created or deleted, or when one changes after
-    // dprint failed to start. A running dprint picks up changes to its config file itself.
+    // dprint failed to start. A running dprint picks up changes to its config file itself,
+    // so only refresh its plugin information in that case.
     const configFileWatcher = createConfigFileWatcher(looseConfig.configFilePath);
     const entry: LooseFolderEntry = {
       folder: this.#initializeLooseFolder(looseConfig, generation),
@@ -166,15 +188,18 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         this.#logger.logDebug("Configuration file changed. Restarting dprint on next format in:", looseConfig.cwd);
         this.#looseFolders.delete(key);
         disposeLooseFolderEntry(entry);
+        this.#onLooseFolderChanged();
       }
     };
     configFileWatcher.onDidCreate(removeEntry);
-    configFileWatcher.onDidChange(() => {
-      entry.folder.then(folder => {
-        if (folder == null) {
-          removeEntry();
-        }
-      });
+    configFileWatcher.onDidChange(async () => {
+      const folder = await entry.folder;
+      if (folder == null) {
+        removeEntry();
+      } else if (this.#looseFolders.get(key) === entry) {
+        await folder.refreshEditorInfo();
+        this.#onLooseFolderChanged();
+      }
     });
     configFileWatcher.onDidDelete(removeEntry);
     return entry;
@@ -190,8 +215,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       // the extension resolves the config file itself, so don't let the cli fall back
       // to the global config file (ex. when the config file is deleted while running)
       configDiscovery: isGlobalConfig ? undefined : "ignore-descendants",
-      // the user chose dprint to format this file, so tell them when it fails
-      notifyOnError: true,
+      // notified when formatting instead (see #getLooseFolderForUri)
+      notifyOnError: false,
       logger: this.#logger,
     });
     try {

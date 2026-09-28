@@ -7,6 +7,9 @@ import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
+/** The scheme of user data files such as the user settings.json. */
+const USER_DATA_SCHEME = "vscode-userdata";
+
 export function activateLegacy(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
@@ -17,6 +20,7 @@ export function activateLegacy(
     approvedPaths,
     logger,
     onAncestorConfigFileChanged: reInitialize,
+    onLooseFolderChanged: scheduleUserDataFilePathsUpdate,
   });
   resourceDisposables.push(workspaceService);
 
@@ -31,10 +35,14 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
+  let userDataFilePaths: string[] = [];
+  let userDataFilePathsUpdate = Promise.resolve();
 
   // update the formatting registration when the default formatter settings or languages change
   resourceDisposables.push(vscode.workspace.onDidChangeConfiguration(() => scheduleFormattingRegistrationUpdate()));
   resourceDisposables.push(vscode.extensions.onDidChange(() => scheduleFormattingRegistrationUpdate()));
+  // update the user data files (ex. the user settings.json) to format when the visible editors change
+  resourceDisposables.push(vscode.window.onDidChangeVisibleTextEditors(() => scheduleUserDataFilePathsUpdate()));
 
   return {
     isLsp: false,
@@ -52,6 +60,8 @@ export function activateLegacy(
       folderInfos = await workspaceService.initializeFolders();
       configSchemaProvider.setFolderInfos(folderInfos);
       await scheduleFormattingRegistrationUpdate();
+      // don't wait for this because it may need to start dprint for a config outside the workspace
+      scheduleUserDataFilePathsUpdate();
       if (folderInfos.length === 0) {
         logger.logInfo("Configuration file not found.");
       }
@@ -82,6 +92,7 @@ export function activateLegacy(
     const newRegistrationKey = JSON.stringify([
       workspaceFolderUris.map(uri => uri.toString()),
       defaultFormatterLanguageIds,
+      userDataFilePaths,
     ]);
     if (newRegistrationKey === registrationKey) {
       return;
@@ -102,6 +113,9 @@ export function activateLegacy(
       // ancestor config file or the global config file. This is limited to those languages
       // so that dprint doesn't cause a "multiple formatters" prompt for other files.
       ...defaultFormatterLanguageIds.map(language => ({ scheme: "file", language })),
+      // User data files (ex. the user settings.json) aren't file scheme documents. They're
+      // only registered when a plugin in the file's config can format them.
+      ...userDataFilePaths.map(pattern => ({ scheme: USER_DATA_SCHEME, pattern })),
     ];
     if (documentSelector.length === 0) {
       return;
@@ -125,6 +139,32 @@ export function activateLegacy(
     ));
   }
 
+  // This is separate from the formatting registration update so that the workspace
+  // registration doesn't wait on starting dprint for a config outside the workspace.
+  function scheduleUserDataFilePathsUpdate() {
+    userDataFilePathsUpdate = userDataFilePathsUpdate
+      .then(async () => {
+        const newUserDataFilePaths = await getFormattableUserDataFilePaths();
+        if (!disposed && JSON.stringify(newUserDataFilePaths) !== JSON.stringify(userDataFilePaths)) {
+          userDataFilePaths = newUserDataFilePaths;
+          await scheduleFormattingRegistrationUpdate();
+        }
+      })
+      .catch(err => logger.logError("Error updating the user data files to format:", err));
+    return userDataFilePathsUpdate;
+  }
+
+  /** Gets the paths of the visible user data files that a plugin can format. */
+  async function getFormattableUserDataFilePaths() {
+    // the user data files are on the local machine, so they can't be formatted from a remote extension host
+    if (vscode.env.remoteName != null) {
+      return [];
+    }
+    const uris = vscode.window.visibleTextEditors.map(editor => editor.document.uri).filter(isUserDataUri);
+    const canFormat = await Promise.all(uris.map(uri => workspaceService.canFormatWithPlugin(uri)));
+    return [...new Set(uris.filter((_, i) => canFormat[i]).map(uri => uri.fsPath))].sort();
+  }
+
   function getFormattingWorkspaceFolderUris() {
     return folderInfos.filter(folderInfo => folderInfo.editorInfo.plugins.length > 0).map(folderInfo => folderInfo.uri);
   }
@@ -135,4 +175,8 @@ async function getDefaultFormatterLanguageIds() {
   return languageIds.filter(languageId => {
     return isDprintExtensionId(vscode.workspace.getConfiguration("editor", { languageId }).get("defaultFormatter"));
   }).sort();
+}
+
+function isUserDataUri(uri: vscode.Uri) {
+  return uri.scheme === USER_DATA_SCHEME;
 }
