@@ -1,41 +1,48 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { type RefreshableFolder, tryRefreshFolders } from "./folderRefresh";
+import { type RefreshableFolder, refreshOrRestartFolders } from "./folderRefresh";
 
-describe("tryRefreshFolders", () => {
-  it("refreshes all the running folders", async () => {
+describe("refreshOrRestartFolders", () => {
+  it("refreshes the running folders", async () => {
     const folders = [createFolder(), createFolder()];
 
-    assert.strictEqual(await tryRefreshFolders(folders), true);
-    assert.deepStrictEqual(folders.map(f => f.refreshCount), [1, 1]);
+    await refreshOrRestartFolders(folders);
+
+    assert.deepStrictEqual(folders.map(f => f.calls), [["refresh"], ["refresh"]]);
   });
 
-  it("does not refresh any folder when one isn't running", async () => {
+  it("only restarts the folders that aren't running", async () => {
     const folders = [createFolder(), createFolder({ isRunning: false })];
 
-    assert.strictEqual(await tryRefreshFolders(folders), false);
-    assert.deepStrictEqual(folders.map(f => f.refreshCount), [0, 0]);
+    await refreshOrRestartFolders(folders);
+
+    assert.deepStrictEqual(folders.map(f => f.calls), [["refresh"], ["initialize"]]);
   });
 
-  it("returns false when refreshing a folder fails", async () => {
+  it("restarts a folder whose refresh failed", async () => {
     const folders = [createFolder(), createFolder({ refreshSucceeds: false })];
 
-    assert.strictEqual(await tryRefreshFolders(folders), false);
-    assert.deepStrictEqual(folders.map(f => f.refreshCount), [1, 1]);
+    await refreshOrRestartFolders(folders);
+
+    assert.deepStrictEqual(folders.map(f => f.calls), [["refresh"], ["refresh", "initialize"]]);
   });
 
-  it("succeeds when there are no folders", async () => {
-    assert.strictEqual(await tryRefreshFolders([]), true);
+  it("does nothing when there are no folders", async () => {
+    await refreshOrRestartFolders([]);
   });
 });
 
 function createFolder(options: { isRunning?: boolean; refreshSucceeds?: boolean } = {}) {
-  const folder: RefreshableFolder & { refreshCount: number } = {
-    refreshCount: 0,
+  const folder: RefreshableFolder & { calls: string[] } = {
+    calls: [],
     isRunning: () => options.isRunning ?? true,
     refreshEditorInfo: async () => {
-      folder.refreshCount++;
+      folder.calls.push("refresh");
       return options.refreshSucceeds ?? true;
+    },
+    initialize: async () => {
+      folder.calls.push("initialize");
+      return true;
     },
   };
   return folder;

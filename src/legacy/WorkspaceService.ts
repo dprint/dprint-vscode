@@ -16,7 +16,7 @@ import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
-import { tryRefreshFolders } from "./folderRefresh";
+import { refreshOrRestartFolders } from "./folderRefresh";
 import { FolderService } from "./FolderService";
 import { getNoConfigMessage } from "./noConfigMessage";
 
@@ -117,17 +117,17 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
   /**
    * Refreshes the workspace folders' plugin information after a config file's contents
-   * changed without restarting dprint, which reloads its config itself. Returns undefined
-   * when the folders need to be reinitialized instead (ex. one isn't running).
+   * changed without restarting dprint, which reloads its config itself. Folders that
+   * aren't running or that failed to refresh are restarted.
    */
-  async refreshFolders(): Promise<FolderInfos | undefined> {
+  async refreshFolders(): Promise<FolderInfos> {
     await this.#waitWorkspaceInitialization();
     this.#assertNotDisposed();
     const generation = this.#generation;
-    const refreshed = await tryRefreshFolders(this.#folders);
+    await refreshOrRestartFolders(this.#folders);
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
-    return refreshed ? getFolderInfos(this.#folders) : undefined;
+    return getFolderInfos(this.#folders.filter(folder => folder.isRunning()));
   }
 
   initializeFolders(): Promise<FolderInfos> {
@@ -222,8 +222,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       if (folder == null) {
         removeEntry();
       } else if (this.#looseFolders.get(key) === entry) {
-        await folder.refreshEditorInfo();
-        this.#onLooseFolderChanged();
+        if (await folder.refreshEditorInfo()) {
+          this.#onLooseFolderChanged();
+        } else {
+          removeEntry();
+        }
       }
     });
     configFileWatcher.onDidDelete(removeEntry);
@@ -399,8 +402,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 function getFolderInfos(folders: ReadonlyArray<FolderService | undefined>): FolderInfos {
   const folderInfos: FolderInfo[] = [];
   for (const folder of folders) {
-    const editorInfo = folder?.getEditorInfo();
-    if (folder != null && editorInfo != null) {
+    if (folder == null) {
+      continue;
+    }
+    const editorInfo = folder.getEditorInfo();
+    if (editorInfo != null) {
       folderInfos.push({ uri: folder.uri, editorInfo });
     }
   }

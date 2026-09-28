@@ -4,7 +4,7 @@ import { isDprintExtensionId } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
-import { DebouncedQueue } from "../utils/DebouncedQueue";
+import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
@@ -37,10 +37,10 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
-  // debounced because saving a config file often causes multiple change events
-  const configFileRefreshQueue = new DebouncedQueue({
-    action: refreshFolders,
-    wait: async () => void await delay(100),
+  // coalesced because saving a config file often causes multiple change events
+  const configFileRefreshQueue = new CoalescingQueue({
+    action: refreshAfterConfigFileChange,
+    wait: () => delay(100),
   });
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
@@ -85,16 +85,10 @@ export function activateLegacy(
     return configFileRefreshQueue.schedule();
   }
 
-  /** Refreshes the plugin information after a config file changed, falling back to reinitializing. */
-  async function refreshFolders() {
+  /** Refreshes the plugin information after a config file's contents changed. */
+  async function refreshAfterConfigFileChange() {
     try {
-      const refreshedFolderInfos = await workspaceService.refreshFolders();
-      if (refreshedFolderInfos == null) {
-        logger.logDebug("Reinitializing because the folders couldn't be refreshed.");
-        await reInitialize();
-        return;
-      }
-      folderInfos = refreshedFolderInfos;
+      folderInfos = await workspaceService.refreshFolders();
       configSchemaProvider.setFolderInfos(folderInfos);
       await scheduleFormattingRegistrationUpdate();
       scheduleUserDataFilePathsUpdate();

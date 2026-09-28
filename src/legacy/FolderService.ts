@@ -128,7 +128,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
-  /** Gets if dprint is running for this folder. */
+  /** Gets if dprint was started for this folder (it may have exited since and will restart on demand). */
   isRunning() {
     return this.#editorService != null;
   }

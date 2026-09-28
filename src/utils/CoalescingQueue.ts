@@ -1,6 +1,6 @@
 // note: this file should not import "vscode" so that it can be unit tested
 
-export interface DebouncedQueueOptions {
+export interface CoalescingQueueOptions {
   action: () => Promise<void>;
   /** Waits before running the action so that schedules in quick succession run it once. */
   wait: () => Promise<void>;
@@ -8,15 +8,15 @@ export interface DebouncedQueueOptions {
 
 /**
  * Runs an action one at a time after a wait. Scheduling while a run is waiting
- * reuses that run and scheduling while the action is running queues one more run.
+ * joins that run and scheduling while the action is running queues one more run.
  */
-export class DebouncedQueue {
+export class CoalescingQueue {
   readonly #action: () => Promise<void>;
   readonly #wait: () => Promise<void>;
   #queue = Promise.resolve();
   #pendingRun: Promise<void> | undefined;
 
-  constructor(options: DebouncedQueueOptions) {
+  constructor(options: CoalescingQueueOptions) {
     this.#action = options.action;
     this.#wait = options.wait;
   }
