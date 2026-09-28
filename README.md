@@ -35,7 +35,8 @@ Formats code in the editor using [dprint](https://dprint.dev/).
 Plugins are resolved based on the dprint configuration file used for each file.
 
 Files opened outside the active workspace, including files opened in an empty window, use the nearest ancestor
-configuration file and then fall back to the global dprint configuration.
+configuration file and then fall back to the global dprint configuration by default. Set `dprint.useGlobalConfig`
+to `false` to disable that fallback.
 
 ## Requirements
 

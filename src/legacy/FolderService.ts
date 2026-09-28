@@ -2,8 +2,9 @@ import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
-import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
+import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
+import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
@@ -11,37 +12,46 @@ import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;
-  scopeUri: vscode.Uri;
+  /** URI used to select resource scoped VS Code settings. */
+  scopeUri?: vscode.Uri;
+  /** Directory to run dprint in. */
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
-  configDiscovery?: "global";
+  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
+  /** The cli's config discovery mode. Defaults to the cli's default. */
+  configDiscovery?: ConfigDiscovery;
+  /** Whether to show a notification on errors. Defaults to only when there's a config file. */
+  notifyOnError?: boolean;
   logger: Logger;
 }
 
-/** Represents an instance of dprint for a single workspace folder */
+/** Represents an instance of dprint for a single directory. */
 export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #approvedPaths: ApprovedConfigPaths;
   readonly #logger: Logger;
   readonly #environment: Environment;
-  readonly #scopeUri: vscode.Uri;
   readonly #cwd: vscode.Uri;
+  readonly #scopeUri: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
-  readonly #configDiscovery: "global" | undefined;
   readonly #resolveNpmExecutable: boolean;
+  readonly #configDiscovery: ConfigDiscovery | undefined;
+  readonly #notifyOnError: boolean;
   #disposed = false;
 
   #editorService: EditorService | undefined;
   #editorInfo: EditorInfo | undefined;
+  #dprintExecutable: DprintExecutable | undefined;
 
   constructor(opts: FolderServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
     this.#logger = opts.logger;
-    this.#scopeUri = opts.scopeUri;
     this.#cwd = opts.cwd;
+    this.#scopeUri = opts.scopeUri ?? opts.cwd;
     this.#configUri = opts.configUri;
-    this.#configDiscovery = opts.configDiscovery;
     this.#resolveNpmExecutable = opts.resolveNpmExecutable ?? true;
+    this.#configDiscovery = opts.configDiscovery;
+    this.#notifyOnError = opts.notifyOnError ?? opts.configUri != null;
     this.#environment = new RealEnvironment(this.#logger);
   }
 
@@ -72,6 +82,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     this.#logger.setDebug(config.verbose);
     this.#setEditorService(undefined);
+    this.#dprintExecutable = undefined;
 
     const dprintExe = await this.#getDprintExecutable();
     const isInstalled = await dprintExe.checkInstalled();
@@ -96,6 +107,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
 
       this.#setEditorService(createEditorService(editorInfo.schemaVersion, this.#logger, dprintExe));
+      this.#dprintExecutable = dprintExe;
       this.#logger.logInfo(
         `Initialized dprint ${editorInfo.cliVersion}\n`
           + `  Folder: ${dprintExe.initializationFolderUri.fsPath}\n`
@@ -116,6 +128,48 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         `Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`,
         err,
       );
+      return false;
+    }
+  }
+
+  /** Gets if dprint was started for this folder (it may have exited since and will restart on demand). */
+  isRunning() {
+    return this.#editorService != null;
+  }
+
+  /**
+   * Refreshes the plugin information (ex. after the config file changed) without
+   * restarting dprint since the running editor service reloads its config itself.
+   * Returns false when it's not running or refreshing failed.
+   */
+  async refreshEditorInfo() {
+    if (this.#dprintExecutable == null || this.#editorService == null) {
+      return false;
+    }
+    try {
+      const editorInfo = await this.#dprintExecutable.getEditorInfo();
+      if (!this.#disposed) {
+        this.#editorInfo = editorInfo;
+      }
+      return true;
+    } catch (err) {
+      this.#logger.logError("Error refreshing the plugin information:", err);
+      return false;
+    }
+  }
+
+  /**
+   * Gets if a plugin can format the file. This is stricter than the cli's check,
+   * which only checks the config's includes and excludes.
+   */
+  async canFormatWithPlugin(filePath: string) {
+    if (this.#editorService == null || !hasPluginForFile(this.#editorInfo?.plugins ?? [], filePath)) {
+      return false;
+    }
+    try {
+      return await this.#editorService.canFormat(filePath);
+    } catch (err) {
+      this.#logger.logError("Error checking if the file can be formatted.", err);
       return false;
     }
   }
@@ -202,15 +256,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     return DprintExecutable.create({
       approvedPaths: this.#approvedPaths,
       pathInfo: config.pathInfo,
-      // It's important that workspace services use the workspace folder as the
-      // cwd for the process instead of possibly the sub directory because
-      // we don't want the dprint process to hold a resource lock on a
-      // sub directory. That would give the user a bad experience where
-      // they can't delete the sub directory.
       cwd: this.#cwd,
       configUri: this.#configUri,
-      configDiscovery: this.#configDiscovery,
       resolveNpmExecutable: this.#resolveNpmExecutable,
+      configDiscovery: this.#configDiscovery,
       verbose: config.verbose,
       logger: this.#logger,
       environment: this.#environment,
@@ -222,7 +271,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   #logErrorAndMaybeNotify(notificationMessage: string, message: string, ...args: any[]) {
-    if (this.#configUri == null) {
+    if (!this.#notifyOnError) {
       // only log... don't annoy people with notifications in this case
       this.#logger.logError(message, ...args);
     } else {

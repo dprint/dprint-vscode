@@ -3,7 +3,7 @@
 .vscode-test/**
 out/test/**
 scripts/**
-out/**/*_test.js
+out/**/*.test.js
 src/**
 .gitignore
 vsc-extension-quickstart.md

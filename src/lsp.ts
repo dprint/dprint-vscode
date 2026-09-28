@@ -3,7 +3,7 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 import { LanguageClient, type LanguageClientOptions, type ServerOptions } from "vscode-languageclient/node";
 import type { ApprovedConfigPaths } from "./ApprovedConfigPaths";
-import { type DprintExtensionConfig, getCombinedDprintConfig } from "./config";
+import { type DprintExtensionConfig, getCombinedDprintConfig, getDprintConfig } from "./config";
 import { findConfigFileInAncestorDirectoriesPath, getFileSystemRootPath } from "./configPaths";
 import { RealEnvironment } from "./environment";
 import { DprintExecutable } from "./executable/DprintExecutable";
@@ -20,7 +20,7 @@ export function activateLsp(
   const availableGlobalConfigs = new Set<string>();
   const pendingGlobalConfigProbes = new Map<string, Promise<boolean>>();
 
-  return {
+  const backend: ExtensionBackend = {
     isLsp: true,
     async reInitialize() {
       const generation = ++clientGeneration;
@@ -70,13 +70,16 @@ export function activateLsp(
             if (generation !== clientGeneration) {
               return [];
             }
-            if (document.uri.scheme !== "file" || vscode.workspace.getWorkspaceFolder(document.uri) != null) {
+            if (document.uri.scheme !== "file") {
               return next(document, options, token);
             }
 
             const configPath = findConfigFileInAncestorDirectoriesPath(path.dirname(document.uri.fsPath));
             if (configPath != null) {
               return next(document, options, token);
+            }
+            if (!getDprintConfig(document.uri).useGlobalConfig) {
+              return [];
             }
 
             const documentRootUri = vscode.Uri.file(getFileSystemRootPath(document.uri.fsPath));
@@ -113,6 +116,10 @@ export function activateLsp(
       await client.start();
       logger.logInfo("Started experimental language server.");
     },
+    onConfigFileChanged() {
+      // the language server is restarted to pick up config changes
+      return backend.reInitialize();
+    },
     async dispose() {
       clientGeneration++;
       const oldClient = client;
@@ -120,6 +127,7 @@ export function activateLsp(
       await oldClient?.dispose(2_000);
     },
   };
+  return backend;
 
   async function hasGlobalConfig(
     rootUri: vscode.Uri,

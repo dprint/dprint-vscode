@@ -43,10 +43,16 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
-  // reinitialize on configuration file changes
+  // reinitialize when a configuration file is created or deleted and let the backend handle changes
   const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
   context.subscriptions.push(fileSystemWatcher);
-  context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidChange(async () => {
+    try {
+      await backend.onConfigFileChanged();
+    } catch (err) {
+      logger.logError("Error handling configuration file change:", err);
+    }
+  }));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
 

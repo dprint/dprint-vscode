@@ -25,14 +25,20 @@ export interface PluginInfo {
   helpUrl: string;
 }
 
+/** A config discovery mode supported by the cli. */
+export type ConfigDiscovery = "global" | "ignore-descendants";
+
 export interface DprintExecutableOptions {
   approvedPaths: ApprovedConfigPaths;
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
+  /** Directory used to find a configured or locally installed executable. */
   executableSearchUri?: vscode.Uri;
   configUri: vscode.Uri | undefined;
-  configDiscovery?: "global";
+  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
+  /** The cli's config discovery mode. Defaults to the cli's default. */
+  configDiscovery?: ConfigDiscovery;
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -42,7 +48,7 @@ export class DprintExecutable {
   readonly #cmdPath: string;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
-  readonly #configDiscovery: "global" | undefined;
+  readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
@@ -51,7 +57,11 @@ export class DprintExecutable {
     this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
-    this.#configDiscovery = options.configDiscovery;
+    // use the environment variable instead of the --config-discovery flag because cli
+    // versions before 0.50 error on an unknown flag, but ignore an unknown environment variable
+    this.#env = options.configDiscovery == null
+      ? undefined
+      : { ...process.env, DPRINT_CONFIG_DISCOVERY: options.configDiscovery };
     this.#verbose = options.verbose;
   }
 
@@ -74,7 +84,7 @@ export class DprintExecutable {
     }
 
     // attempt to use the npm executable if it exists
-    if (executableSearchUri != null && shouldResolveNpmExecutable(options.resolveNpmExecutable)) {
+    if (shouldResolveNpmExecutable(options.resolveNpmExecutable)) {
       const npmExec = await tryResolveNpmExecutable(executableSearchUri.fsPath, environment, logger);
       if (npmExec != null) {
         return npmExec;
@@ -142,6 +152,7 @@ export class DprintExecutable {
     return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
+      env: this.#env,
       // Set to true, to ensure this resolves properly on windows.
       // See https://github.com/denoland/vscode_deno/issues/361
       shell: true,
@@ -158,6 +169,7 @@ export class DprintExecutable {
       try {
         const process = exec(command.map(quoteCommandArg).join(" "), {
           cwd: this.#cwd.fsPath,
+          env: this.#env,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
           if (err) {
@@ -181,14 +193,11 @@ export class DprintExecutable {
   }
 
   #getConfigArgs() {
-    const args: string[] = [];
     if (this.#configUri) {
-      args.push("--config", this.#configUri.fsPath);
+      return ["--config", this.#configUri.fsPath];
+    } else {
+      return [];
     }
-    if (this.#configDiscovery != null) {
-      args.push(`--config-discovery=${this.#configDiscovery}`);
-    }
-    return args;
   }
 }
 

@@ -59,6 +59,15 @@
             "C:\\some-dir\\dprint.exe"
           ]
         },
+        "dprint.useGlobalConfig": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": true,
+          "markdownDescription": "Format files without an ancestor dprint config using the global config (created by `dprint init --global`). Applies when dprint is the default formatter for the language.",
+          "scope": "resource"
+        },
         "dprint.verbose": {
           "type": [
             "boolean",

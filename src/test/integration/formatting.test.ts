@@ -17,6 +17,7 @@ suite(`${backend} formatting (${hasWorkspace ? "workspace" : "empty window"})`, 
   suiteSetup(async () => {
     assert.equal(vscode.workspace.workspaceFolders != null, hasWorkspace);
     assert.equal(vscode.workspace.getConfiguration("dprint").get("experimentalLsp"), backend === "lsp");
+    assert.equal(vscode.workspace.getConfiguration("dprint").get("useGlobalConfig"), true);
     const extension = vscode.extensions.getExtension(extensionId);
     assert.ok(extension, `Expected ${extensionId} to be installed.`);
     await extension.activate();
@@ -53,6 +54,29 @@ suite(`${backend} formatting (${hasWorkspace ? "workspace" : "empty window"})`, 
     await writeGlobalConfig();
     const document = await createDocument(vscode.Uri.joinPath(globalFilesUri, "global.dprint-test"), unformattedJson);
     await waitForFormattedDocument(document, formattedJson(6), () => showAndFormat(document));
+  });
+
+  test("does not use the global config when disabled", async () => {
+    const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    await vscode.workspace.getConfiguration("dprint").update("useGlobalConfig", false, target);
+    try {
+      await vscode.commands.executeCommand("dprint.restart");
+      const ancestorDocument = await createDocument(
+        vscode.Uri.joinPath(ancestorProjectUri, "opt-out-ancestor.dprint-test"),
+        unformattedJson,
+      );
+      await waitForFormattedDocument(ancestorDocument, formattedJson(4), () => showAndFormat(ancestorDocument));
+
+      const globalDocument = await createDocument(
+        vscode.Uri.joinPath(globalFilesUri, "opt-out-global.dprint-test"),
+        unformattedJson,
+      );
+      await showAndFormat(globalDocument);
+      assert.equal(globalDocument.getText(), unformattedJson);
+    } finally {
+      await vscode.workspace.getConfiguration("dprint").update("useGlobalConfig", undefined, target);
+      await vscode.commands.executeCommand("dprint.restart");
+    }
   });
 
   test("prefers a loose file's nearest ancestor config over the global config", async () => {
