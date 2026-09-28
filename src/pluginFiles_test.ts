@@ -22,6 +22,10 @@ describe("hasPluginForFile", () => {
     assert.strictEqual(hasPluginForFile([jsonPlugin], path.resolve("/a/SETTINGS.JSON")), true);
   });
 
+  it("matches a plugin's extension case insensitively", () => {
+    assert.strictEqual(hasPluginForFile([{ fileExtensions: ["JSON"], fileNames: [] }], settingsPath), true);
+  });
+
   it("uses the last extension", () => {
     assert.strictEqual(hasPluginForFile([typescriptPlugin], path.resolve("/a/types.d.ts")), true);
   });
@@ -32,9 +36,6 @@ describe("hasPluginForFile", () => {
   });
 
   it("does not treat a dot file's name as an extension", () => {
-    assert.strictEqual(
-      hasPluginForFile([{ fileExtensions: ["json"], fileNames: [] }], path.resolve("/a/.json")),
-      false,
-    );
+    assert.strictEqual(hasPluginForFile([jsonPlugin], path.resolve("/a/.json")), false);
   });
 });

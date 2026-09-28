@@ -20,6 +20,7 @@ export function activateLegacy(
     approvedPaths,
     logger,
     onAncestorConfigFileChanged: reInitialize,
+    onLooseFolderChanged: scheduleUserDataFilePathsUpdate,
   });
   resourceDisposables.push(workspaceService);
 
@@ -34,26 +35,14 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
+  let userDataFilePaths: string[] = [];
+  let userDataFilePathsUpdate = Promise.resolve();
 
   // update the formatting registration when the default formatter settings or languages change
   resourceDisposables.push(vscode.workspace.onDidChangeConfiguration(() => scheduleFormattingRegistrationUpdate()));
   resourceDisposables.push(vscode.extensions.onDidChange(() => scheduleFormattingRegistrationUpdate()));
-  // update the formatting registration when a user data file (ex. the user settings.json) is opened, closed, or focused
-  resourceDisposables.push(vscode.workspace.onDidOpenTextDocument(document => {
-    if (isUserDataUri(document.uri)) {
-      scheduleFormattingRegistrationUpdate();
-    }
-  }));
-  resourceDisposables.push(vscode.workspace.onDidCloseTextDocument(document => {
-    if (isUserDataUri(document.uri)) {
-      scheduleFormattingRegistrationUpdate();
-    }
-  }));
-  resourceDisposables.push(vscode.window.onDidChangeActiveTextEditor(editor => {
-    if (editor != null && isUserDataUri(editor.document.uri)) {
-      scheduleFormattingRegistrationUpdate();
-    }
-  }));
+  // update the user data files (ex. the user settings.json) to format when the visible editors change
+  resourceDisposables.push(vscode.window.onDidChangeVisibleTextEditors(() => scheduleUserDataFilePathsUpdate()));
 
   return {
     isLsp: false,
@@ -71,6 +60,8 @@ export function activateLegacy(
       folderInfos = await workspaceService.initializeFolders();
       configSchemaProvider.setFolderInfos(folderInfos);
       await scheduleFormattingRegistrationUpdate();
+      // don't wait for this because it may need to start dprint for a config outside the workspace
+      scheduleUserDataFilePathsUpdate();
       if (folderInfos.length === 0) {
         logger.logInfo("Configuration file not found.");
       }
@@ -95,7 +86,6 @@ export function activateLegacy(
   async function updateFormattingRegistration() {
     const workspaceFolderUris = getFormattingWorkspaceFolderUris();
     const defaultFormatterLanguageIds = await getDefaultFormatterLanguageIds();
-    const userDataFilePaths = await getFormattableUserDataFilePaths();
     if (disposed) {
       return;
     }
@@ -149,19 +139,30 @@ export function activateLegacy(
     ));
   }
 
-  /** Gets the paths of the open user data files that a plugin can format. */
+  // This is separate from the formatting registration update so that the workspace
+  // registration doesn't wait on starting dprint for a config outside the workspace.
+  function scheduleUserDataFilePathsUpdate() {
+    userDataFilePathsUpdate = userDataFilePathsUpdate
+      .then(async () => {
+        const newUserDataFilePaths = await getFormattableUserDataFilePaths();
+        if (!disposed && JSON.stringify(newUserDataFilePaths) !== JSON.stringify(userDataFilePaths)) {
+          userDataFilePaths = newUserDataFilePaths;
+          await scheduleFormattingRegistrationUpdate();
+        }
+      })
+      .catch(err => logger.logError("Error updating the user data files to format:", err));
+    return userDataFilePathsUpdate;
+  }
+
+  /** Gets the paths of the visible user data files that a plugin can format. */
   async function getFormattableUserDataFilePaths() {
     // the user data files are on the local machine, so they can't be formatted from a remote extension host
     if (vscode.env.remoteName != null) {
       return [];
     }
-    const filePaths = new Set<string>();
-    for (const document of vscode.workspace.textDocuments) {
-      if (isUserDataUri(document.uri) && await workspaceService.canFormat(document.uri)) {
-        filePaths.add(document.uri.fsPath);
-      }
-    }
-    return [...filePaths].sort();
+    const uris = vscode.window.visibleTextEditors.map(editor => editor.document.uri).filter(isUserDataUri);
+    const canFormat = await Promise.all(uris.map(uri => workspaceService.canFormatWithPlugin(uri)));
+    return [...new Set(uris.filter((_, i) => canFormat[i]).map(uri => uri.fsPath))].sort();
   }
 
   function getFormattingWorkspaceFolderUris() {

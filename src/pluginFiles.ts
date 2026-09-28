@@ -11,7 +11,8 @@ export interface PluginFileInfo {
 /**
  * Gets if one of the plugins handles the file based on its file name or
  * extension. This mirrors how the dprint CLI resolves plugins for a file
- * path, except for config associations, which aren't known to the extension.
+ * path, except for config associations (which can add or exclude files)
+ * because they aren't known to the extension.
  */
 export function hasPluginForFile(
   plugins: readonly PluginFileInfo[],
