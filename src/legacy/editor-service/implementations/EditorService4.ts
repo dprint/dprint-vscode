@@ -3,6 +3,7 @@ import { TextDecoder, TextEncoder } from "node:util";
 import type * as vscode from "vscode";
 import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { ByteRange } from "../byteRange";
 import { EditorProcess, SerialExecutor } from "../common";
 import type { EditorService } from "../EditorService";
 
@@ -44,7 +45,9 @@ export class EditorService4 implements EditorService {
     });
   }
 
-  formatText(filePath: string, fileText: string, _token: vscode.CancellationToken) {
+  // this schema version doesn't support range formatting, so the range is ignored
+  // and the whole file is formatted (the same as a plugin that ignores the range)
+  formatText(filePath: string, fileText: string, _range: ByteRange | undefined, _token: vscode.CancellationToken) {
     this._process.startProcessIfNotRunning();
     return this._serialExecutor.execute(async () => {
       await writeInt(this._process, 2);

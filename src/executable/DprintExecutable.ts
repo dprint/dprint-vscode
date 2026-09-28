@@ -74,8 +74,8 @@ export class DprintExecutable {
     }
 
     // attempt to use the npm executable if it exists
-    if (shouldResolveNpmExecutable(options.resolveNpmExecutable) && executableSearchUri != null) {
-      const npmExec = await tryResolveNpmExecutable(executableSearchUri, environment, logger);
+    if (executableSearchUri != null && shouldResolveNpmExecutable(options.resolveNpmExecutable)) {
+      const npmExec = await tryResolveNpmExecutable(executableSearchUri.fsPath, environment, logger);
       if (npmExec != null) {
         return npmExec;
       }

@@ -6,6 +6,8 @@ import { DprintExecutable, type EditorInfo } from "../executable/DprintExecutabl
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
+import { getUtf8ByteRange } from "./editor-service/byteRange";
+import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;
@@ -118,9 +120,26 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
-  async provideDocumentFormattingEdits(
+  provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     _options: vscode.FormattingOptions,
+    token: vscode.CancellationToken,
+  ) {
+    return this.#formatDocument(document, undefined, token);
+  }
+
+  provideDocumentRangeFormattingEdits(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    _options: vscode.FormattingOptions,
+    token: vscode.CancellationToken,
+  ) {
+    return this.#formatDocument(document, range, token);
+  }
+
+  async #formatDocument(
+    document: vscode.TextDocument,
+    range: vscode.Range | undefined,
     token: vscode.CancellationToken,
   ) {
     if (this.#editorInfo != null && this.#editorInfo.plugins.length === 0) {
@@ -138,10 +157,28 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return undefined;
       }
 
-      const newText = await this.#editorService.formatText(document.fileName, document.getText(), token);
+      const fileText = document.getText();
+      const offsetRange = range == null
+        ? undefined
+        : expandToLines(fileText, { start: document.offsetAt(range.start), end: document.offsetAt(range.end) });
+      const byteRange = offsetRange == null
+        ? undefined
+        : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
+      const newText = await this.#editorService.formatText(document.fileName, fileText, byteRange, token);
       if (newText == null) {
         this.#logger.logDebug("Response - Formatted (No change):", document.fileName);
         return [];
+      }
+
+      if (offsetRange != null) {
+        const edit = getRangeFormatEdit(fileText, newText, offsetRange);
+        if (edit == null) {
+          this.#logger.logDebug("Response - Ignored range format with changes outside the range:", document.fileName);
+          return [];
+        }
+        const editRange = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
+        this.#logger.logDebug("Response - Formatted range:", document.fileName);
+        return [vscode.TextEdit.replace(editRange, edit.newText)];
       }
 
       const lastLineNumber = document.lineCount - 1;

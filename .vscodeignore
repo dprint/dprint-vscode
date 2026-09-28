@@ -3,10 +3,12 @@
 .vscode-test/**
 out/test/**
 scripts/**
+out/**/*_test.js
 src/**
 .gitignore
 vsc-extension-quickstart.md
 **/tsconfig.json
+**/tsconfig.*.json
 **/.eslintrc.json
 **/*.map
 **/*.ts

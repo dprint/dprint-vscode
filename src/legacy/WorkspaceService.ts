@@ -82,6 +82,16 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return folder.provideDocumentFormattingEdits(document, options, token);
   }
 
+  provideDocumentRangeFormattingEdits(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    options: vscode.FormattingOptions,
+    token: vscode.CancellationToken,
+  ) {
+    const folder = this.#getFolderForUri(document.uri);
+    return folder?.provideDocumentRangeFormattingEdits(document, range, options, token);
+  }
+
   #getFolderForUri(uri: vscode.Uri) {
     let bestMatch: FolderService | undefined;
     for (const folder of this.#folders) {
