@@ -16,6 +16,7 @@ import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
+import { tryRefreshFolders } from "./folderRefresh";
 import { FolderService } from "./FolderService";
 import { getNoConfigMessage } from "./noConfigMessage";
 
@@ -123,13 +124,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     await this.#waitWorkspaceInitialization();
     this.#assertNotDisposed();
     const generation = this.#generation;
-    if (this.#folders.some(folder => !folder.isRunning())) {
-      return undefined;
-    }
-    const results = await Promise.all(this.#folders.map(folder => folder.refreshEditorInfo()));
+    const refreshed = await tryRefreshFolders(this.#folders);
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
-    return results.every(refreshed => refreshed) ? getFolderInfos(this.#folders) : undefined;
+    return refreshed ? getFolderInfos(this.#folders) : undefined;
   }
 
   initializeFolders(): Promise<FolderInfos> {

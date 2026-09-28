@@ -4,6 +4,7 @@ import { isDprintExtensionId } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { DebouncedQueue } from "../utils/DebouncedQueue";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
@@ -36,8 +37,11 @@ export function activateLegacy(
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
   let registrationUpdate = Promise.resolve();
-  let configFileRefresh = Promise.resolve();
-  let hasPendingConfigFileRefresh = false;
+  // debounced because saving a config file often causes multiple change events
+  const configFileRefreshQueue = new DebouncedQueue({
+    action: refreshFolders,
+    wait: async () => void await delay(100),
+  });
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
 
@@ -77,17 +81,8 @@ export function activateLegacy(
     logger.logDebug("Initialized legacy backend.");
   }
 
-  // Refreshes are debounced because saving a config file often causes multiple change events.
   function scheduleConfigFileRefresh() {
-    if (!hasPendingConfigFileRefresh) {
-      hasPendingConfigFileRefresh = true;
-      configFileRefresh = configFileRefresh.then(async () => {
-        await delay(100);
-        hasPendingConfigFileRefresh = false;
-        await refreshFolders();
-      });
-    }
-    return configFileRefresh;
+    return configFileRefreshQueue.schedule();
   }
 
   /** Refreshes the plugin information after a config file changed, falling back to reinitializing. */
