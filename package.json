@@ -87,7 +87,7 @@
     "compile": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
     "run:extension": "code --extensionDevelopmentPath=.",
     "watch": "npm run compile -- --watch",
-    "test:unit": "tsc -p tsconfig.unit.json && node --test \"out/**/*_test.js\"",
+    "test:unit": "tsc -p tsconfig.unit.json && node --test \"out/unit/**/*.test.js\"",
     "pretest": "tsc -p ./",
     "test": "node ./out/test/runTest.js"
   },
