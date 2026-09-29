@@ -255,6 +255,9 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       cwd: this.#cwd,
       configUri: this.#configUri,
       resolveNpmExecutable: this.#resolveNpmExecutable,
+      // search from the config file's directory so that a project in a sub directory
+      // uses the dprint installed in its own node_modules folder
+      npmSearchDir: this.uri,
       configDiscovery: this.#configDiscovery,
       verbose: config.verbose,
       logger: this.#logger,
