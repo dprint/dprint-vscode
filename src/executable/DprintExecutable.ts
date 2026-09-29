@@ -34,6 +34,8 @@ export interface DprintExecutableOptions {
   configUri: vscode.Uri | undefined;
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
+  /** Directory to start searching node_modules for a dprint executable from. Defaults to the cwd. */
+  npmSearchDir?: vscode.Uri;
   /** The cli's config discovery mode. Defaults to the cli's default. */
   configDiscovery?: ConfigDiscovery;
   verbose: boolean;
@@ -80,8 +82,9 @@ export class DprintExecutable {
     }
 
     // attempt to use the npm executable if it exists
-    if (cwd != null && (options.resolveNpmExecutable ?? true)) {
-      const npmExec = await tryResolveNpmExecutable(cwd.fsPath, environment, logger);
+    const npmSearchDir = options.npmSearchDir ?? cwd;
+    if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
+      const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
       if (npmExec != null) {
         return npmExec;
       }

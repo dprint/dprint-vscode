@@ -30,6 +30,15 @@ describe("tryResolveNpmExecutable", () => {
     assert.strictEqual(await tryResolveNpmExecutable(subDir, env, createLogger()), exePath);
   });
 
+  it("prefers the platform package in the closest node_modules folder", async () => {
+    const env = new TestEnvironment();
+    writePlatformPackage(env, path.join(projectDir, "node_modules/@dprint/linux-x64-glibc"), "1.0.0");
+    const subDir = path.join(projectDir, "packages/sub");
+    const exePath = writePlatformPackage(env, path.join(subDir, "node_modules/@dprint/linux-x64-glibc"), "1.1.0");
+
+    assert.strictEqual(await tryResolveNpmExecutable(subDir, env, createLogger()), exePath);
+  });
+
   it("resolves a platform package nested in the dprint package", async () => {
     const env = new TestEnvironment();
     const exePath = writePlatformPackage(
