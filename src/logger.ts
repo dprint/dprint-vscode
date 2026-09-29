@@ -1,77 +1,46 @@
 import * as vscode from "vscode";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
 
-export class Notifier {
-  readonly #outputChannel: vscode.OutputChannel;
-  readonly #logger: Logger;
-  #enableNotifications = false;
+export class Instant {
+  #time: number;
 
-  constructor(outputChannel: vscode.OutputChannel, logger: Logger) {
-    this.#outputChannel = outputChannel;
-    this.#logger = logger;
+  constructor(time: number) {
+    this.#time = time;
   }
 
-  logErrorAndFocus(message: string, ...args: any[]) {
-    this.#logger.logError(message, ...args);
-
-    this.#getShowNotifications().then(shouldShow => {
-      if (shouldShow) {
-        this.#outputChannel.show();
-      }
-    });
+  static now() {
+    return new Instant(performance.now());
   }
 
-  showErrorMessageNotification(message: string) {
-    this.#getShowNotifications().then(shouldShow => {
-      if (shouldShow) {
-        vscode.window.showErrorMessage(message);
-      }
-    });
-  }
-
-  enableNotifications(value: boolean) {
-    this.#enableNotifications = value;
-  }
-
-  async #getShowNotifications() {
-    if (this.#enableNotifications) {
-      return true;
-    }
-
-    try {
-      const result = await vscode.workspace.findFiles(`**/${DPRINT_CONFIG_FILENAME_GLOB}`, null, /* max results */ 1);
-      if (result.length > 0) {
-        this.#enableNotifications = true;
-        return true;
-      } else {
-        return false;
-      }
-    } catch (err) {
-      this.#logger.logError("Error globbing for config file.", err);
-      return false;
-    }
+  elapsedMs() {
+    return performance.now() - this.#time;
   }
 }
 
 export class Logger {
   readonly #outputChannel: vscode.OutputChannel;
-  #verbose = false;
+  #debug = false;
+
+  static #hasFocused = false;
 
   constructor(outputChannel: vscode.OutputChannel) {
     this.#outputChannel = outputChannel;
   }
 
-  setVerbose(enabled: boolean) {
-    this.#verbose = enabled;
+  getOutputChannel() {
+    return this.#outputChannel;
+  }
+
+  setDebug(enabled: boolean) {
+    this.#debug = enabled;
   }
 
   log(message: string, ...args: any[]) {
     this.#outputChannel.appendLine(getFormattedArgs(message, args));
   }
 
-  logVerbose(message: string, ...args: any[]) {
-    if (this.#verbose) {
-      this.#outputChannel.appendLine(getFormattedMessageWithLevel("verbose", message, args));
+  logDebug(message: string, ...args: any[]) {
+    if (this.#debug) {
+      this.#outputChannel.appendLine(getFormattedMessageWithLevel("debug", message, args));
     }
   }
 
@@ -86,9 +55,23 @@ export class Logger {
   logError(message: string, ...args: any[]) {
     this.#outputChannel.appendLine(getFormattedMessageWithLevel("error", message, args));
   }
+
+  logErrorAndNotify(notificationMessage: string, message: string, ...args: any[]) {
+    this.logError(message, ...args);
+    // only notify max one time per session to not annoy people
+    if (!Logger.#hasFocused) {
+      Logger.#hasFocused = true;
+      const buttonText = "Go to output";
+      vscode.window.showWarningMessage(notificationMessage, buttonText).then(selection => {
+        if (selection === buttonText) {
+          this.#outputChannel.show();
+        }
+      });
+    }
+  }
 }
 
-function getFormattedMessageWithLevel(level: "verbose" | "info" | "warn" | "error", message: string, args: any[]) {
+function getFormattedMessageWithLevel(level: "debug" | "info" | "warn" | "error", message: string, args: any[]) {
   return `[${level.toUpperCase()}] ${getFormattedArgs(message, args)}`;
 }
 

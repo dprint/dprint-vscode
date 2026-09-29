@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { Logger } from "./logger";
-import { RacyCacheTextDownloader, TextDownloader } from "./TextDownloader";
-import { FolderInfos } from "./WorkspaceService";
+import type { Logger } from "../logger";
+import { RacyCacheTextDownloader, type TextDownloader } from "../utils";
+import type { FolderInfos } from "./WorkspaceService";
 
 /** Provides the dprint configuration JSON schema to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
@@ -72,7 +72,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     }
 
     try {
-      this.#logger.logVerbose("Fetching JSON schema:", configSchemaUrl);
+      this.#logger.logDebug("Fetching JSON schema:", configSchemaUrl);
       const text = await this.#cachedTextDownloader.get(configSchemaUrl);
       return JSON.parse(text);
     } catch (err) {
@@ -167,6 +167,7 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
         description: "Plugin configuration.",
         type: "object",
       },
+      allowTrailingCommas: true,
     };
   }
 }

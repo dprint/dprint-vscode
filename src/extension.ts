@@ -1,161 +1,138 @@
 import * as vscode from "vscode";
-import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
-import { DPRINT_CONFIG_FILENAME_GLOB } from "./constants";
+import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
+import { getCombinedDprintConfig } from "./config";
+import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import type { ExtensionBackend } from "./ExtensionBackend";
+import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
-import { HttpsTextDownloader } from "./TextDownloader";
-import { ObjectDisposedError } from "./utils";
-import { FolderInfos, WorkspaceService } from "./WorkspaceService";
+import { activateLsp } from "./lsp";
 
 class GlobalPluginState {
   constructor(
-    private readonly workspaceService: WorkspaceService,
-    private readonly outputChannel: vscode.OutputChannel,
+    public readonly outputChannel: vscode.OutputChannel,
+    public readonly logger: Logger,
+    public readonly extensionBackend: ExtensionBackend,
   ) {
   }
 
-  dispose() {
+  async dispose() {
+    try {
+      await this.extensionBackend?.dispose();
+    } catch {
+      // ignore
+    }
     this.outputChannel.dispose();
-    this.workspaceService.dispose();
   }
 }
 
 let globalState: GlobalPluginState | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
-  const { outputChannel, workspaceService } = getAndSetNewGlobalState(context);
-  let formattingSubscription: vscode.Disposable | undefined = undefined;
-  const logger = new Logger(outputChannel);
+export async function activate(context: vscode.ExtensionContext) {
+  const globalState = await getAndSetNewGlobalState(context);
+  const backend = globalState.extensionBackend;
+  const logger = globalState.logger;
 
-  // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
-  // for ConfigJsonSchemaProvider based on the file that's shown
-  const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
-  );
+  // reinitialize on workspace folder changes
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.reset", reInitializeEditorService));
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeEditorService));
-
-  // reinitialize on configuration file changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(`**/${DPRINT_CONFIG_FILENAME_GLOB}`);
+  // reinitialize when a configuration file is created or deleted and let the backend handle changes
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
   context.subscriptions.push(fileSystemWatcher);
-  context.subscriptions.push(fileSystemWatcher.onDidChange(reInitializeEditorService));
-  context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeEditorService));
-  context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeEditorService));
+  context.subscriptions.push(fileSystemWatcher.onDidChange(async () => {
+    try {
+      await backend.onConfigFileChanged();
+    } catch (err) {
+      logger.logError("Error handling configuration file change:", err);
+    }
+  }));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
 
   // reinitialize when the vscode configuration changes
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(evt => {
+  let hasShownLspWarning = false;
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
-      reInitializeEditorService();
+      if (isLsp() !== backend?.isLsp && !hasShownLspWarning) {
+        // I tried really hard to not have to reload, but having everything clean up
+        // properly was a pain and I think there might be stuff going on in the
+        // vscode-languageclient that I don't know about. So, just prompt the user
+        // to reload the vscode window when they change this option.
+        // https://stackoverflow.com/a/47189404/188246
+        const action = "Reload";
+        vscode.window.showInformationMessage(
+          "Changing dprint.experimentalLsp requires reloading the vscode window.",
+          action,
+        ).then(selectedAction => {
+          if (selectedAction === action) {
+            vscode.commands.executeCommand("workbench.action.reloadWindow");
+          }
+        });
+
+        hasShownLspWarning = true;
+      } else {
+        hasShownLspWarning = false;
+        await reInitializeBackend();
+      }
     }
   }));
 
-  return reInitializeEditorService().then(() => {
-    logger.logInfo(`Extension active!`);
+  context.subscriptions.push({
+    async dispose() {
+      await clearGlobalState();
+    },
   });
 
-  async function reInitializeEditorService() {
-    setFormattingSubscription(undefined);
+  reInitializeBackend().then(success => {
+    if (success) {
+      logger.logInfo("Extension active!");
+    } else {
+      logger.logWarn("Extension failed to start.");
+    }
+  });
 
+  async function reInitializeBackend() {
     try {
-      const folderInfos = await workspaceService.initializeFolders();
-      configSchemaProvider.setFolderInfos(folderInfos);
-      trySetFormattingSubscriptionFromFolderInfos(folderInfos);
+      await backend.reInitialize();
+      return true;
     } catch (err) {
-      if (!(err instanceof ObjectDisposedError)) {
-        logger.logError("Error initializing:", err);
-      }
-    }
-  }
-
-  function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos) {
-    const formattingPatterns = getFormattingPatterns();
-
-    if (formattingPatterns.length === 0) {
-      return;
-    }
-
-    setFormattingSubscription(
-      vscode.languages.registerDocumentFormattingEditProvider(
-        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
-        {
-          async provideDocumentFormattingEdits(document, options, token) {
-            return workspaceService.provideDocumentFormattingEdits(document, options, token);
-          },
-        },
-      ),
-    );
-
-    function getFormattingPatterns() {
-      const patterns: vscode.RelativePattern[] = [];
-      for (const folderInfo of allFolderInfos) {
-        if (folderInfo.editorInfo.plugins.length > 0) {
-          // Match against all files and let the dprint CLI say if it can format a file or not.
-          // This is necessary because by using the "associations" feature, a user may pattern
-          // match against any file path then format that file using a certain plugin. Additionally,
-          // we can't use the "includes" and "excludes" patterns from the config file because we
-          // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
-          // pattern matching being the same.
-          const pattern = new vscode.RelativePattern(folderInfo.uri, `**/*`);
-          patterns.push(pattern);
-        }
-      }
-      return patterns;
-    }
-  }
-
-  function setFormattingSubscription(newSubscription: vscode.Disposable | undefined) {
-    clear();
-    setNew();
-
-    function clear() {
-      if (formattingSubscription == null) {
-        return;
-      }
-      const subscriptionIndex = context.subscriptions.indexOf(formattingSubscription);
-      if (subscriptionIndex >= 0) {
-        context.subscriptions.splice(subscriptionIndex, 1);
-      }
-
-      formattingSubscription.dispose();
-      formattingSubscription = undefined;
-    }
-
-    function setNew() {
-      formattingSubscription = newSubscription;
-      if (newSubscription != null) {
-        context.subscriptions.push(newSubscription);
-      }
+      logger.logError("Error initializing:", err);
+      return false;
     }
   }
 }
 
 // this method is called when your extension is deactivated
-export function deactivate() {
-  clearGlobalState();
+export async function deactivate() {
+  await clearGlobalState();
 }
 
-function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
-  clearGlobalState();
+async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
+  await clearGlobalState();
 
   let outputChannel: vscode.OutputChannel | undefined = undefined;
-  let workspaceService: WorkspaceService | undefined = undefined;
+  let logger: Logger | undefined = undefined;
+  let backend: ExtensionBackend | undefined = undefined;
   try {
     outputChannel = vscode.window.createOutputChannel("dprint");
-    workspaceService = new WorkspaceService({
-      outputChannel,
-    });
+    logger = new Logger(outputChannel);
+    const approvedPaths = new ApprovedConfigPaths(context);
+    backend = isLsp()
+      ? activateLsp(logger, approvedPaths)
+      : activateLegacy(logger, approvedPaths);
   } catch (err) {
     outputChannel?.dispose();
-    workspaceService?.dispose();
     throw err;
   }
-  globalState = new GlobalPluginState(workspaceService, outputChannel);
-  context.subscriptions.push(globalState);
-  return { workspaceService, outputChannel };
+  globalState = new GlobalPluginState(outputChannel, logger, backend);
+  return globalState;
 }
 
-function clearGlobalState() {
-  globalState?.dispose();
+async function clearGlobalState() {
+  await globalState?.dispose();
   globalState = undefined;
+}
+
+function isLsp() {
+  return getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []).experimentalLsp;
 }

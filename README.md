@@ -44,7 +44,9 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
   "dprint.path": "/home/david/otherPath/dprint",
   // Change this to `true` to get verbose logging
-  "dprint.verbose": false
+  "dprint.verbose": false,
+  // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
+  "dprint.experimentalLsp": false
 }
 ```
 
@@ -58,6 +60,94 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 2. Go to "Run and debug" in VS code and run the "Run Extension" task.
 
 ## Release Notes
+
+### 0.17.2
+
+- fix: dispose formatting edit provider on config reinitialization (#141)
+- fix: instead of focusing output window on error, show notification (#140)
+- fix: update do not allow to deny (#130)
+
+### 0.17.1
+
+- fix: fallback to global dprint when disallowing workspace `"dprint.path"` config (#128)
+
+### 0.17.0
+
+- feat: prompt for custom workspace `"dprint.path"` setting (#126)
+- Revert "fix: improve how dprint executable is launched (#121)" (#125)
+
+Adds a security measure to prompt when someone provides a custom `"dprint.path"` vscode workspace setting so that this extension doesn't launch a workspace defined executable on startup without explicit user approval.
+
+### 0.16.8
+
+- fix: improve how dprint executable is launched (#121)
+
+### 0.16.7
+
+- fix: improve config discovery (#111)
+
+### 0.16.6
+
+- fix: retry trying to find config files with vscode API if one found in root with fs api (#109)
+
+### 0.16.5
+
+- fix: wait for workspace to be initialized before checking for configuration files (#106)
+- fix: prevent logger debug output loss (#103)
+
+### 0.16.4
+
+- perf: avoid calling process.report.getReport() on startup (#99)
+
+### 0.16.3
+
+- fix(npm): run dprint from a temp directory on Windows (#92)
+
+### 0.16.2
+
+- fix: ensure duplicate processes don't appear when restarting or changing config (#85)
+
+### 0.16.1
+
+- fix: initialize backend only if configuration file exists (#80)
+
+### 0.16.0
+
+- feat: add `dprint.experimentalLsp`
+
+### 0.15.1
+
+- fix: exclude searching for dprint config files in node_modules folders
+
+### 0.15.0
+
+- feat: auto-discover dprint in ancestor node_modules directories (#66)
+- feat: rename dprint.reset to dprint.restart (#65)
+- perf: lazily startup editor process (#64)
+
+### 0.14.0
+
+- feat: auto-discover dprint.jsonc config (supported in dprint 0.36+)
+
+### 0.13.6
+
+- fix: focus the dprint output window max one time per session
+
+### 0.13.5
+
+- fix: regression opening a descendant directory of a folder with a config file
+
+### 0.13.4
+
+- perf: reduce startup cpu usage with multiple workspace folders
+
+### 0.13.3
+
+- fix: regression where dprint versions <= 0.28 stopped formatting
+
+### 0.13.2
+
+- fix: ensure large files get formatted on Mac
 
 ### 0.13.1
 

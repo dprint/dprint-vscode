@@ -1,9 +1,11 @@
-import { TextDecoder, TextEncoder } from "util";
-import * as vscode from "vscode";
-import { DprintExecutable } from "../../executable";
-import { Logger } from "../../logger";
+import { Buffer } from "node:buffer";
+import { TextDecoder, TextEncoder } from "node:util";
+import type * as vscode from "vscode";
+import type { DprintExecutable } from "../../../executable/DprintExecutable";
+import type { Logger } from "../../../logger";
+import type { ByteRange } from "../byteRange";
 import { EditorProcess } from "../common";
-import { EditorService } from "../EditorService";
+import type { EditorService } from "../EditorService";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -13,6 +15,8 @@ export class EditorService5 implements EditorService {
   private _pendingMessages = new PendingMessages();
   private _currentMessageId = 0;
   private _logger: Logger;
+  private _disposed = false;
+  private _disposing = false;
 
   constructor(logger: Logger, dprintExecutable: DprintExecutable) {
     this._logger = logger;
@@ -27,14 +31,14 @@ export class EditorService5 implements EditorService {
   }
 
   private async startReadingStdout() {
-    while (true) {
+    while (!this._disposed) {
       try {
-        this._process.startProcessIfNotRunning();
+        this.startProcessIfNotRunning();
         const messageId = await this._process.readInt();
         const messageKind = await this._process.readInt();
         const bodyLength = await this._process.readInt();
 
-        const body = new BodyReader(await this._process.readBuffer(bodyLength));
+        const body = new BodyReader(await this._process.readBufferExact(bodyLength));
         await assertSuccessBytes(this._process);
 
         switch (messageKind) {
@@ -74,6 +78,9 @@ export class EditorService5 implements EditorService {
             break;
         }
       } catch (err) {
+        if (this._disposed || this._disposing) {
+          return;
+        }
         this._logger.logError("Read task failed:", err);
         this._process.kill();
 
@@ -83,7 +90,7 @@ export class EditorService5 implements EditorService {
     }
 
     async function assertSuccessBytes(process: EditorProcess) {
-      const buf = await process.readBuffer(4);
+      const buf = await process.readBufferExact(4);
       if (buf.length !== 4) {
         throw new Error(`Expected success byte array with length 4, but had length ${buf.length}.`);
       }
@@ -95,41 +102,45 @@ export class EditorService5 implements EditorService {
     }
   }
 
-  kill() {
+  killAndDispose() {
+    this._disposing = true;
+
     // If graceful shutdown doesn't work soon enough
     // then kill the process
     const killTimeout = setTimeout(() => {
+      this._disposed = true;
       this._process.kill();
     }, 1_000);
 
     // send a graceful shutdown signal
     this.gracefulClose().finally(() => {
+      this._disposed = true;
       this._process.kill();
       clearTimeout(killTimeout);
     }).catch(() => {/* ignore */});
   }
 
-  async canFormat(filePath: string) {
+  canFormat(filePath: string) {
     const message = this.getMessageForKind(MessageKind.CanFormat);
     message.addPart(textEncoder.encode(filePath));
     const buf = message.build();
-    this._process.startProcessIfNotRunning();
+    this.startProcessIfNotRunning();
     return new Promise<boolean>(async (resolve, reject) => {
       this._pendingMessages.store(message.id, { resolve, reject });
       await this._process.writeBuffer(buf);
     });
   }
 
-  formatText(filePath: string, fileText: string, token: vscode.CancellationToken) {
+  formatText(filePath: string, fileText: string, range: ByteRange | undefined, token: vscode.CancellationToken) {
     const message = this.getMessageForKind(MessageKind.FormatFile);
     const encodedFileText = textEncoder.encode(fileText);
     message.addPart(textEncoder.encode(filePath));
-    message.addPart(0); // start byte index (no range format support yet in the vscode plugin)
-    message.addPart(encodedFileText.byteLength); // end byte index
+    message.addPart(range?.start ?? 0); // start byte index
+    message.addPart(range?.end ?? encodedFileText.byteLength); // end byte index
     message.addPart(new Uint8Array(0)); // override config
     message.addPart(encodedFileText);
     const buf = message.build();
-    this._process.startProcessIfNotRunning();
+    this.startProcessIfNotRunning();
     return new Promise<string | undefined>(async (resolve, reject) => {
       const disposable = token.onCancellationRequested(() => {
         resolve(undefined);
@@ -188,6 +199,14 @@ export class EditorService5 implements EditorService {
 
   private getMessageForKind(kind: MessageKind) {
     return new Message(++this._currentMessageId, kind);
+  }
+
+  private startProcessIfNotRunning() {
+    if (this._disposed || this._disposing) {
+      return;
+    }
+
+    this._process.startProcessIfNotRunning();
   }
 }
 

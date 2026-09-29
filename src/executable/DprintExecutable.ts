@@ -1,7 +1,11 @@
-import { exec, spawn } from "child_process";
-import * as os from "os";
+import { exec, spawn } from "node:child_process";
+import * as process from "node:process";
 import * as vscode from "vscode";
-import { Logger } from "../logger";
+import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
+import type { DprintExtensionConfigPathInfo } from "../config";
+import type { Environment } from "../environment";
+import type { Logger } from "../logger";
+import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
   schemaVersion: number;
@@ -20,37 +24,74 @@ export interface PluginInfo {
   helpUrl: string;
 }
 
+/** A config discovery mode supported by the cli. */
+export type ConfigDiscovery = "ignore-descendants";
+
 export interface DprintExecutableOptions {
-  /** The path to the dprint executable. */
-  cmdPath: string | undefined;
+  approvedPaths: ApprovedConfigPaths;
+  pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
+  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
+  resolveNpmExecutable?: boolean;
+  /** Directory to start searching node_modules for a dprint executable from. Defaults to the cwd. */
+  npmSearchDir?: vscode.Uri;
+  /** The cli's config discovery mode. Defaults to the cli's default. */
+  configDiscovery?: ConfigDiscovery;
   verbose: boolean;
+  logger: Logger;
+  environment: Environment;
 }
 
 export class DprintExecutable {
   readonly #cmdPath: string;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
+  readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
-  private constructor(logger: Logger, options: DprintExecutableOptions) {
-    this.#logger = logger;
-    this.#cmdPath = options.cmdPath ?? "dprint";
+  private constructor(cmdPath: string, options: DprintExecutableOptions) {
+    this.#logger = options.logger;
+    this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
+    // use the environment variable instead of the --config-discovery flag because cli
+    // versions before 0.50 error on an unknown flag, but ignore an unknown environment variable
+    this.#env = options.configDiscovery == null
+      ? undefined
+      : { ...process.env, DPRINT_CONFIG_DISCOVERY: options.configDiscovery };
     this.#verbose = options.verbose;
   }
 
-  static async create(logger: Logger, options: DprintExecutableOptions) {
-    return new DprintExecutable(logger, {
-      ...options,
-      cmdPath: options.cmdPath != null
-        ? getCommandNameOrAbsolutePath(options.cmdPath, options.cwd)
-        : // attempt to use the npm executable if it exists
-          await tryResolveNpmExecutable(options.cwd),
-    });
+  static async create(options: DprintExecutableOptions) {
+    const cmdPath = await DprintExecutable.resolveCmdPath(options);
+    return new DprintExecutable(cmdPath, options);
+  }
+
+  static async resolveCmdPath(options: DprintExecutableOptions) {
+    const { approvedPaths, pathInfo, cwd, logger, environment } = options;
+
+    // if a custom path is configured, check approval
+    if (pathInfo != null) {
+      const approved = await approvedPaths.promptForApproval(pathInfo);
+      if (approved) {
+        return getCommandNameOrAbsolutePath(pathInfo.path, cwd);
+      }
+      // not approved - fall through to regular resolution
+    }
+
+    // attempt to use the npm executable if it exists
+    const npmSearchDir = options.npmSearchDir ?? cwd;
+    if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
+      const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
+      if (npmExec != null) {
+        return npmExec;
+      }
+    }
+
+    // fall back to "dprint" command
+    return "dprint";
   }
 
   get cmdPath() {
@@ -69,7 +110,7 @@ export class DprintExecutable {
       await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
       return true;
     } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err.toString());
+      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
       return false;
     }
   }
@@ -107,9 +148,10 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args, {
+    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
+      env: this.#env,
       // Set to true, to ensure this resolves properly on windows.
       // See https://github.com/denoland/vscode_deno/issues/361
       shell: true,
@@ -126,6 +168,7 @@ export class DprintExecutable {
       try {
         const process = exec(command.map(quoteCommandArg).join(" "), {
           cwd: this.#cwd.fsPath,
+          env: this.#env,
           encoding: "utf8",
         }, (err, stdout, stderr) => {
           if (err) {
@@ -157,27 +200,12 @@ export class DprintExecutable {
   }
 }
 
-function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri) {
-  if (cmd.startsWith("./") || cmd.startsWith("../")) {
+function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) {
+  if (cwd != null && (cmd.startsWith("./") || cmd.startsWith("../"))) {
     return vscode.Uri.joinPath(cwd, cmd).fsPath;
   }
 
   return cmd;
-}
-
-async function tryResolveNpmExecutable(cwd: vscode.Uri) {
-  const npmExecutablePath = vscode.Uri.joinPath(cwd, "node_modules", "dprint", getDprintExeName());
-
-  try {
-    await vscode.workspace.fs.stat(npmExecutablePath);
-    return npmExecutablePath.fsPath;
-  } catch {
-    return undefined;
-  }
-}
-
-function getDprintExeName() {
-  return os.platform() === "win32" ? "dprint.exe" : "dprint";
 }
 
 function quoteCommandArg(arg: string) {

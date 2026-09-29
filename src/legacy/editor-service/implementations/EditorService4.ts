@@ -1,9 +1,11 @@
-import { TextDecoder, TextEncoder } from "util";
-import * as vscode from "vscode";
-import { DprintExecutable } from "../../executable";
-import { Logger } from "../../logger";
+import { Buffer } from "node:buffer";
+import { TextDecoder, TextEncoder } from "node:util";
+import type * as vscode from "vscode";
+import type { DprintExecutable } from "../../../executable/DprintExecutable";
+import type { Logger } from "../../../logger";
+import type { ByteRange } from "../byteRange";
 import { EditorProcess, SerialExecutor } from "../common";
-import { EditorService } from "../EditorService";
+import type { EditorService } from "../EditorService";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -17,7 +19,7 @@ export class EditorService4 implements EditorService {
     this._process.onExit(() => this._serialExecutor.clear());
   }
 
-  kill() {
+  killAndDispose() {
     // If graceful shutdown doesn't work soon enough
     // then kill the process
     const killTimeout = setTimeout(() => {
@@ -43,7 +45,9 @@ export class EditorService4 implements EditorService {
     });
   }
 
-  formatText(filePath: string, fileText: string, token: vscode.CancellationToken) {
+  // this schema version doesn't support range formatting, so the range is ignored
+  // and the whole file is formatted (the same as a plugin that ignores the range)
+  formatText(filePath: string, fileText: string, _range: ByteRange | undefined, _token: vscode.CancellationToken) {
     this._process.startProcessIfNotRunning();
     return this._serialExecutor.execute(async () => {
       await writeInt(this._process, 2);
@@ -52,17 +56,22 @@ export class EditorService4 implements EditorService {
       await this.writeSuccessBytes();
       const response = await this._process.readInt();
       switch (response) {
-        case 0: // no change
+        // no change
+        case 0:
           await this.assertSuccessBytes();
           return undefined;
-        case 1: // formatted
-          let result = await readString(this._process);
+          // formatted
+        case 1: {
+          const result = await readString(this._process);
           await this.assertSuccessBytes();
           return result;
-        case 2: // error
+        }
+        // error
+        case 2: {
           const errorText = await readString(this._process);
           await this.assertSuccessBytes();
           throw errorText;
+        }
         default:
           throw new Error(`Unknown format text response kind: ${response}`);
       }
@@ -70,7 +79,8 @@ export class EditorService4 implements EditorService {
   }
 
   private async assertSuccessBytes() {
-    const buf = await this._process.readBuffer(4);
+    // the editor service 4 still needs to use this max size method
+    const buf = await this._process.readBufferWithMaxSize(4);
     if (buf.length !== 4) {
       throw new Error(`Expected success byte array with length 4, but had length ${buf.length}.`);
     }
@@ -121,7 +131,8 @@ async function readString(process: EditorProcess) {
       // send "ready" to CLI
       await writeInt(process, 0);
     }
-    const nextBuffer = await process.readBuffer(stringSize - index);
+    // the editor service 4 still needs to use this max size method
+    const nextBuffer = await process.readBufferWithMaxSize(stringSize - index);
     nextBuffer.copy(bytes, index, 0, nextBuffer.length);
     index += nextBuffer.length;
   }
