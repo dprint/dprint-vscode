@@ -7,14 +7,11 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 // import * as myExtension from '../../extension';
 
-suite("Extension Test Suite", function() {
+suite("Extension Test Suite", () => {
   vscode.window.showInformationMessage("Start all tests.");
   // create a temp folder
   let tempNumber = 0;
   let tempFolder = path.join(process.cwd(), "temp");
-  const isCI = process.env.CI != null;
-
-  this.timeout(isCI ? 40_000 : 4_000);
 
   const context = {
     get tempFolderUri() {
@@ -59,7 +56,7 @@ suite("Extension Test Suite", function() {
     },
     waitInitialize() {
       // would be nice to do something better
-      return this.sleep(isCI ? 2_000 : 250);
+      return this.sleep(250);
     },
     async sleep(ms: number) {
       await new Promise(resolve => setTimeout(resolve, ms));
@@ -166,7 +163,7 @@ suite("Extension Test Suite", function() {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  });
+  }).timeout(4_000);
 
   async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
     const edit = new vscode.WorkspaceEdit();
