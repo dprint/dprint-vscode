@@ -45,6 +45,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   "dprint.path": "/home/david/otherPath/dprint",
   // Change this to `true` to get verbose logging
   "dprint.verbose": false,
+  // Change this to `true` to format a file again until the output stops changing,
+  // the same as `dprint fmt`. This may double the time it takes to format a file.
+  // (requires dprint 0.59+)
+  "dprint.ensureStableFormat": false,
   // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
   "dprint.experimentalLsp": false
 }

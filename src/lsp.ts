@@ -1,9 +1,11 @@
+import * as process from "node:process";
 import * as vscode from "vscode";
 import { LanguageClient, type LanguageClientOptions, type ServerOptions } from "vscode-languageclient/node";
 import type { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "./configFile";
 import { RealEnvironment } from "./environment";
+import { getCliEnv } from "./executable/cliEnv";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import type { Logger } from "./logger";
@@ -45,6 +47,7 @@ export function activateLsp(
         command: cmdPath,
         args,
         options: {
+          env: getCliEnv(process.env, { ensureStableFormat: config.ensureStableFormat }),
           shell: true,
         },
       };
