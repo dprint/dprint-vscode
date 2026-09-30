@@ -37,10 +37,21 @@ const packageExtension = step.dependsOn(verifyVersion)({
   run: "npx vsce package --out dprint.vsix",
 });
 
-const publishMarketplace = step.dependsOn(packageExtension)({
+// signs in as the Microsoft Entra ID app that's a member of the marketplace publisher,
+// which trusts the workflow's OIDC token for the "publish" environment
+const azureLogin = step({
+  name: "Azure login",
+  uses: "azure/login@v3",
+  with: {
+    "client-id": "${{ vars.AZURE_CLIENT_ID }}",
+    "tenant-id": "${{ vars.AZURE_TENANT_ID }}",
+    "allow-no-subscriptions": true,
+  },
+});
+
+const publishMarketplace = step.dependsOn(packageExtension, azureLogin)({
   name: "Publish to the VS Code Marketplace",
-  env: { VSCE_PAT: "${{ secrets.VSCE_PAT }}" },
-  run: "npx vsce publish --packagePath dprint.vsix",
+  run: "npx vsce publish --packagePath dprint.vsix --azure-credential",
 });
 
 const publishOpenVsx = step.dependsOn(packageExtension)({
@@ -61,6 +72,7 @@ workflow({
     id: "publish",
     name: "publish",
     runsOn: "ubuntu-latest",
+    environment: "publish",
     timeoutMinutes: 30,
     steps: [publishMarketplace, publishOpenVsx],
   }],
