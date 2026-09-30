@@ -47,7 +47,7 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   "dprint.verbose": false,
   // Change this to `true` to format a file again until the output stops changing,
   // the same as `dprint fmt`. This may double the time it takes to format a file.
-  // (requires dprint 0.59.0+)
+  // (requires dprint 0.59+)
   "dprint.ensureStableFormat": false,
   // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
   "dprint.experimentalLsp": false
