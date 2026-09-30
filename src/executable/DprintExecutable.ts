@@ -1,4 +1,4 @@
-import { exec, spawn } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -6,6 +6,7 @@ import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { getCliEnv } from "./cliEnv";
+import { type DprintCommand, getCommandDisplayText, getCommandLaunchInfo, substituteCommands } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -47,16 +48,16 @@ export interface DprintExecutableOptions {
 }
 
 export class DprintExecutable {
-  readonly #cmdPath: string;
+  readonly #command: DprintCommand;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
-  private constructor(cmdPath: string, options: DprintExecutableOptions) {
+  private constructor(command: DprintCommand, options: DprintExecutableOptions) {
     this.#logger = options.logger;
-    this.#cmdPath = cmdPath;
+    this.#command = command;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
     this.#env = getCliEnv(process.env, options);
@@ -64,18 +65,21 @@ export class DprintExecutable {
   }
 
   static async create(options: DprintExecutableOptions) {
-    const cmdPath = await DprintExecutable.resolveCmdPath(options);
-    return new DprintExecutable(cmdPath, options);
+    const command = await DprintExecutable.resolveCommand(options);
+    return new DprintExecutable(command, options);
   }
 
-  static async resolveCmdPath(options: DprintExecutableOptions) {
+  static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const { approvedPaths, pathInfo, cwd, logger, environment } = options;
 
     // if a custom path is configured, check approval
     if (pathInfo != null) {
       const approved = await approvedPaths.promptForApproval(pathInfo);
       if (approved) {
-        return getCommandNameOrAbsolutePath(pathInfo.path, cwd);
+        const settingPath = process.platform === "win32"
+          ? await substituteCommands(pathInfo.path, command => runShellCommand(command, cwd?.fsPath))
+          : pathInfo.path; // the shell substitutes commands
+        return { kind: "setting", path: settingPath, cwd: cwd?.fsPath };
       }
       // not approved - fall through to regular resolution
     }
@@ -85,16 +89,16 @@ export class DprintExecutable {
     if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
       const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
       if (npmExec != null) {
-        return npmExec;
+        return { kind: "path", path: npmExec };
       }
     }
 
     // fall back to "dprint" command
-    return "dprint";
+    return { kind: "path", path: "dprint" };
   }
 
   get cmdPath() {
-    return this.#cmdPath;
+    return getCommandDisplayText(this.#command);
   }
 
   get initializationFolderUri() {
@@ -106,17 +110,17 @@ export class DprintExecutable {
 
   async checkInstalled() {
     try {
-      await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
+      await this.#execShell(["-v"], undefined, undefined);
       return true;
     } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
+      this.#logger.logError(`Problem launching ${this.cmdPath}.`, err);
       return false;
     }
   }
 
   async getEditorInfo() {
     const stdout = await this.#execShell(
-      [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
+      ["editor-info", ...this.#getConfigArgs()],
       undefined,
       undefined,
     );
@@ -147,28 +151,29 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
+    const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
+    return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
       env: this.#env,
-      // Set to true, to ensure this resolves properly on windows.
-      // See https://github.com/denoland/vscode_deno/issues/361
-      shell: true,
+      shell: launchInfo.shell,
     });
   }
 
   #execShell(
-    command: string[],
+    args: string[],
     stdin: string | undefined,
     token: vscode.CancellationToken | undefined,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const process = exec(command.map(quoteCommandArg).join(" "), {
+        const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
+        const childProcess = execFile(launchInfo.command, launchInfo.args, {
           cwd: this.#cwd.fsPath,
           env: this.#env,
           encoding: "utf8",
+          shell: launchInfo.shell,
         }, (err, stdout, stderr) => {
           if (err) {
             cancellationDisposable?.dispose();
@@ -178,10 +183,10 @@ export class DprintExecutable {
           resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
           cancellationDisposable?.dispose();
         });
-        cancellationDisposable = token?.onCancellationRequested(() => process.kill());
+        cancellationDisposable = token?.onCancellationRequested(() => childProcess.kill());
         if (stdin != null) {
-          process.stdin!.write(stdin);
-          process.stdin!.end();
+          childProcess.stdin!.write(stdin);
+          childProcess.stdin!.end();
         }
       } catch (err) {
         reject(err);
@@ -199,14 +204,14 @@ export class DprintExecutable {
   }
 }
 
-function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) {
-  if (cwd != null && (cmd.startsWith("./") || cmd.startsWith("../"))) {
-    return vscode.Uri.joinPath(cwd, cmd).fsPath;
-  }
-
-  return cmd;
-}
-
-function quoteCommandArg(arg: string) {
-  return `"${arg.replace(/"/g, "\\\"")}"`;
+function runShellCommand(command: string, cwd: string | undefined) {
+  return new Promise<string>((resolve, reject) => {
+    exec(command, { cwd, encoding: "utf8" }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`Failed running \`${command}\` from the dprint.path setting: ${stderr || err.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
 }

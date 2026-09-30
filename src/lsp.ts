@@ -6,6 +6,7 @@ import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "./configFile";
 import { RealEnvironment } from "./environment";
 import { getCliEnv } from "./executable/cliEnv";
+import { getCommandLaunchInfo } from "./executable/command";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { ConfigJsonSchemaProvider } from "./legacy/ConfigJsonSchemaProvider";
@@ -38,7 +39,7 @@ export function activateLsp(
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
 
-      const cmdPath = await DprintExecutable.resolveCmdPath({
+      const command = await DprintExecutable.resolveCommand({
         approvedPaths,
         pathInfo: config.pathInfo,
         cwd: rootUri!,
@@ -51,12 +52,13 @@ export function activateLsp(
       if (config?.verbose) {
         args.push("--verbose");
       }
+      const launchInfo = getCommandLaunchInfo(command, args, process.platform);
       const serverOptions: ServerOptions = {
-        command: cmdPath,
-        args,
+        command: launchInfo.command,
+        args: launchInfo.args,
         options: {
           env: getCliEnv(process.env, { ensureStableFormat: config.ensureStableFormat }),
-          shell: true,
+          shell: launchInfo.shell,
         },
       };
       const clientOptions: LanguageClientOptions = {
