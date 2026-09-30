@@ -5,6 +5,7 @@ import {
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
+  findWorkspaceFolderAncestorConfigFile,
   isPathWithin,
   resolveLooseFolderConfig,
 } from "./configPaths";
@@ -52,6 +53,51 @@ describe("resolveLooseFolderConfig", () => {
     const env = new TestEnvironment({ homeDir });
 
     assert.strictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: true }), undefined);
+  });
+});
+
+describe("findWorkspaceFolderAncestorConfigFile", () => {
+  const folderPath = path.resolve("/project/packages/app");
+
+  it("finds the config file of an ancestor directory when opening a descendant directory", async () => {
+    const env = new TestEnvironment();
+    env.writeFile(path.resolve("/dprint.json"), "{}");
+    const configPath = path.resolve("/project/dprint.json");
+    env.writeFile(configPath, "{}");
+
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, []), configPath);
+  });
+
+  it("finds the config file of an ancestor directory when only descendants of the folder have config files", async () => {
+    const env = new TestEnvironment();
+    const configPath = path.resolve("/project/dprint.json");
+    env.writeFile(configPath, "{}");
+    const subConfigPath = path.resolve("/project/packages/app/sub/dprint.json");
+    env.writeFile(subConfigPath, "{}");
+
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [subConfigPath]), configPath);
+  });
+
+  it("returns undefined when the folder has a config file", async () => {
+    const env = new TestEnvironment();
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+    const folderConfigPath = path.resolve("/project/packages/app/dprint.json");
+    env.writeFile(folderConfigPath, "{}");
+
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [folderConfigPath]), undefined);
+    // the folder path might have a trailing separator
+    assert.strictEqual(
+      await findWorkspaceFolderAncestorConfigFile(env, folderPath + path.sep, [folderConfigPath]),
+      undefined,
+    );
+  });
+
+  it("returns undefined when there's no config file in an ancestor directory", async () => {
+    const env = new TestEnvironment();
+    const subConfigPath = path.resolve("/project/packages/app/sub/dprint.json");
+    env.writeFile(subConfigPath, "{}");
+
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [subConfigPath]), undefined);
   });
 });
 

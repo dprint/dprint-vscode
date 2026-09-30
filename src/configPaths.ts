@@ -46,6 +46,25 @@ export async function resolveLooseFolderConfig(
 }
 
 /**
+ * Finds the config file in an ancestor directory to use for a workspace folder
+ * without a config file directly in it (ex. when opening a descendant directory
+ * of a folder with a config file), or undefined when it's not needed or there's none.
+ *
+ * @param configFilePaths - The config files found in the workspace.
+ */
+export async function findWorkspaceFolderAncestorConfigFile(
+  env: Environment,
+  folderPath: string,
+  configFilePaths: readonly string[],
+) {
+  // the config file in the folder is used instead
+  if (configFilePaths.some(configFilePath => path.relative(folderPath, path.dirname(configFilePath)) === "")) {
+    return undefined;
+  }
+  return findConfigFileInAncestorDirectories(env, path.dirname(folderPath));
+}
+
+/**
  * Finds the config file in the provided directory or its closest ancestor
  * directory. This mirrors how the dprint CLI discovers config files.
  */
