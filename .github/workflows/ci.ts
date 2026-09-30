@@ -15,8 +15,7 @@ const installNode = step.dependsOn(checkout)({
   name: "Install Node.js",
   uses: "actions/setup-node@v7",
   with: {
-    // node --test with a glob requires node 21+
-    "node-version": 22,
+    "node-version": 24,
     cache: "npm",
   },
 });
