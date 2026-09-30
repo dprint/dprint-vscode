@@ -1,6 +1,12 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getCommandDisplayText, getCommandLaunchInfo, substituteCommands } from "./command";
+import {
+  expandWindowsEnvVars,
+  getCommandDisplayText,
+  getCommandLaunchInfo,
+  resolveWindowsCommand,
+  substituteCommands,
+} from "./command";
 
 describe("getCommandLaunchInfo", () => {
   const configArgs = ["editor-info", "--config", "/home/user/$(echo hi)/`echo hi`/it's/dprint.json"];
@@ -32,23 +38,73 @@ describe("getCommandLaunchInfo", () => {
     );
   });
 
-  it("provides a quoted command line for a shell on Windows", () => {
+  it("launches an executable without a shell on Windows", () => {
+    const args = ["editor-info", "--config", "C:\\a b\\dprint.json"];
+    assert.deepStrictEqual(
+      getCommandLaunchInfo({ kind: "path", path: "C:\\Program Files\\dprint.exe" }, args, "win32"),
+      { command: "C:\\Program Files\\dprint.exe", args, shell: false },
+    );
+    assert.deepStrictEqual(
+      getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.exe", cwd: "C:\\project" }, ["-v"], "win32"),
+      { command: "C:\\project\\bin\\dprint.exe", args: ["-v"], shell: false },
+    );
+    // not found when resolving, so let launching it fail without cmd.exe's error
+    assert.deepStrictEqual(
+      getCommandLaunchInfo({ kind: "path", path: "dprint" }, ["-v"], "win32"),
+      { command: "dprint", args: ["-v"], shell: false },
+    );
+  });
+
+  it("provides a quoted command line for a shell for a batch file on Windows", () => {
     assert.deepStrictEqual(
       getCommandLaunchInfo(
-        { kind: "path", path: "C:\\Program Files\\dprint.exe" },
+        { kind: "path", path: "C:\\npm prefix\\dprint.CMD" },
         ["editor-info", "--config", "C:\\a b\\dprint.json"],
         "win32",
       ),
       {
-        command: "\"C:\\Program Files\\dprint.exe\" \"editor-info\" \"--config\" \"C:\\a b\\dprint.json\"",
+        command: "\"C:\\npm prefix\\dprint.CMD\" \"editor-info\" \"--config\" \"C:\\a b\\dprint.json\"",
         args: [],
         shell: true,
       },
     );
     assert.strictEqual(
-      getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.exe", cwd: "C:\\project" }, ["-v"], "win32").command,
-      "\"C:\\project\\bin\\dprint.exe\" \"-v\"",
+      getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.bat", cwd: "C:\\project" }, ["-v"], "win32").command,
+      "\"C:\\project\\bin\\dprint.bat\" \"-v\"",
     );
+  });
+});
+
+describe("expandWindowsEnvVars", () => {
+  it("expands defined variables and leaves others as-is", () => {
+    assert.strictEqual(
+      expandWindowsEnvVars("%LOCALAPPDATA%\\dprint\\%UNDEFINED%\\dprint.exe 100%", { LOCALAPPDATA: "C:\\Local" }),
+      "C:\\Local\\dprint\\%UNDEFINED%\\dprint.exe 100%",
+    );
+  });
+});
+
+describe("resolveWindowsCommand", () => {
+  it("resolves the executable file", async () => {
+    const searched: string[] = [];
+    const which = (command: string) => {
+      searched.push(command);
+      return Promise.resolve(command === "dprint" ? "C:\\npm prefix\\dprint.cmd" : `${command}.exe`);
+    };
+    assert.deepStrictEqual(
+      await resolveWindowsCommand({ kind: "path", path: "dprint" }, which),
+      { kind: "path", path: "C:\\npm prefix\\dprint.cmd" },
+    );
+    assert.deepStrictEqual(
+      await resolveWindowsCommand({ kind: "setting", path: "./bin/dprint", cwd: "C:\\project" }, which),
+      { kind: "setting", path: "C:\\project\\bin\\dprint.exe", cwd: "C:\\project" },
+    );
+    assert.deepStrictEqual(searched, ["dprint", "C:\\project\\bin\\dprint"]);
+  });
+
+  it("keeps the command when the file isn't found", async () => {
+    const command = { kind: "path" as const, path: "dprint" };
+    assert.strictEqual(await resolveWindowsCommand(command, () => Promise.resolve(undefined)), command);
   });
 });
 

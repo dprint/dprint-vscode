@@ -1,4 +1,6 @@
+import { which } from "@dsherret/which";
 import { exec, execFile, spawn } from "node:child_process";
+import * as fs from "node:fs";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -6,7 +8,14 @@ import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { getCliEnv } from "./cliEnv";
-import { type DprintCommand, getCommandDisplayText, getCommandLaunchInfo, substituteCommands } from "./command";
+import {
+  type DprintCommand,
+  expandWindowsEnvVars,
+  getCommandDisplayText,
+  getCommandLaunchInfo,
+  resolveWindowsCommand,
+  substituteCommands,
+} from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -70,31 +79,10 @@ export class DprintExecutable {
   }
 
   static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
-    const { approvedPaths, pathInfo, cwd, logger, environment } = options;
-
-    // if a custom path is configured, check approval
-    if (pathInfo != null) {
-      const approved = await approvedPaths.promptForApproval(pathInfo);
-      if (approved) {
-        const settingPath = process.platform === "win32"
-          ? await substituteCommands(pathInfo.path, command => runShellCommand(command, cwd?.fsPath))
-          : pathInfo.path; // the shell substitutes commands
-        return { kind: "setting", path: settingPath, cwd: cwd?.fsPath };
-      }
-      // not approved - fall through to regular resolution
-    }
-
-    // attempt to use the npm executable if it exists
-    const npmSearchDir = options.npmSearchDir ?? cwd;
-    if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
-      const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
-      if (npmExec != null) {
-        return { kind: "path", path: npmExec };
-      }
-    }
-
-    // fall back to "dprint" command
-    return { kind: "path", path: "dprint" };
+    const command = await getCommand(options);
+    return process.platform === "win32"
+      ? await resolveWindowsCommand(command, commandPath => which(commandPath, whichEnvironment))
+      : command;
   }
 
   get cmdPath() {
@@ -177,7 +165,8 @@ export class DprintExecutable {
         }, (err, stdout, stderr) => {
           if (err) {
             cancellationDisposable?.dispose();
-            reject(stderr);
+            // there's no stderr when the executable couldn't be launched (ex. ENOENT)
+            reject(stderr || err);
             return;
           }
           resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
@@ -204,6 +193,38 @@ export class DprintExecutable {
   }
 }
 
+async function getCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
+  const { approvedPaths, pathInfo, cwd, logger, environment } = options;
+
+  // if a custom path is configured, check approval
+  if (pathInfo != null) {
+    const approved = await approvedPaths.promptForApproval(pathInfo);
+    if (approved) {
+      // on Windows, dprint is usually launched without cmd.exe, so expand the setting like it would
+      const settingPath = process.platform === "win32"
+        ? expandWindowsEnvVars(
+          await substituteCommands(pathInfo.path, command => runShellCommand(command, cwd?.fsPath)),
+          process.env,
+        )
+        : pathInfo.path; // the shell substitutes commands
+      return { kind: "setting", path: settingPath, cwd: cwd?.fsPath };
+    }
+    // not approved - fall through to regular resolution
+  }
+
+  // attempt to use the npm executable if it exists
+  const npmSearchDir = options.npmSearchDir ?? cwd;
+  if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
+    const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
+    if (npmExec != null) {
+      return { kind: "path", path: npmExec };
+    }
+  }
+
+  // fall back to "dprint" command
+  return { kind: "path", path: "dprint" };
+}
+
 function runShellCommand(command: string, cwd: string | undefined) {
   return new Promise<string>((resolve, reject) => {
     exec(command, { cwd, encoding: "utf8" }, (err, stdout, stderr) => {
@@ -215,3 +236,22 @@ function runShellCommand(command: string, cwd: string | undefined) {
     });
   });
 }
+
+/** File system access for `which` that works with the older Node.js versions of vscode. */
+const whichEnvironment: Parameters<typeof which>[1] = {
+  isWindows: process.platform === "win32",
+  env(key) {
+    return process.env[key];
+  },
+  async stat(filePath) {
+    const info = await fs.promises.stat(filePath);
+    return { isFile: info.isFile() };
+  },
+  async lstat(filePath) {
+    const info = await fs.promises.lstat(filePath);
+    return { isFile: info.isFile(), isSymlink: info.isSymbolicLink() };
+  },
+  readLink(filePath) {
+    return fs.promises.readlink(filePath);
+  },
+};

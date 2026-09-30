@@ -5,8 +5,9 @@ import * as path from "node:path";
 /**
  * The dprint executable to launch.
  *
- * A `dprint.path` setting is interpreted by the shell (ex. `$HOME/bin/dprint`),
- * which is fine because it's from the user's settings or they approved it. Other
+ * A `dprint.path` setting is interpreted by the shell (ex. `$HOME/bin/dprint`), or
+ * expanded like a shell would on Windows, which is fine because it's from the
+ * user's settings or they approved it. Other
  * paths (ex. one found in node_modules) are used as-is.
  */
 export type DprintCommand =
@@ -34,6 +35,28 @@ export async function substituteCommands(text: string, runCommand: (command: str
   return result + text.slice(index);
 }
 
+/**
+ * Replaces each `%NAME%` in the text with the environment variable's value like
+ * cmd.exe does, leaving undefined variables as-is. This is used on Windows because
+ * dprint is launched without cmd.exe when possible.
+ */
+export function expandWindowsEnvVars(text: string, env: { [name: string]: string | undefined }) {
+  return text.replace(/%([^%]+)%/g, (match, name: string) => env[name] ?? match);
+}
+
+/**
+ * Resolves the executable file of a command on Windows (ex. `dprint` to
+ * `C:\bin\dprint.exe`) so that it can be launched without cmd.exe when possible.
+ * The command is kept as-is when the file isn't found.
+ */
+export async function resolveWindowsCommand(
+  command: DprintCommand,
+  which: (command: string) => Promise<string | undefined>,
+): Promise<DprintCommand> {
+  const filePath = await which(getWindowsCommandPath(command));
+  return filePath == null ? command : { ...command, path: filePath };
+}
+
 /** Gets the text to display for the command. */
 export function getCommandDisplayText(command: DprintCommand) {
   return command.kind === "setting" && command.cwd != null && isRelativePath(command.path)
@@ -44,9 +67,11 @@ export function getCommandDisplayText(command: DprintCommand) {
 /**
  * Gets how to launch a command so that its arguments are passed as-is.
  *
- * On Windows, a shell is used so that commands such as an npm `dprint.cmd` resolve
+ * On Windows, a shell is only used to launch a batch file such as an npm `dprint.cmd`
  * (see https://github.com/denoland/vscode_deno/issues/361), so the command and its
- * quoted arguments are provided as a single command line. Elsewhere, a shell is only
+ * quoted arguments are provided as a single command line. It's otherwise avoided
+ * because cmd.exe outputs its errors in the system's code page instead of UTF-8
+ * (see https://github.com/dprint/dprint-vscode/issues/2). Elsewhere, a shell is only
  * used for a `dprint.path` setting and the arguments are quoted so it doesn't
  * interpret them.
  */
@@ -56,9 +81,10 @@ export function getCommandLaunchInfo(
   platform: NodeJS.Platform,
 ): CommandLaunchInfo {
   if (platform === "win32") {
-    const commandPath = command.kind === "setting" && command.cwd != null && isRelativePath(command.path)
-      ? path.win32.join(command.cwd, command.path)
-      : command.path;
+    const commandPath = getWindowsCommandPath(command);
+    if (!/\.(cmd|bat)$/i.test(commandPath)) {
+      return { command: commandPath, args, shell: false };
+    }
     return {
       command: [commandPath, ...args].map(quoteWindowsArg).join(" "),
       args: [],
@@ -73,6 +99,12 @@ export function getCommandLaunchInfo(
   } else {
     return { command: command.path, args, shell: false };
   }
+}
+
+function getWindowsCommandPath(command: DprintCommand) {
+  return command.kind === "setting" && command.cwd != null && isRelativePath(command.path)
+    ? path.win32.join(command.cwd, command.path)
+    : command.path;
 }
 
 function getPosixSettingCommand(command: DprintCommand & { kind: "setting" }) {

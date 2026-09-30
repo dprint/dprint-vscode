@@ -30,7 +30,7 @@ jobs:
             exit 1
           fi
       - name: Package
-        run: npx vsce package --out dprint.vsix
+        run: npx vsce package --no-dependencies --out dprint.vsix
       - name: Upload artifact vsix
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
