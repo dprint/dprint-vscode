@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -6,7 +6,7 @@ import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { getCliEnv } from "./cliEnv";
-import { type DprintCommand, getCommandDisplayText, getCommandLaunchInfo } from "./command";
+import { type DprintCommand, getCommandDisplayText, getCommandLaunchInfo, substituteCommands } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -76,7 +76,10 @@ export class DprintExecutable {
     if (pathInfo != null) {
       const approved = await approvedPaths.promptForApproval(pathInfo);
       if (approved) {
-        return { kind: "setting", path: pathInfo.path, cwd: cwd?.fsPath };
+        const settingPath = process.platform === "win32"
+          ? await substituteCommands(pathInfo.path, command => runShellCommand(command, cwd?.fsPath))
+          : pathInfo.path; // the shell substitutes commands
+        return { kind: "setting", path: settingPath, cwd: cwd?.fsPath };
       }
       // not approved - fall through to regular resolution
     }
@@ -199,4 +202,16 @@ export class DprintExecutable {
       return [];
     }
   }
+}
+
+function runShellCommand(command: string, cwd: string | undefined) {
+  return new Promise<string>((resolve, reject) => {
+    exec(command, { cwd, encoding: "utf8" }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`Failed running \`${command}\` from the dprint.path setting: ${stderr || err.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
 }

@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getCommandDisplayText, getCommandLaunchInfo } from "./command";
+import { getCommandDisplayText, getCommandLaunchInfo, substituteCommands } from "./command";
 
 describe("getCommandLaunchInfo", () => {
   const configArgs = ["editor-info", "--config", "/home/user/$(echo hi)/`echo hi`/it's/dprint.json"];
@@ -49,6 +49,25 @@ describe("getCommandLaunchInfo", () => {
       getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.exe", cwd: "C:\\project" }, ["-v"], "win32").command,
       "\"C:\\project\\bin\\dprint.exe\" \"-v\"",
     );
+  });
+});
+
+describe("substituteCommands", () => {
+  it("replaces each command with its trimmed output", async () => {
+    const commands: string[] = [];
+    const result = await substituteCommands("$(yarn bin dprint) and $(echo b)!", command => {
+      commands.push(command);
+      return Promise.resolve(command === "yarn bin dprint" ? "C:\\project\\node_modules\\.bin\\dprint\r\n" : "b\n");
+    });
+    assert.strictEqual(result, "C:\\project\\node_modules\\.bin\\dprint and b!");
+    assert.deepStrictEqual(commands, ["yarn bin dprint", "echo b"]);
+  });
+
+  it("leaves text without commands as-is", async () => {
+    const result = await substituteCommands("C:\\Program Files\\dprint.exe", () => {
+      throw new Error("should not run");
+    });
+    assert.strictEqual(result, "C:\\Program Files\\dprint.exe");
   });
 });
 

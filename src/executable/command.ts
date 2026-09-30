@@ -20,6 +20,20 @@ export interface CommandLaunchInfo {
   shell: boolean;
 }
 
+/**
+ * Replaces each `$(command)` in the text with the command's trimmed output like a
+ * POSIX shell does. This is used on Windows because cmd.exe doesn't support it.
+ */
+export async function substituteCommands(text: string, runCommand: (command: string) => Promise<string>) {
+  let result = "";
+  let index = 0;
+  for (const match of text.matchAll(/\$\(([^)]*)\)/g)) {
+    result += text.slice(index, match.index) + (await runCommand(match[1])).trim();
+    index = match.index! + match[0].length;
+  }
+  return result + text.slice(index);
+}
+
 /** Gets the text to display for the command. */
 export function getCommandDisplayText(command: DprintCommand) {
   return command.kind === "setting" && command.cwd != null && isRelativePath(command.path)
