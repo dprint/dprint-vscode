@@ -5,6 +5,7 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
+import { getCliEnv } from "./cliEnv";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -38,6 +39,8 @@ export interface DprintExecutableOptions {
   npmSearchDir?: vscode.Uri;
   /** The cli's config discovery mode. Defaults to the cli's default. */
   configDiscovery?: ConfigDiscovery;
+  /** Whether to format again until the output is stable. Defaults to false. */
+  ensureStableFormat?: boolean;
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -56,11 +59,7 @@ export class DprintExecutable {
     this.#cmdPath = cmdPath;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
-    // use the environment variable instead of the --config-discovery flag because cli
-    // versions before 0.50 error on an unknown flag, but ignore an unknown environment variable
-    this.#env = options.configDiscovery == null
-      ? undefined
-      : { ...process.env, DPRINT_CONFIG_DISCOVERY: options.configDiscovery };
+    this.#env = getCliEnv(process.env, options);
     this.#verbose = options.verbose;
   }
 

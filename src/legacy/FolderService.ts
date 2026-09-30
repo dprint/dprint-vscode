@@ -266,6 +266,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       // uses the dprint installed in its own node_modules folder
       npmSearchDir: this.uri,
       configDiscovery: this.#configDiscovery,
+      ensureStableFormat: config.ensureStableFormat,
       verbose: config.verbose,
       logger: this.#logger,
       environment: this.#environment,
