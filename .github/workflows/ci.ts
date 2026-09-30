@@ -15,8 +15,7 @@ const installNode = step.dependsOn(checkout)({
   name: "Install Node.js",
   uses: "actions/setup-node@v7",
   with: {
-    // node --test with a glob requires node 21+
-    "node-version": 22,
+    "node-version": 24,
     cache: "npm",
   },
 });
@@ -53,7 +52,10 @@ const installDeno = step({
 
 const lintCiGeneration = step.dependsOn(checkout, installDeno).if(isLinux)({
   name: "Lint CI generation",
-  run: "deno run -A --no-lock .github/workflows/ci.ts --lint",
+  run: [
+    "deno run -A --no-lock .github/workflows/ci.ts --lint",
+    "deno run -A --no-lock .github/workflows/publish.ts --lint",
+  ],
 });
 
 workflow({

@@ -25,7 +25,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: npm ci
@@ -43,4 +43,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - name: Lint CI generation
         if: matrix.os == 'ubuntu-latest'
-        run: deno run -A --no-lock .github/workflows/ci.ts --lint
+        run: |-
+          deno run -A --no-lock .github/workflows/ci.ts --lint
+          deno run -A --no-lock .github/workflows/publish.ts --lint
