@@ -75,6 +75,5 @@ export class ActivatedDisposables {
 function isExtendedDisposable(disposable: unknown): disposable is ExtendedDisposable {
   return disposable != null
     && typeof disposable === "object"
-    && "stop" in disposable
-    && typeof disposable.stop === "function";
+    && typeof (disposable as { stop?: unknown }).stop === "function";
 }
