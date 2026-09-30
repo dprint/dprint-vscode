@@ -5,8 +5,8 @@ import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import {
   findClosestFolder,
-  findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
+  findWorkspaceFolderAncestorConfigFile,
   isPathWithin,
   type LooseFolderConfig,
   resolveLooseFolderConfig,
@@ -345,23 +345,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         this.#folders.push(this.#createWorkspaceFolderService(folder, subConfigUri));
       }
 
-      // if the current workspace folder hasn't been added, then ensure
-      // it's added to the list of folders in order to allow someone
-      // formatting when the current open workspace is in a sub directory
-      // of a workspace
-      if (!this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))) {
-        const ancestorConfigFilePath = await findConfigFileInAncestorDirectories(
-          this.#environment,
-          path.dirname(folder.uri.fsPath),
-        );
-        this.#assertNotDisposed();
-        this.#assertCurrentGeneration(generation);
-        if (ancestorConfigFilePath != null) {
-          // the cli finds the ancestor config file itself, but don't let it fall back to the
-          // global config file if that one's deleted because the global config file is opt-in
-          this.#folders.push(this.#createWorkspaceFolderService(folder, undefined, "ignore-descendants"));
-          this.#watchAncestorConfigFile(ancestorConfigFilePath);
-        }
+      // allow formatting when the workspace folder is a descendant directory
+      // of a folder with a config file and has no config file of its own
+      const ancestorConfigFilePath = await findWorkspaceFolderAncestorConfigFile(
+        this.#environment,
+        folder.uri.fsPath,
+        subConfigUris.map(uri => uri.fsPath),
+      );
+      this.#assertNotDisposed();
+      this.#assertCurrentGeneration(generation);
+      if (ancestorConfigFilePath != null) {
+        // the cli finds the ancestor config file itself, but don't let it fall back to the
+        // global config file if that one's deleted because the global config file is opt-in
+        this.#folders.push(this.#createWorkspaceFolderService(folder, undefined, "ignore-descendants"));
+        this.#watchAncestorConfigFile(ancestorConfigFilePath);
       }
     }
 
@@ -461,18 +458,4 @@ interface LooseFolderEntry {
 function disposeLooseFolderEntry(entry: LooseFolderEntry) {
   entry.configFileWatcher.dispose();
   entry.folder.then(folder => folder?.dispose());
-}
-
-function areDirectoryUrisEqual(a: vscode.Uri, b: vscode.Uri) {
-  function standarizeUri(uri: vscode.Uri) {
-    const text = uri.toString();
-    if (text.endsWith("/")) {
-      return text;
-    } else {
-      // for some reason, vscode workspace directory uris don't have a trailing slash
-      return `${text}/`;
-    }
-  }
-
-  return standarizeUri(a) === standarizeUri(b);
 }
