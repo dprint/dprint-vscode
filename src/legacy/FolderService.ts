@@ -170,12 +170,17 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
+  /**
+   * Formats the document. The file path defaults to the document's and is provided
+   * for documents that aren't on the file system (ex. untitled documents).
+   */
   provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
+    filePath = document.fileName,
   ) {
-    return this.#formatDocument(document, undefined, token);
+    return this.#formatDocument(document, filePath, undefined, token);
   }
 
   provideDocumentRangeFormattingEdits(
@@ -183,12 +188,14 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     range: vscode.Range,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
+    filePath = document.fileName,
   ) {
-    return this.#formatDocument(document, range, token);
+    return this.#formatDocument(document, filePath, range, token);
   }
 
   async #formatDocument(
     document: vscode.TextDocument,
+    filePath: string,
     range: vscode.Range | undefined,
     token: vscode.CancellationToken,
   ) {
@@ -202,8 +209,8 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return []; // not ready yet
       }
 
-      if (!(await this.#editorService.canFormat(document.fileName))) {
-        this.#logger.logDebug("Response - File not matched:", document.fileName);
+      if (!(await this.#editorService.canFormat(filePath))) {
+        this.#logger.logDebug("Response - File not matched:", filePath);
         return undefined;
       }
 
@@ -214,27 +221,27 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       const byteRange = offsetRange == null
         ? undefined
         : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
-      const newText = await this.#editorService.formatText(document.fileName, fileText, byteRange, token);
+      const newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
       if (newText == null) {
-        this.#logger.logDebug("Response - Formatted (No change):", document.fileName);
+        this.#logger.logDebug("Response - Formatted (No change):", filePath);
         return [];
       }
 
       if (offsetRange != null) {
         const edit = getRangeFormatEdit(fileText, newText, offsetRange);
         if (edit == null) {
-          this.#logger.logDebug("Response - Ignored range format with changes outside the range:", document.fileName);
+          this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
           return [];
         }
         const editRange = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
-        this.#logger.logDebug("Response - Formatted range:", document.fileName);
+        this.#logger.logDebug("Response - Formatted range:", filePath);
         return [vscode.TextEdit.replace(editRange, edit.newText)];
       }
 
       const lastLineNumber = document.lineCount - 1;
       const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
       const result = [vscode.TextEdit.replace(replaceRange, newText)];
-      this.#logger.logDebug("Response - Formatted:", document.fileName);
+      this.#logger.logDebug("Response - Formatted:", filePath);
       return result;
     } catch (err: any) {
       this.#logger.logError("Error formatting text.", err);

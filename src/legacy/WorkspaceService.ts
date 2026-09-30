@@ -11,10 +11,11 @@ import {
   type LooseFolderConfig,
   resolveLooseFolderConfig,
 } from "../configPaths";
-import { DPRINT_CONFIG_FILE_NAME_GLOB } from "../constants";
+import { DPRINT_CONFIG_FILE_NAME_GLOB, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import { Logger } from "../logger";
+import { getUntitledFileName, type LanguageContribution } from "../untitledFileName";
 import { ObjectDisposedError } from "../utils";
 import { refreshOrRestartFolders } from "./folderRefresh";
 import { FolderService } from "./FolderService";
@@ -86,11 +87,14 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForUri(document.uri, { notify: true });
-    if (folder == null || token.isCancellationRequested) {
+    const filePath = await this.#getFormatFilePath(document);
+    const folder = filePath == null
+      ? undefined
+      : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
+    if (filePath == null || folder == null || token.isCancellationRequested) {
       return [];
     }
-    return folder.provideDocumentFormattingEdits(document, options, token);
+    return folder.provideDocumentFormattingEdits(document, options, token, filePath);
   }
 
   async provideDocumentRangeFormattingEdits(
@@ -99,11 +103,14 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const folder = await this.#getFolderForUri(document.uri, { notify: true });
-    if (folder == null || token.isCancellationRequested) {
+    const filePath = await this.#getFormatFilePath(document);
+    const folder = filePath == null
+      ? undefined
+      : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
+    if (filePath == null || folder == null || token.isCancellationRequested) {
       return [];
     }
-    return folder.provideDocumentRangeFormattingEdits(document, range, options, token);
+    return folder.provideDocumentRangeFormattingEdits(document, range, options, token, filePath);
   }
 
   /**
@@ -145,6 +152,31 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     while (this.#workspaceInitialization != null) {
       await this.#workspaceInitialization.catch(() => {/* ignore */});
     }
+  }
+
+  /**
+   * Gets the file path dprint should format the document as. An untitled document
+   * isn't on the file system, so it's formatted as a file in the first workspace
+   * folder (or the home directory) named based on its language.
+   */
+  async #getFormatFilePath(document: vscode.TextDocument) {
+    if (document.uri.scheme !== UNTITLED_SCHEME) {
+      return document.fileName;
+    }
+    const dirPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.#environment.homeDir();
+    const fileName = getUntitledFileName(getLanguageContributions(), document.languageId);
+    if (dirPath == null || fileName == null) {
+      this.#logger.logInfo(
+        "Could not determine a file path to format the untitled document with language:",
+        document.languageId,
+      );
+      return undefined;
+    }
+    // The cli can't canonicalize a path that doesn't exist, so it compares it as-is
+    // to the config's canonicalized directory. Use the directory's real path so that
+    // it matches (ex. vscode lowercases the drive letter on Windows).
+    const realDirPath = await this.#environment.realPath(dirPath) ?? dirPath;
+    return path.join(realDirPath, fileName);
   }
 
   async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
@@ -411,6 +443,11 @@ function getFolderInfos(folders: ReadonlyArray<FolderService | undefined>): Fold
     }
   }
   return folderInfos;
+}
+
+/** Gets the languages contributed by the installed extensions. */
+function getLanguageContributions(): LanguageContribution[] {
+  return vscode.extensions.all.flatMap(extension => extension.packageJSON?.contributes?.languages ?? []);
 }
 
 /** Watches the config files in the config file's directory. */

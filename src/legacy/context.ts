@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
-import { isDprintExtensionId } from "../constants";
+import { isDprintExtensionId, UNTITLED_SCHEME } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
@@ -139,7 +139,11 @@ export function activateLegacy(
       // default formatter for the language. They're formatted using the file's closest
       // ancestor config file or the global config file. This is limited to those languages
       // so that dprint doesn't cause a "multiple formatters" prompt for other files.
-      ...defaultFormatterLanguageIds.map(language => ({ scheme: "file", language })),
+      ...defaultFormatterLanguageIds.flatMap(language => [
+        { scheme: "file", language },
+        // untitled documents are formatted as a file in the workspace (see WorkspaceService)
+        { scheme: UNTITLED_SCHEME, language },
+      ]),
       // User data files (ex. the user settings.json) aren't file scheme documents. They're
       // only registered when a plugin in the file's config can format them.
       ...userDataFilePaths.map(pattern => ({ scheme: USER_DATA_SCHEME, pattern })),
