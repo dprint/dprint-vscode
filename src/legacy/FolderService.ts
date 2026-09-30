@@ -8,6 +8,7 @@ import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
+import { trimFormattedCellText } from "./notebookCellText";
 import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
@@ -188,7 +189,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   /**
    * Formats the document. The file defaults to the document's and is provided for
-   * documents that aren't on the file system (ex. untitled documents).
+   * documents that aren't on the file system (ex. untitled documents and notebook cells).
    */
   provideDocumentFormattingEdits(
     document: vscode.TextDocument,
@@ -240,9 +241,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
       let newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
       if (newText != null && file.notebookPath != null) {
-        // many plugins add a final newline, which doesn't look nice in a notebook
-        // cell, so trim it off like the jupyter plugin does
-        newText = newText.trimEnd();
+        newText = trimFormattedCellText(fileText, newText, offsetRange);
         if (newText === fileText) {
           newText = undefined;
         }

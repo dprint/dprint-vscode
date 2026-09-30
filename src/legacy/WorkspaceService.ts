@@ -12,7 +12,7 @@ import {
   type LooseFolderConfig,
   resolveLooseFolderConfig,
 } from "../configPaths";
-import { DPRINT_CONFIG_FILE_NAME_GLOB, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
+import { DPRINT_CONFIG_FILE_NAME_GLOB, FILE_SCHEME, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
@@ -214,9 +214,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     const notebook = vscode.workspace.notebookDocuments.find(notebook =>
       notebook.getCells().some(cell => cell.document === document)
     );
-    const fileNames = getNotebookCellFileNames(getLanguageContributions(), document.languageId);
+    if (notebook == null) {
+      this.#logger.logInfo("Could not find the notebook of the cell:", document.uri.toString());
+      return undefined;
+    }
     // unsaved notebooks aren't supported because the cli only formats notebooks on the file system
-    if (notebook == null || notebook.uri.scheme !== "file" || fileNames.length === 0) {
+    if (notebook.uri.scheme !== FILE_SCHEME) {
+      this.#logger.logInfo(
+        "Not formatting the cell of a notebook that isn't on the file system:",
+        notebook.uri.toString(),
+      );
+      return undefined;
+    }
+    const fileNames = getNotebookCellFileNames(getLanguageContributions(), document.languageId);
+    if (fileNames.length === 0) {
       this.#logger.logInfo(
         "Could not determine a file path to format the notebook cell with language:",
         document.languageId,
