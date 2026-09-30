@@ -342,6 +342,10 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
       const folderConfigUris = configFiles.filter(c => isPathWithin(folder.uri.fsPath, c.fsPath));
+      // This is only necessary because vscode.workspace.findFiles doesn't respect .gitignore
+      // files, so it finds config files in gitignored directories that the dprint cli never
+      // uses (ex. copies of a crate's config file in Cargo's target/package directory).
+      // Remove this once there's a stable api for finding files that respects them.
       const subConfigPaths = await filterCacheDirConfigFiles(
         this.#environment,
         folder.uri.fsPath,
