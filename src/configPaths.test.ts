@@ -2,6 +2,7 @@ import * as assert from "node:assert";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  filterCacheDirConfigFiles,
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
@@ -300,6 +301,42 @@ describe("findGlobalConfigFile", () => {
 
       assert.strictEqual(await findGlobalConfigFile(env), undefined);
     });
+  });
+});
+
+describe("filterCacheDirConfigFiles", () => {
+  const folderPath = path.resolve("/project");
+  const rootConfig = path.resolve("/project/dprint.json");
+  const packageConfig = path.resolve("/project/target/package/crate-0.1.0/dprint.json");
+
+  it("removes config files in a descendant cache directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/project/target/CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55");
+    const subConfig = path.resolve("/project/sub/dprint.json");
+
+    assert.deepStrictEqual(
+      await filterCacheDirConfigFiles(env, folderPath, [rootConfig, packageConfig, subConfig]),
+      [rootConfig, subConfig],
+    );
+  });
+
+  it("removes a config file directly in a cache directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/project/cache/CACHEDIR.TAG"), "");
+    const cacheConfig = path.resolve("/project/cache/dprint.json");
+
+    assert.deepStrictEqual(await filterCacheDirConfigFiles(env, folderPath, [rootConfig, cacheConfig]), [rootConfig]);
+  });
+
+  it("keeps config files when the folder or its ancestors are cache directories", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/CACHEDIR.TAG"), "");
+    env.writeFile(path.resolve("/project/CACHEDIR.TAG"), "");
+
+    assert.deepStrictEqual(
+      await filterCacheDirConfigFiles(env, folderPath, [rootConfig, packageConfig]),
+      [rootConfig, packageConfig],
+    );
   });
 });
 

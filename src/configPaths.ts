@@ -65,6 +65,42 @@ export async function findWorkspaceFolderAncestorConfigFile(
 }
 
 /**
+ * Removes the config files that are in a cache directory within the folder, such
+ * as the config files of the packages Cargo copies into its target directory. Cache
+ * directories are identified by a CACHEDIR.TAG file (https://bford.info/cachedir/).
+ *
+ * @param configFilePaths - The config files found in the folder.
+ */
+export async function filterCacheDirConfigFiles(
+  env: Environment,
+  folderPath: string,
+  configFilePaths: readonly string[],
+) {
+  const isCacheDirByPath = new Map<string, Promise<boolean>>();
+  const isInCacheDir = await Promise.all(configFilePaths.map(async configFilePath => {
+    // the folder itself isn't checked because the user chose to open it
+    let currentPath = path.dirname(configFilePath);
+    while (path.relative(folderPath, currentPath) !== "" && isPathWithin(folderPath, currentPath)) {
+      if (await isCacheDir(currentPath)) {
+        return true;
+      }
+      currentPath = path.dirname(currentPath);
+    }
+    return false;
+  }));
+  return configFilePaths.filter((_, i) => !isInCacheDir[i]);
+
+  function isCacheDir(dirPath: string) {
+    let isCacheDir = isCacheDirByPath.get(dirPath);
+    if (isCacheDir == null) {
+      isCacheDir = env.fileExists(path.join(dirPath, "CACHEDIR.TAG"));
+      isCacheDirByPath.set(dirPath, isCacheDir);
+    }
+    return isCacheDir;
+  }
+}
+
+/**
  * Finds the config file in the provided directory or its closest ancestor
  * directory. This mirrors how the dprint CLI discovers config files.
  */

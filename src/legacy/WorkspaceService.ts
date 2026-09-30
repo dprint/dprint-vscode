@@ -4,6 +4,7 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import {
+  filterCacheDirConfigFiles,
   findClosestFolder,
   findGlobalConfigFile,
   findWorkspaceFolderAncestorConfigFile,
@@ -340,7 +341,21 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders) {
-      const subConfigUris = configFiles.filter(c => isPathWithin(folder.uri.fsPath, c.fsPath));
+      const folderConfigUris = configFiles.filter(c => isPathWithin(folder.uri.fsPath, c.fsPath));
+      const subConfigPaths = await filterCacheDirConfigFiles(
+        this.#environment,
+        folder.uri.fsPath,
+        folderConfigUris.map(uri => uri.fsPath),
+      );
+      this.#assertNotDisposed();
+      this.#assertCurrentGeneration(generation);
+      const subConfigUris = folderConfigUris.filter(uri => {
+        const isIncluded = subConfigPaths.includes(uri.fsPath);
+        if (!isIncluded) {
+          this.#logger.logDebug("Ignoring config file in cache directory:", uri.fsPath);
+        }
+        return isIncluded;
+      });
       for (const subConfigUri of subConfigUris) {
         this.#folders.push(this.#createWorkspaceFolderService(folder, subConfigUri));
       }
