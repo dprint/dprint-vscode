@@ -4,6 +4,10 @@ export const DPRINT_CONFIG_FILE_NAMES = ["dprint.json", "dprint.jsonc", ".dprint
 export const DPRINT_EXTENSION_ID = "dprint.dprint";
 /** The scheme of unsaved new documents. */
 export const UNTITLED_SCHEME = "untitled";
+/** The scheme of notebook cell documents. */
+export const NOTEBOOK_CELL_SCHEME = "vscode-notebook-cell";
+/** The notebook type of jupyter notebooks (.ipynb files). */
+export const JUPYTER_NOTEBOOK_TYPE = "jupyter-notebook";
 
 /** Gets if the value (ex. an `editor.defaultFormatter` setting) is this extension's id. */
 export function isDprintExtensionId(value: unknown) {

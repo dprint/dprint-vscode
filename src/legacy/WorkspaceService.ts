@@ -12,17 +12,26 @@ import {
   type LooseFolderConfig,
   resolveLooseFolderConfig,
 } from "../configPaths";
-import { DPRINT_CONFIG_FILE_NAME_GLOB, UNTITLED_SCHEME } from "../constants";
+import { DPRINT_CONFIG_FILE_NAME_GLOB, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
+import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import { Logger } from "../logger";
-import { getUntitledFileName, type LanguageContribution } from "../untitledFileName";
 import { ObjectDisposedError } from "../utils";
 import { refreshOrRestartFolders } from "./folderRefresh";
-import { FolderService } from "./FolderService";
+import { FolderService, type FormatFile } from "./FolderService";
 import { getNoConfigMessage } from "./noConfigMessage";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
+
+/** The files dprint may format a document as. */
+interface FormatFileCandidates {
+  dirPath: string;
+  /** The file names in order of preference. This is never empty. */
+  fileNames: string[];
+  /** The notebook file's path when the document is a notebook cell. */
+  notebookPath?: string;
+}
 
 export interface FolderInfo {
   uri: vscode.Uri;
@@ -88,14 +97,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const filePath = this.#getFormatFilePath(document);
-    const folder = filePath == null
-      ? undefined
-      : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
-    if (filePath == null || folder == null || token.isCancellationRequested) {
+    const resolved = await this.#resolveFormatFile(document);
+    if (resolved == null || token.isCancellationRequested) {
       return [];
     }
-    return folder.provideDocumentFormattingEdits(document, options, token, filePath);
+    return resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file);
   }
 
   async provideDocumentRangeFormattingEdits(
@@ -104,14 +110,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const filePath = this.#getFormatFilePath(document);
-    const folder = filePath == null
-      ? undefined
-      : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
-    if (filePath == null || folder == null || token.isCancellationRequested) {
+    const resolved = await this.#resolveFormatFile(document);
+    if (resolved == null || token.isCancellationRequested) {
       return [];
     }
-    return folder.provideDocumentRangeFormattingEdits(document, range, options, token, filePath);
+    return resolved.folder.provideDocumentRangeFormattingEdits(document, range, options, token, resolved.file);
   }
 
   /**
@@ -156,24 +159,72 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   /**
-   * Gets the file path dprint should format the document as. An untitled document
+   * Resolves the folder to format the document with and the file to format it as.
+   * A document that isn't on the file system is formatted as the first of its
+   * candidate file names that one of the folder's plugins handles.
+   */
+  async #resolveFormatFile(document: vscode.TextDocument) {
+    const candidates = this.#getFormatFileCandidates(document);
+    if (candidates == null) {
+      return undefined;
+    }
+    const firstFilePath = path.join(candidates.dirPath, candidates.fileNames[0]);
+    const folder = await this.#getFolderForUri(vscode.Uri.file(firstFilePath), { notify: true });
+    if (folder == null) {
+      return undefined;
+    }
+    const fileName = candidates.fileNames.find(fileName => folder.hasPluginForFile(fileName))
+      ?? candidates.fileNames[0];
+    const file: FormatFile = {
+      filePath: path.join(candidates.dirPath, fileName),
+      notebookPath: candidates.notebookPath,
+    };
+    return { folder, file };
+  }
+
+  /**
+   * Gets the candidate files dprint should format the document as. An untitled document
    * isn't on the file system, so it's formatted as a file in the first workspace
    * folder (or the home directory) named based on its language.
    */
-  #getFormatFilePath(document: vscode.TextDocument) {
+  #getFormatFileCandidates(document: vscode.TextDocument): FormatFileCandidates | undefined {
+    if (document.uri.scheme === NOTEBOOK_CELL_SCHEME) {
+      return this.#getNotebookCellFormatFileCandidates(document);
+    }
     if (document.uri.scheme !== UNTITLED_SCHEME) {
-      return document.fileName;
+      return { dirPath: path.dirname(document.fileName), fileNames: [path.basename(document.fileName)] };
     }
     const dirPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.#environment.homeDir();
-    const fileName = getUntitledFileName(getLanguageContributions(), document.languageId);
-    if (dirPath == null || fileName == null) {
+    const fileNames = getUntitledFileNames(getLanguageContributions(), document.languageId);
+    if (dirPath == null || fileNames.length === 0) {
       this.#logger.logInfo(
         "Could not determine a file path to format the untitled document with language:",
         document.languageId,
       );
       return undefined;
     }
-    return path.join(dirPath, fileName);
+    return { dirPath, fileNames };
+  }
+
+  /**
+   * A notebook cell is formatted as a file in the notebook's directory named based
+   * on its language, which is how the jupyter plugin formats a notebook's code cells.
+   */
+  #getNotebookCellFormatFileCandidates(document: vscode.TextDocument): FormatFileCandidates | undefined {
+    const notebook = vscode.workspace.notebookDocuments.find(notebook =>
+      notebook.getCells().some(cell => cell.document === document)
+    );
+    const fileNames = getNotebookCellFileNames(getLanguageContributions(), document.languageId);
+    // unsaved notebooks aren't supported because the cli only formats notebooks on the file system
+    if (notebook == null || notebook.uri.scheme !== "file" || fileNames.length === 0) {
+      this.#logger.logInfo(
+        "Could not determine a file path to format the notebook cell with language:",
+        document.languageId,
+      );
+      return undefined;
+    }
+    const notebookPath = notebook.uri.fsPath;
+    return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
   }
 
   async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
