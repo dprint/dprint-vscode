@@ -101,12 +101,13 @@
     "test": "node ./out/test/runTest.js"
   },
   "dependencies": {
+    "@dsherret/which": "^0.7.4",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/glob": "^7.1.4",
     "@types/mocha": "^9.0.0",
-    "@types/node": "^20.14.11",
+    "@types/node": "^20.19.43",
     "@types/vscode": "~1.82.0",
     "@vscode/test-electron": "^2.1.5",
     "@vscode/vsce": "^3.3.2",
@@ -114,7 +115,7 @@
     "glob": "^7.2.0",
     "mocha": "^9.2.2",
     "ovsx": "^1.2.0",
-    "typescript": "^4.6.3"
+    "typescript": "^7.0.2"
   },
   "__metadata": {
     "id": "a71f21fc-951b-4829-92f5-ba423b77109f",

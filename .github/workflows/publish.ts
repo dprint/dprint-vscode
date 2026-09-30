@@ -37,8 +37,9 @@ const verifyVersion = step.dependsOn(installDependencies)({
 
 const packageExtension = step.dependsOn(verifyVersion)({
   name: "Package",
-  // runs the vscode:prepublish script, which builds the extension
-  run: "npx vsce package --out dprint.vsix",
+  // runs the vscode:prepublish script, which bundles the extension and its
+  // dependencies, so node_modules isn't packaged
+  run: "npx vsce package --no-dependencies --out dprint.vsix",
 });
 
 const packageJob = job("package", {
