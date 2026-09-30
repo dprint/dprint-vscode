@@ -6,7 +6,7 @@ import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { getCliEnv } from "./cliEnv";
-import { getCommandLaunchInfo } from "./command";
+import { type DprintCommand, getCommandDisplayText, getCommandLaunchInfo } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -48,16 +48,16 @@ export interface DprintExecutableOptions {
 }
 
 export class DprintExecutable {
-  readonly #cmdPath: string;
+  readonly #command: DprintCommand;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
   readonly #logger: Logger;
 
-  private constructor(cmdPath: string, options: DprintExecutableOptions) {
+  private constructor(command: DprintCommand, options: DprintExecutableOptions) {
     this.#logger = options.logger;
-    this.#cmdPath = cmdPath;
+    this.#command = command;
     this.#cwd = options.cwd;
     this.#configUri = options.configUri;
     this.#env = getCliEnv(process.env, options);
@@ -65,18 +65,18 @@ export class DprintExecutable {
   }
 
   static async create(options: DprintExecutableOptions) {
-    const cmdPath = await DprintExecutable.resolveCmdPath(options);
-    return new DprintExecutable(cmdPath, options);
+    const command = await DprintExecutable.resolveCommand(options);
+    return new DprintExecutable(command, options);
   }
 
-  static async resolveCmdPath(options: DprintExecutableOptions) {
+  static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const { approvedPaths, pathInfo, cwd, logger, environment } = options;
 
     // if a custom path is configured, check approval
     if (pathInfo != null) {
       const approved = await approvedPaths.promptForApproval(pathInfo);
       if (approved) {
-        return getCommandNameOrAbsolutePath(pathInfo.path, cwd);
+        return { kind: "setting", path: pathInfo.path, cwd: cwd?.fsPath };
       }
       // not approved - fall through to regular resolution
     }
@@ -86,16 +86,16 @@ export class DprintExecutable {
     if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
       const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
       if (npmExec != null) {
-        return npmExec;
+        return { kind: "path", path: npmExec };
       }
     }
 
     // fall back to "dprint" command
-    return "dprint";
+    return { kind: "path", path: "dprint" };
   }
 
   get cmdPath() {
-    return this.#cmdPath;
+    return getCommandDisplayText(this.#command);
   }
 
   get initializationFolderUri() {
@@ -107,17 +107,17 @@ export class DprintExecutable {
 
   async checkInstalled() {
     try {
-      await this.#execShell([this.#cmdPath, "-v"], undefined, undefined);
+      await this.#execShell(["-v"], undefined, undefined);
       return true;
     } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.#cmdPath}.`, err);
+      this.#logger.logError(`Problem launching ${this.cmdPath}.`, err);
       return false;
     }
   }
 
   async getEditorInfo() {
     const stdout = await this.#execShell(
-      [this.#cmdPath, "editor-info", ...this.#getConfigArgs()],
+      ["editor-info", ...this.#getConfigArgs()],
       undefined,
       undefined,
     );
@@ -148,7 +148,7 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    const launchInfo = getCommandLaunchInfo(this.#cmdPath, args, process.platform);
+    const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
     return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
@@ -158,15 +158,14 @@ export class DprintExecutable {
   }
 
   #execShell(
-    command: string[],
+    args: string[],
     stdin: string | undefined,
     token: vscode.CancellationToken | undefined,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const [cmd, ...args] = command;
-        const launchInfo = getCommandLaunchInfo(cmd, args, process.platform);
+        const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
         const childProcess = execFile(launchInfo.command, launchInfo.args, {
           cwd: this.#cwd.fsPath,
           env: this.#env,
@@ -200,12 +199,4 @@ export class DprintExecutable {
       return [];
     }
   }
-}
-
-function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) {
-  if (cwd != null && (cmd.startsWith("./") || cmd.startsWith("../"))) {
-    return vscode.Uri.joinPath(cwd, cmd).fsPath;
-  }
-
-  return cmd;
 }

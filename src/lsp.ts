@@ -39,7 +39,7 @@ export function activateLsp(
       const rootUri = vscode.workspace.workspaceFolders?.[0].uri;
       const config = getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []);
 
-      const cmdPath = await DprintExecutable.resolveCmdPath({
+      const command = await DprintExecutable.resolveCommand({
         approvedPaths,
         pathInfo: config.pathInfo,
         cwd: rootUri!,
@@ -52,7 +52,7 @@ export function activateLsp(
       if (config?.verbose) {
         args.push("--verbose");
       }
-      const launchInfo = getCommandLaunchInfo(cmdPath, args, process.platform);
+      const launchInfo = getCommandLaunchInfo(command, args, process.platform);
       const serverOptions: ServerOptions = {
         command: launchInfo.command,
         args: launchInfo.args,
