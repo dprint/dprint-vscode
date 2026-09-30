@@ -6,6 +6,7 @@ import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "./configFile";
 import { RealEnvironment } from "./environment";
 import { getCliEnv } from "./executable/cliEnv";
+import { getCommandLaunchInfo } from "./executable/command";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { ConfigJsonSchemaProvider } from "./legacy/ConfigJsonSchemaProvider";
@@ -51,12 +52,13 @@ export function activateLsp(
       if (config?.verbose) {
         args.push("--verbose");
       }
+      const launchInfo = getCommandLaunchInfo(cmdPath, args, process.platform);
       const serverOptions: ServerOptions = {
-        command: cmdPath,
-        args,
+        command: launchInfo.command,
+        args: launchInfo.args,
         options: {
           env: getCliEnv(process.env, { ensureStableFormat: config.ensureStableFormat }),
-          shell: true,
+          shell: launchInfo.shell,
         },
       };
       const clientOptions: LanguageClientOptions = {

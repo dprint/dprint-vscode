@@ -1,4 +1,4 @@
-import { exec, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -6,6 +6,7 @@ import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
 import { getCliEnv } from "./cliEnv";
+import { getCommandLaunchInfo } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
 export interface EditorInfo {
@@ -147,13 +148,12 @@ export class DprintExecutable {
       args.push("--verbose");
     }
 
-    return spawn(quoteCommandArg(this.#cmdPath), args.map(quoteCommandArg), {
+    const launchInfo = getCommandLaunchInfo(this.#cmdPath, args, process.platform);
+    return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
       env: this.#env,
-      // Set to true, to ensure this resolves properly on windows.
-      // See https://github.com/denoland/vscode_deno/issues/361
-      shell: true,
+      shell: launchInfo.shell,
     });
   }
 
@@ -165,10 +165,13 @@ export class DprintExecutable {
     return new Promise<string>((resolve, reject) => {
       let cancellationDisposable: vscode.Disposable | undefined;
       try {
-        const process = exec(command.map(quoteCommandArg).join(" "), {
+        const [cmd, ...args] = command;
+        const launchInfo = getCommandLaunchInfo(cmd, args, process.platform);
+        const childProcess = execFile(launchInfo.command, launchInfo.args, {
           cwd: this.#cwd.fsPath,
           env: this.#env,
           encoding: "utf8",
+          shell: launchInfo.shell,
         }, (err, stdout, stderr) => {
           if (err) {
             cancellationDisposable?.dispose();
@@ -178,10 +181,10 @@ export class DprintExecutable {
           resolve(stdout.replace(/\r?\n$/, "")); // remove the last newline
           cancellationDisposable?.dispose();
         });
-        cancellationDisposable = token?.onCancellationRequested(() => process.kill());
+        cancellationDisposable = token?.onCancellationRequested(() => childProcess.kill());
         if (stdin != null) {
-          process.stdin!.write(stdin);
-          process.stdin!.end();
+          childProcess.stdin!.write(stdin);
+          childProcess.stdin!.end();
         }
       } catch (err) {
         reject(err);
@@ -205,8 +208,4 @@ function getCommandNameOrAbsolutePath(cmd: string, cwd: vscode.Uri | undefined) 
   }
 
   return cmd;
-}
-
-function quoteCommandArg(arg: string) {
-  return `"${arg.replace(/"/g, "\\\"")}"`;
 }
