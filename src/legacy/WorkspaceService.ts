@@ -87,7 +87,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const filePath = await this.#getFormatFilePath(document);
+    const filePath = this.#getFormatFilePath(document);
     const folder = filePath == null
       ? undefined
       : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
@@ -103,7 +103,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const filePath = await this.#getFormatFilePath(document);
+    const filePath = this.#getFormatFilePath(document);
     const folder = filePath == null
       ? undefined
       : await this.#getFolderForUri(vscode.Uri.file(filePath), { notify: true });
@@ -159,7 +159,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * isn't on the file system, so it's formatted as a file in the first workspace
    * folder (or the home directory) named based on its language.
    */
-  async #getFormatFilePath(document: vscode.TextDocument) {
+  #getFormatFilePath(document: vscode.TextDocument) {
     if (document.uri.scheme !== UNTITLED_SCHEME) {
       return document.fileName;
     }
@@ -172,11 +172,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       );
       return undefined;
     }
-    // The cli can't canonicalize a path that doesn't exist, so it compares it as-is
-    // to the config's canonicalized directory. Use the directory's real path so that
-    // it matches (ex. vscode lowercases the drive letter on Windows).
-    const realDirPath = await this.#environment.realPath(dirPath) ?? dirPath;
-    return path.join(realDirPath, fileName);
+    return path.join(dirPath, fileName);
   }
 
   async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
