@@ -60,7 +60,7 @@
             "null"
           ],
           "default": false,
-          "markdownDescription": "Format a file again until the output stops changing, the same as `dprint fmt`. Some plugins occasionally need more than one pass to reach their final output, but this may double the time it takes to format a file (requires dprint 0.59+).",
+          "markdownDescription": "Format a file again until the output stops changing, the same as `dprint fmt`. Some plugins occasionally need more than one pass to reach their final output, but this may double the time it takes to format a file (requires dprint 0.59.0+).",
           "scope": "resource"
         },
         "dprint.useGlobalConfig": {
