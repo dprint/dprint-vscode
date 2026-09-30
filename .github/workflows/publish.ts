@@ -45,8 +45,9 @@ const publishMarketplace = step.dependsOn(packageExtension)({
 
 const publishOpenVsx = step.dependsOn(packageExtension)({
   name: "Publish to Open VSX",
-  env: { OVSX_PAT: "${{ secrets.OVSX_PAT }}" },
-  run: "npx ovsx publish dprint.vsix",
+  // exchanges the workflow's OIDC token for a short-lived publishing token,
+  // which is configured on open-vsx.org for this workflow file
+  run: "npx ovsx publish dprint.vsix --trusted-publishing",
 });
 
 workflow({
@@ -55,7 +56,7 @@ workflow({
     workflow_dispatch: {},
     push: { tags: ["*.*.*"] },
   },
-  permissions: { contents: "read" },
+  permissions: { contents: "read", "id-token": "write" },
   jobs: [{
     id: "publish",
     name: "publish",

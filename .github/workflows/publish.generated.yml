@@ -8,6 +8,7 @@ on:
       - '*.*.*'
 permissions:
   contents: read
+  id-token: write
 jobs:
   publish:
     name: publish
@@ -37,6 +38,4 @@ jobs:
           VSCE_PAT: '${{ secrets.VSCE_PAT }}'
         run: npx vsce publish --packagePath dprint.vsix
       - name: Publish to Open VSX
-        env:
-          OVSX_PAT: '${{ secrets.OVSX_PAT }}'
-        run: npx ovsx publish dprint.vsix
+        run: npx ovsx publish dprint.vsix --trusted-publishing
