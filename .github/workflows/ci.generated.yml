@@ -43,4 +43,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - name: Lint CI generation
         if: matrix.os == 'ubuntu-latest'
-        run: deno run -A --no-lock .github/workflows/ci.ts --lint
+        run: |-
+          deno run -A --no-lock .github/workflows/ci.ts --lint
+          deno run -A --no-lock .github/workflows/publish.ts --lint
