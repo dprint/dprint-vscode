@@ -8,6 +8,7 @@ import { RealEnvironment } from "./environment";
 import { getCliEnv } from "./executable/cliEnv";
 import { DprintExecutable } from "./executable/DprintExecutable";
 import type { ExtensionBackend } from "./ExtensionBackend";
+import { ConfigJsonSchemaProvider } from "./legacy/ConfigJsonSchemaProvider";
 import type { Logger } from "./logger";
 
 export function activateLsp(
@@ -15,6 +16,13 @@ export function activateLsp(
   approvedPaths: ApprovedConfigPaths,
 ): ExtensionBackend {
   let client: LanguageClient | undefined;
+  // the package.json associates dprint config files with this schema, so provide an
+  // empty one to prevent vscode erroring that it can't load it (the language server
+  // provides completions and hover for config files instead)
+  const emptySchemaProvider = vscode.workspace.registerTextDocumentContentProvider(
+    ConfigJsonSchemaProvider.scheme,
+    { provideTextDocumentContent: () => "{}" },
+  );
 
   const backend: ExtensionBackend = {
     isLsp: true,
@@ -68,6 +76,7 @@ export function activateLsp(
       return backend.reInitialize();
     },
     async dispose() {
+      emptySchemaProvider.dispose();
       const oldClient = client;
       client = undefined;
       await oldClient?.dispose(2_000);
