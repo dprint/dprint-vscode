@@ -6,6 +6,10 @@ import type { Logger } from "../../../logger";
 
 const textDecoder = new TextDecoder();
 
+/** Error a pending read is rejected with when the process it was waiting on failed to spawn. */
+export class SpawnFailedError extends Error {
+}
+
 export class EditorProcess {
   // lazily initialize the process
   private _process: ChildProcessByStdio<Writable, Readable, Readable> | undefined;
@@ -15,6 +19,8 @@ export class EditorProcess {
     reject: (err: unknown) => void;
   } | undefined;
   private _onExitHandlers: (() => void)[] = [];
+  private _onStartListeners: (() => void)[] = [];
+  private _hasSpawnFailed = false;
 
   constructor(private readonly logger: Logger, private readonly dprintExecutable: DprintExecutable) {
   }
@@ -23,25 +29,47 @@ export class EditorProcess {
     return this._process != null;
   }
 
+  /** Whether the last process failed to spawn and no process was started since. */
+  get hasSpawnFailed() {
+    return this._hasSpawnFailed;
+  }
+
   onExit(handler: () => void) {
     this._onExitHandlers.push(handler);
   }
 
   kill() {
+    const process = this._process;
+    if (process == null) {
+      return;
+    }
     try {
-      this._process?.kill();
+      process.kill();
     } catch {
       // ignore
     }
-    this._clearInternal();
+    // the events of a killed process are ignored, so this is where its exit is handled
+    this._handleExit(new Error("Operation cancelled."));
   }
 
   startProcessIfNotRunning() {
     if (this._process == null) {
       this.kill();
+      this._hasSpawnFailed = false;
       this._process = this.createNewProcess();
+      for (const listener of this._onStartListeners.splice(0)) {
+        listener();
+      }
     }
     return this._process;
+  }
+
+  /** Resolves once a process is running, which is right away when one already is. */
+  waitUntilRunning() {
+    if (this._process != null) {
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => this._onStartListeners.push(resolve));
   }
 
   private createNewProcess() {
@@ -67,21 +95,34 @@ export class EditorProcess {
 
     // really dislike this api... just allow me to await a result please
     childProcess.stdout.on("data", data => {
+      if (this._process !== childProcess) {
+        return; // output of a killed process
+      }
       this._bufs.push(data);
       const listener = this._listener;
       this._listener = undefined;
       listener?.resolve();
     });
 
+    // Only the current process is handled, which it stops being once handled here. An event
+    // of a process that was killed or already handled must not clear a newer process.
     childProcess.on("exit", () => {
-      this._clearInternal();
-      for (const handler of this._onExitHandlers) {
-        try {
-          handler();
-        } catch (err) {
-          this.logger.logError("Error in exit handler.", err);
-        }
+      if (this._process === childProcess) {
+        this._handleExit(new Error("Operation cancelled."));
       }
+    });
+    // A process that fails to spawn (ex. the executable or the cwd no longer exists) emits
+    // only this event. Without handling it the process would be considered running forever.
+    childProcess.on("error", err => {
+      this.logger.logError("Editor service process error:", err);
+      if (this._process === childProcess) {
+        this._hasSpawnFailed = true;
+        this._handleExit(new SpawnFailedError("Operation cancelled."));
+      }
+    });
+    // a failed write is reported to the writer, so this only prevents an uncaught exception
+    childProcess.stdin.on("error", err => {
+      this.logger.logDebug("Error writing to the editor service:", err);
     });
 
     this._bufs.length = 0; // clear
@@ -89,12 +130,23 @@ export class EditorProcess {
     return childProcess;
   }
 
-  private _clearInternal() {
+  private _handleExit(readError: Error) {
+    this._clearInternal(readError);
+    for (const handler of this._onExitHandlers) {
+      try {
+        handler();
+      } catch (err) {
+        this.logger.logError("Error in exit handler.", err);
+      }
+    }
+  }
+
+  private _clearInternal(readError: Error) {
     const listener = this._listener;
     this._listener = undefined;
     this._bufs.length = 0; // clear
     this._process = undefined;
-    listener?.reject(new Error("Operation cancelled."));
+    listener?.reject(readError);
   }
 
   async readInt() {
