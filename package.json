@@ -26,6 +26,10 @@
       {
         "command": "dprint.restart",
         "title": "Dprint: Restart"
+      },
+      {
+        "command": "dprint.formatWithGlobalConfig",
+        "title": "Dprint: Format Document (global config)"
       }
     ],
     "configuration": {
@@ -69,7 +73,7 @@
             "null"
           ],
           "default": false,
-          "markdownDescription": "Format files that don't have a dprint configuration file in their directory or an ancestor directory using the global configuration file (created by `dprint init --global`). Only applies to languages where dprint is the default formatter (`#editor.defaultFormatter#`).",
+          "markdownDescription": "Format files that don't have a dprint configuration file in their directory or an ancestor directory using the global configuration file (created by `dprint init --global`). Only applies to languages where dprint is the default formatter (`#editor.defaultFormatter#`). When not enabled, a file can still be formatted using the global configuration file by running the `Dprint: Format Document (global config)` command.",
           "scope": "resource"
         },
         "dprint.verbose": {

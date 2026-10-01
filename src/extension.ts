@@ -34,6 +34,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // reinitialize on workspace folder changes
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.formatWithGlobalConfig", formatWithGlobalConfig));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
   // reinitialize when a configuration file is created or deleted and let the backend handle changes
@@ -98,6 +99,35 @@ export async function activate(context: vscode.ExtensionContext) {
     } catch (err) {
       logger.logError("Error initializing:", err);
       return false;
+    }
+  }
+
+  /** Formats the active document using the global config file. */
+  async function formatWithGlobalConfig() {
+    const editor = vscode.window.activeTextEditor;
+    if (editor == null) {
+      return;
+    }
+    const tokenSource = new vscode.CancellationTokenSource();
+    try {
+      const document = editor.document;
+      const version = document.version;
+      const options: vscode.FormattingOptions = {
+        tabSize: typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4,
+        insertSpaces: editor.options.insertSpaces !== false,
+      };
+      const edits = await backend.provideGlobalConfigFormattingEdits(document, options, tokenSource.token);
+      // the edits don't apply to the document anymore when it changed while formatting
+      if (edits == null || edits.length === 0 || document.version !== version) {
+        return;
+      }
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      workspaceEdit.set(document.uri, edits);
+      await vscode.workspace.applyEdit(workspaceEdit);
+    } catch (err) {
+      logger.logError("Error formatting with the global configuration file:", err);
+    } finally {
+      tokenSource.dispose();
     }
   }
 }

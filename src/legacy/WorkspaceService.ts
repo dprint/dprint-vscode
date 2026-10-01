@@ -118,6 +118,22 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   /**
+   * Formats the document using the global config file when it doesn't have a config
+   * file in an ancestor directory regardless of if the user enabled always using it.
+   */
+  async provideGlobalConfigFormattingEdits(
+    document: vscode.TextDocument,
+    options: vscode.FormattingOptions,
+    token: vscode.CancellationToken,
+  ) {
+    const resolved = await this.#resolveFormatFile(document, { useGlobalConfig: true });
+    if (resolved == null || token.isCancellationRequested) {
+      return [];
+    }
+    return resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file);
+  }
+
+  /**
    * Gets if a plugin can format the file. This starts dprint for the file's config
    * file if necessary, but doesn't notify when there's no config file or it fails.
    */
@@ -163,13 +179,16 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * A document that isn't on the file system is formatted as the first of its
    * candidate file names that one of the folder's plugins handles.
    */
-  async #resolveFormatFile(document: vscode.TextDocument) {
+  async #resolveFormatFile(document: vscode.TextDocument, options: { useGlobalConfig?: boolean } = {}) {
     const candidates = this.#getFormatFileCandidates(document);
     if (candidates == null) {
       return undefined;
     }
     const firstFilePath = path.join(candidates.dirPath, candidates.fileNames[0]);
-    const folder = await this.#getFolderForUri(vscode.Uri.file(firstFilePath), { notify: true });
+    const folder = await this.#getFolderForUri(vscode.Uri.file(firstFilePath), {
+      notify: true,
+      useGlobalConfig: options.useGlobalConfig,
+    });
     if (folder == null) {
       return undefined;
     }
@@ -238,7 +257,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
   }
 
-  async #getFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
+  async #getFolderForUri(uri: vscode.Uri, options: LooseFolderOptions) {
     // wait for the workspace folders so a file in one doesn't get a loose folder
     await this.#waitWorkspaceInitialization();
     if (this.#disposed) {
@@ -255,9 +274,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * Gets a folder for a file not in a workspace folder with a config file. It uses
    * the file's closest ancestor config file or otherwise the global config file.
    */
-  async #getLooseFolderForUri(uri: vscode.Uri, options: { notify: boolean }) {
+  async #getLooseFolderForUri(uri: vscode.Uri, options: LooseFolderOptions) {
     const generation = this.#generation;
-    const { useGlobalConfig } = getDprintConfig(uri);
+    const useGlobalConfig = options.useGlobalConfig ?? getDprintConfig(uri).useGlobalConfig;
     const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
     if (this.#disposed || generation !== this.#generation) {
       return undefined;
@@ -529,6 +548,13 @@ function createConfigFileWatcher(configFilePath: string) {
   return vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(path.dirname(configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
   );
+}
+
+interface LooseFolderOptions {
+  /** Whether to notify when there's no config file or dprint fails to start. */
+  notify: boolean;
+  /** Whether to use the global config file. Defaults to the user's setting. */
+  useGlobalConfig?: boolean;
 }
 
 interface LooseFolderEntry {

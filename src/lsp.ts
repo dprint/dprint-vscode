@@ -1,6 +1,11 @@
 import * as process from "node:process";
 import * as vscode from "vscode";
-import { LanguageClient, type LanguageClientOptions, type ServerOptions } from "vscode-languageclient/node";
+import {
+  DocumentFormattingRequest,
+  LanguageClient,
+  type LanguageClientOptions,
+  type ServerOptions,
+} from "vscode-languageclient/node";
 import type { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig } from "./config";
 import { ancestorDirsContainConfigFile, discoverWorkspaceConfigFiles } from "./configFile";
@@ -57,7 +62,10 @@ export function activateLsp(
         command: launchInfo.command,
         args: launchInfo.args,
         options: {
-          env: getCliEnv(process.env, { ensureStableFormat: config.ensureStableFormat }),
+          env: getCliEnv(process.env, {
+            ensureStableFormat: config.ensureStableFormat,
+            useGlobalConfig: config.useGlobalConfig,
+          }),
           shell: launchInfo.shell,
         },
       };
@@ -76,6 +84,18 @@ export function activateLsp(
     onConfigFileChanged() {
       // the language server is restarted to pick up config changes
       return backend.reInitialize();
+    },
+    async provideGlobalConfigFormattingEdits(document, options, token) {
+      if (client == null) {
+        logger.logWarn("Cannot format because the language server is not running.");
+        return undefined;
+      }
+      // the language server uses the global config file when provided this option (requires dprint 0.59+)
+      const edits = await client.sendRequest(DocumentFormattingRequest.type, {
+        textDocument: client.code2ProtocolConverter.asTextDocumentIdentifier(document),
+        options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces, useGlobalConfig: true },
+      }, token);
+      return await client.protocol2CodeConverter.asTextEdits(edits, token);
     },
     async dispose() {
       emptySchemaProvider.dispose();
