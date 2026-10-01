@@ -9,40 +9,8 @@ export interface DprintExtensionConfigPathInfo {
 export interface DprintExtensionConfig {
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   verbose: boolean;
-  experimentalLsp: boolean;
   useGlobalConfig: boolean;
   ensureStableFormat: boolean;
-}
-
-export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder[]) {
-  const combinedConfig: DprintExtensionConfig = {
-    pathInfo: undefined,
-    verbose: false,
-    experimentalLsp: false,
-    useGlobalConfig: false,
-    ensureStableFormat: false,
-  };
-
-  for (const folder of folders) {
-    const config = getDprintConfig(folder.uri);
-    if (config.verbose) {
-      combinedConfig.verbose = true;
-    }
-    if (config.experimentalLsp) {
-      combinedConfig.experimentalLsp = true;
-    }
-    if (config.useGlobalConfig) {
-      combinedConfig.useGlobalConfig = true;
-    }
-    if (config.ensureStableFormat) {
-      combinedConfig.ensureStableFormat = true;
-    }
-    if (config.pathInfo != null && combinedConfig.pathInfo == null) {
-      combinedConfig.pathInfo = config.pathInfo;
-    }
-  }
-
-  return combinedConfig;
 }
 
 export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
@@ -51,7 +19,6 @@ export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
   return {
     pathInfo,
     verbose: getBool("verbose"),
-    experimentalLsp: getBool("experimentalLsp"),
     useGlobalConfig: getBool("useGlobalConfig"),
     ensureStableFormat: getBool("ensureStableFormat"),
   };

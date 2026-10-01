@@ -53,7 +53,6 @@ export function activateLegacy(
   resourceDisposables.push(vscode.window.onDidChangeVisibleTextEditors(() => scheduleUserDataFilePathsUpdate()));
 
   return {
-    isLsp: false,
     reInitialize,
     onConfigFileChanged: scheduleConfigFileRefresh,
     provideGlobalConfigFormattingEdits(document, range, options, token) {

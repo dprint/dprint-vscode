@@ -6,11 +6,6 @@ export interface CliEnvOptions {
   configDiscovery?: string;
   /** Whether to format again until the output is stable. Defaults to false. */
   ensureStableFormat?: boolean;
-  /**
-   * Whether the language server formats files that don't have a config file in an
-   * ancestor directory using the global config file. Defaults to the cli's default.
-   */
-  useGlobalConfig?: boolean;
 }
 
 /**
@@ -26,9 +21,6 @@ export function getCliEnv(processEnv: NodeJS.ProcessEnv, options: CliEnvOptions)
   }
   if (options.ensureStableFormat) {
     vars.DPRINT_EDITOR_STABLE_FORMAT = "1";
-  }
-  if (options.useGlobalConfig != null) {
-    vars.DPRINT_EDITOR_USE_GLOBAL_CONFIG = options.useGlobalConfig ? "true" : "false";
   }
   return Object.keys(vars).length === 0 ? undefined : { ...processEnv, ...vars };
 }

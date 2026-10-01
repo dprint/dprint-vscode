@@ -53,9 +53,7 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // in an ancestor directory using the global configuration file. When `false`, use the
   // "Dprint: Format Document (global config)" or "Dprint: Format Selection (global config)"
   // command to format a file using it.
-  "dprint.useGlobalConfig": false,
-  // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
-  "dprint.experimentalLsp": false
+  "dprint.useGlobalConfig": false
 }
 ```
 

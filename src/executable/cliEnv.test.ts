@@ -24,17 +24,6 @@ describe("getCliEnv", () => {
     });
   });
 
-  it("sets whether to use the global config", () => {
-    assert.deepStrictEqual(getCliEnv(processEnv, { useGlobalConfig: true }), {
-      PATH: "/bin",
-      DPRINT_EDITOR_USE_GLOBAL_CONFIG: "true",
-    });
-    assert.deepStrictEqual(getCliEnv(processEnv, { useGlobalConfig: false }), {
-      PATH: "/bin",
-      DPRINT_EDITOR_USE_GLOBAL_CONFIG: "false",
-    });
-  });
-
   it("sets multiple variables", () => {
     assert.deepStrictEqual(getCliEnv(processEnv, { configDiscovery: "ignore-descendants", ensureStableFormat: true }), {
       PATH: "/bin",
