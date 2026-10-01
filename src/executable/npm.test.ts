@@ -97,6 +97,60 @@ describe("tryResolveNpmExecutable", () => {
     assert.strictEqual(env.readTextFileSync(tempExePath), env.readTextFileSync(exePath));
   });
 
+  it("resolves the temp executable for every concurrent caller on windows", async () => {
+    const tmpDir = path.resolve("/tmp");
+    const env = new RunningExeTestEnvironment({ platform: "win32", tmpdir: tmpDir });
+    writePnpmLayout(env, "win32-x64", "1.2.0");
+    const subDir = path.join(projectDir, "packages/sub");
+
+    const tempExePath = path.join(tmpDir, "dprint", "win32-x64-1.2.0.exe");
+    const results = await Promise.all([
+      tryResolveNpmExecutable(projectDir, env, createLogger()),
+      tryResolveNpmExecutable(subDir, env, createLogger()),
+      tryResolveNpmExecutable(projectDir, env, createLogger()),
+    ]);
+    assert.deepStrictEqual(results, [tempExePath, tempExePath, tempExePath]);
+    assert.strictEqual(env.copyCount, 1);
+
+    // the in-flight copy is forgotten once it finishes
+    assert.strictEqual(await tryResolveNpmExecutable(projectDir, env, createLogger()), tempExePath);
+    assert.strictEqual(env.copyCount, 1);
+  });
+
+  it("resolves the temp executable when the copy fails because another process created it", async () => {
+    const tmpDir = path.resolve("/tmp");
+    const tempExePath = path.join(tmpDir, "dprint", "win32-x64-1.2.0.exe");
+    const env = new (class extends TestEnvironment {
+      override async atomicCopyFile(from: string, to: string) {
+        // another window finishes its copy and starts running the executable
+        await super.atomicCopyFile(from, to);
+        throw new Error("EPERM: operation not permitted");
+      }
+    })({ platform: "win32", tmpdir: tmpDir });
+    const exePath = writePnpmLayout(env, "win32-x64", "1.2.0");
+
+    assert.strictEqual(await tryResolveNpmExecutable(projectDir, env, createLogger()), tempExePath);
+    assert.strictEqual(env.readTextFileSync(tempExePath), env.readTextFileSync(exePath));
+  });
+
+  it("returns undefined when the copy fails and the temp executable does not exist", async () => {
+    const env = new (class extends TestEnvironment {
+      override atomicCopyFile(): Promise<void> {
+        return Promise.reject(new Error("ENOSPC: no space left on device"));
+      }
+    })({ platform: "win32" });
+    writePnpmLayout(env, "win32-x64", "1.2.0");
+    const errors: string[] = [];
+    const logger: NpmLogger = { ...createLogger(), logError: message => errors.push(message) };
+
+    assert.strictEqual(await tryResolveNpmExecutable(projectDir, env, logger), undefined);
+    assert.deepStrictEqual(errors, ["Error resolving npm executable"]);
+
+    // a failed copy is not remembered
+    assert.strictEqual(await tryResolveNpmExecutable(projectDir, env, logger), undefined);
+    assert.strictEqual(errors.length, 2);
+  });
+
   it("does not copy the executable on windows when the file system is not writable", async () => {
     const env = new TestEnvironment({ platform: "win32", isWritableFileSystem: false });
     const exePath = writePnpmLayout(env, "win32-x64", "1.2.0");
@@ -104,6 +158,21 @@ describe("tryResolveNpmExecutable", () => {
     assert.strictEqual(await tryResolveNpmExecutable(projectDir, env, createLogger()), exePath);
   });
 });
+
+/** Fails a copy over an existing file like Windows does when the target executable is running. */
+class RunningExeTestEnvironment extends TestEnvironment {
+  copyCount = 0;
+
+  override async atomicCopyFile(from: string, to: string) {
+    this.copyCount++;
+    // copying the executable takes a while, which lets the other callers get this far
+    await new Promise(resolve => setImmediate(resolve));
+    if (await this.fileExists(to)) {
+      throw new Error("EPERM: operation not permitted");
+    }
+    await super.atomicCopyFile(from, to);
+  }
+}
 
 function writePnpmLayout(env: TestEnvironment, packageName: string, version: string) {
   const storeNodeModulesDir = path.join(projectDir, `node_modules/.pnpm/dprint@${version}/node_modules`);

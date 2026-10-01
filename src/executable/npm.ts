@@ -22,15 +22,7 @@ export async function tryResolveNpmExecutable(
       // On windows we want to copy the dprint executable to a temporary directory and run
       // it from there so that if someone goes to delete their node_modules folder it won't
       // stop them from doing so because the dprint executable is in use by us.
-      const tempDir = path.join(env.tmpdir(), "dprint");
-      await env.mkdir(tempDir);
-      const tempFile = path.join(tempDir, `${packageName}-${nodeModulesExec.version}.exe`);
-      if (await env.fileExists(tempFile)) {
-        return tempFile;
-      }
-      logger.logDebug("Copying npm executable at", nodeModulesExec.path, "to", tempFile);
-      await env.atomicCopyFile(nodeModulesExec.path, tempFile);
-      return tempFile;
+      return await copyToTempDir(nodeModulesExec, packageName, env, logger);
     } else {
       return nodeModulesExec.path;
     }
@@ -130,6 +122,47 @@ async function tryResolvePlatformPackage(
   } catch (err) {
     logger.logWarn("Failed resolving package.json", pkgJsonPath, " - Error:", err);
     return undefined;
+  }
+}
+
+/** Copies to the temp directory that are in progress, keyed by the temp file's path. */
+const pendingTempCopies = new Map<string, Promise<void>>();
+
+async function copyToTempDir(
+  exec: NpmExecutable,
+  packageName: string,
+  env: Environment,
+  logger: NpmLogger,
+) {
+  const tempDir = path.join(env.tmpdir(), "dprint");
+  await env.mkdir(tempDir);
+  const tempFile = path.join(tempDir, `${packageName}-${exec.version}.exe`);
+  if (await env.fileExists(tempFile)) {
+    return tempFile;
+  }
+  // Folders resolve their executable in parallel, so share the copy between them. Otherwise
+  // the later copy would fail to replace an executable that the first folder is now running.
+  let pendingCopy = pendingTempCopies.get(tempFile);
+  if (pendingCopy == null) {
+    logger.logDebug("Copying npm executable at", exec.path, "to", tempFile);
+    pendingCopy = copyUnlessExists(exec.path, tempFile, env, logger)
+      .finally(() => pendingTempCopies.delete(tempFile));
+    pendingTempCopies.set(tempFile, pendingCopy);
+  }
+  await pendingCopy;
+  return tempFile;
+}
+
+async function copyUnlessExists(from: string, to: string, env: Environment, logger: NpmLogger) {
+  try {
+    await env.atomicCopyFile(from, to);
+  } catch (err) {
+    // something else (ex. another window) may have made the copy in the meantime
+    // and be running it, which prevents replacing it
+    if (!await env.fileExists(to)) {
+      throw err;
+    }
+    logger.logDebug("Using npm executable at", to, "that was created while copying to it. Copy error:", err);
   }
 }
 
