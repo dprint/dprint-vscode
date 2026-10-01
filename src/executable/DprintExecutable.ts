@@ -13,6 +13,7 @@ import {
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  isCwdDependentSettingPath,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -43,8 +44,13 @@ export interface DprintExecutableOptions {
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
-  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
-  resolveNpmExecutable?: boolean;
+  /**
+   * Whether a dprint executable may be resolved from the cwd, which is one found in
+   * node_modules or a `dprint.path` setting that depends on the directory it's run in
+   * (ex. a relative path). This should be false for a directory the user didn't open
+   * (ex. the directory of a file outside the workspace). Defaults to true.
+   */
+  resolveExecutableFromCwd?: boolean;
   /** Directory to start searching node_modules for a dprint executable from. Defaults to the cwd. */
   npmSearchDir?: vscode.Uri;
   /** The cli's config discovery mode. Defaults to the cli's default. */
@@ -195,9 +201,16 @@ export class DprintExecutable {
 
 async function getCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
   const { approvedPaths, pathInfo, cwd, logger, environment } = options;
+  const resolveExecutableFromCwd = options.resolveExecutableFromCwd ?? true;
 
-  // if a custom path is configured, check approval
-  if (pathInfo != null) {
+  if (pathInfo != null && !resolveExecutableFromCwd && isCwdDependentSettingPath(pathInfo.path)) {
+    // don't run an executable from a directory the user didn't open
+    logger.logWarn(
+      `Ignoring the "dprint.path" setting in ${cwd?.fsPath} because the setting depends on`
+        + " the directory it's used in and that directory is outside the workspace.",
+    );
+  } else if (pathInfo != null) {
+    // if a custom path is configured, check approval
     const approved = await approvedPaths.promptForApproval(pathInfo);
     if (approved) {
       // on Windows, dprint is usually launched without cmd.exe, so expand the setting like it would
@@ -214,7 +227,7 @@ async function getCommand(options: DprintExecutableOptions): Promise<DprintComma
 
   // attempt to use the npm executable if it exists
   const npmSearchDir = options.npmSearchDir ?? cwd;
-  if (npmSearchDir != null && (options.resolveNpmExecutable ?? true)) {
+  if (npmSearchDir != null && resolveExecutableFromCwd) {
     const npmExec = await tryResolveNpmExecutable(npmSearchDir.fsPath, environment, logger);
     if (npmExec != null) {
       return { kind: "path", path: npmExec };

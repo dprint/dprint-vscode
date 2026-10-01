@@ -16,8 +16,11 @@ export interface FolderServiceOptions {
   /** Directory to run dprint in. */
   cwd: vscode.Uri;
   configUri: vscode.Uri | undefined;
-  /** Whether to use a dprint executable found in node_modules. Defaults to true. */
-  resolveNpmExecutable?: boolean;
+  /**
+   * Whether a dprint executable may be resolved from the cwd (ex. one in node_modules).
+   * This should be false for a directory the user didn't open. Defaults to true.
+   */
+  resolveExecutableFromCwd?: boolean;
   /** The cli's config discovery mode. Defaults to the cli's default. */
   configDiscovery?: ConfigDiscovery;
   /** Whether to show a notification on errors. Defaults to only when there's a config file. */
@@ -43,7 +46,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #environment: Environment;
   readonly #cwd: vscode.Uri;
   readonly #configUri: vscode.Uri | undefined;
-  readonly #resolveNpmExecutable: boolean;
+  readonly #resolveExecutableFromCwd: boolean;
   readonly #configDiscovery: ConfigDiscovery | undefined;
   readonly #notifyOnError: boolean;
   #disposed = false;
@@ -57,7 +60,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = opts.logger;
     this.#cwd = opts.cwd;
     this.#configUri = opts.configUri;
-    this.#resolveNpmExecutable = opts.resolveNpmExecutable ?? true;
+    this.#resolveExecutableFromCwd = opts.resolveExecutableFromCwd ?? true;
     this.#configDiscovery = opts.configDiscovery;
     this.#notifyOnError = opts.notifyOnError ?? opts.configUri != null;
     this.#environment = new RealEnvironment(this.#logger);
@@ -296,7 +299,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       pathInfo: config.pathInfo,
       cwd: this.#cwd,
       configUri: this.#configUri,
-      resolveNpmExecutable: this.#resolveNpmExecutable,
+      resolveExecutableFromCwd: this.#resolveExecutableFromCwd,
       // search from the config file's directory so that a project in a sub directory
       // uses the dprint installed in its own node_modules folder
       npmSearchDir: this.uri,

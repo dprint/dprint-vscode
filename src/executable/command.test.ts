@@ -4,6 +4,7 @@ import {
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  isCwdDependentSettingPath,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -72,6 +73,41 @@ describe("getCommandLaunchInfo", () => {
       getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.bat", cwd: "C:\\project" }, ["-v"], "win32").command,
       "\"C:\\project\\bin\\dprint.bat\" \"-v\"",
     );
+  });
+});
+
+describe("isCwdDependentSettingPath", () => {
+  it("is true for relative paths", () => {
+    assert.strictEqual(isCwdDependentSettingPath("./node_modules/.bin/dprint"), true);
+    assert.strictEqual(isCwdDependentSettingPath("../bin/dprint"), true);
+    assert.strictEqual(isCwdDependentSettingPath("node_modules/.bin/dprint"), true);
+    assert.strictEqual(isCwdDependentSettingPath(".\\node_modules\\.bin\\dprint.cmd"), true);
+    assert.strictEqual(isCwdDependentSettingPath("tools\\dprint.exe"), true);
+  });
+
+  it("is true when substituting a command", () => {
+    assert.strictEqual(isCwdDependentSettingPath("$(yarn bin dprint)"), true);
+    assert.strictEqual(isCwdDependentSettingPath("/usr/bin/$(echo dprint)"), true);
+    assert.strictEqual(isCwdDependentSettingPath("`yarn bin dprint`"), true);
+  });
+
+  it("is false for absolute paths", () => {
+    assert.strictEqual(isCwdDependentSettingPath("/usr/bin/dprint"), false);
+    assert.strictEqual(isCwdDependentSettingPath("C:\\tools\\dprint.exe"), false);
+    assert.strictEqual(isCwdDependentSettingPath("c:/tools/dprint.exe"), false);
+    assert.strictEqual(isCwdDependentSettingPath("\\\\server\\share\\dprint.exe"), false);
+  });
+
+  it("is false for paths in the home directory or an environment variable", () => {
+    assert.strictEqual(isCwdDependentSettingPath("~/bin/dprint"), false);
+    assert.strictEqual(isCwdDependentSettingPath("$HOME/bin/dprint"), false);
+    assert.strictEqual(isCwdDependentSettingPath("${HOME}/bin/dprint"), false);
+    assert.strictEqual(isCwdDependentSettingPath("%USERPROFILE%\\bin\\dprint.exe"), false);
+  });
+
+  it("is false for a command name", () => {
+    assert.strictEqual(isCwdDependentSettingPath("dprint"), false);
+    assert.strictEqual(isCwdDependentSettingPath("dprint-custom.exe"), false);
   });
 });
 

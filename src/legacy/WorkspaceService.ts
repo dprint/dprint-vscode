@@ -352,8 +352,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       approvedPaths: this.#approvedPaths,
       cwd: vscode.Uri.file(cwd),
       configUri: undefined,
-      // don't run executables from arbitrary node_modules folders outside the workspace
-      resolveNpmExecutable: false,
+      // don't run executables from arbitrary folders outside the workspace (ex. one in
+      // its node_modules folder or one a relative "dprint.path" setting resolves to there)
+      resolveExecutableFromCwd: false,
       // the extension resolves the config file itself, so don't let the cli fall back
       // to the global config file (ex. when the config file is deleted while running)
       configDiscovery: isGlobalConfig ? undefined : "ignore-descendants",
