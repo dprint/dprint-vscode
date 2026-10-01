@@ -108,7 +108,7 @@
     "run:extension": "code --extensionDevelopmentPath=.",
     "watch": "npm run compile -- --watch",
     "test:unit": "tsc -p tsconfig.unit.json && node --test \"out/unit/**/*.test.js\"",
-    "pretest": "tsc -p ./",
+    "pretest": "tsc -p ./ && npm run compile",
     "test": "node ./out/test/runTest.js"
   },
   "dependencies": {
@@ -119,7 +119,7 @@
     "@types/mocha": "^9.0.0",
     "@types/node": "^20.19.43",
     "@types/vscode": "~1.82.0",
-    "@vscode/test-electron": "^2.1.5",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.3.2",
     "esbuild": "^0.14.29",
     "glob": "^7.2.0",

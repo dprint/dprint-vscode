@@ -66,6 +66,11 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 1. `npm install`
 2. Go to "Run and debug" in VS code and run the "Run Extension" task.
 
+To run the tests:
+
+- `npm run test:unit` - Runs the unit tests.
+- `npm test` - Runs the integration tests in a downloaded copy of VS Code. This requires `dprint` to be on the path. Set the `DPRINT_TEST_VSCODE_EXECUTABLE` environment variable to use an existing VS Code executable instead of downloading one.
+
 ## Release Notes
 
 ### 0.17.2

@@ -40,6 +40,34 @@ const unitTests = step.dependsOn(installDependencies)({
   run: "npm run test:unit",
 });
 
+// the integration tests run the dprint that's on the path
+const installDprint = step({
+  name: "Install dprint",
+  shell: "bash",
+  run: [
+    `if [ "$RUNNER_OS" = "Windows" ]; then`,
+    `  pwsh -Command "iwr https://dprint.dev/install.ps1 -useb | iex"`,
+    `  echo "$USERPROFILE\\\\.dprint\\\\bin" >> "$GITHUB_PATH"`,
+    `else`,
+    `  curl -fsSL https://dprint.dev/install.sh | sh`,
+    `  echo "$HOME/.dprint/bin" >> "$GITHUB_PATH"`,
+    `fi`,
+  ],
+});
+
+const integrationTests = step.dependsOn(installDependencies, installDprint)({
+  name: "Integration tests",
+  shell: "bash",
+  run: [
+    // vscode needs a display, which the Linux runner doesn't have
+    `if [ "$RUNNER_OS" = "Linux" ]; then`,
+    `  xvfb-run -a npm test`,
+    `else`,
+    `  npm test`,
+    `fi`,
+  ],
+});
+
 const checkFormatting = step.dependsOn(checkout).if(isLinux)({
   name: "Check formatting",
   uses: "dprint/check@v2.5",
@@ -72,7 +100,7 @@ workflow({
       matrix,
       failFast: false,
     },
-    steps: [typeCheck, build, unitTests, checkFormatting, lintCiGeneration],
+    steps: [typeCheck, build, unitTests, integrationTests, checkFormatting, lintCiGeneration],
   }],
 }).writeOrLint({
   filePath: new URL("./ci.generated.yml", import.meta.url),
