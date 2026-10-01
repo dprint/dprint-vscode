@@ -1,3 +1,23 @@
+const pluginConfigOverrideSchema = {
+  type: "object",
+  required: ["files"],
+  minProperties: 2,
+  properties: {
+    files: {
+      description: "File patterns this override applies to.",
+      anyOf: [{
+        type: "string",
+      }, {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "string",
+        },
+      }],
+    },
+  },
+};
+
 /** Schema for the properties the CLI accepts in every plugin's configuration. */
 export const defaultPluginConfigSchema = {
   description: "Plugin configuration.",
@@ -17,6 +37,13 @@ export const defaultPluginConfigSchema = {
         items: {
           type: "string",
         },
+      }],
+    },
+    overrides: {
+      description: "Plugin configuration overrides for specific file patterns.",
+      anyOf: [pluginConfigOverrideSchema, {
+        type: "array",
+        items: pluginConfigOverrideSchema,
       }],
     },
   },

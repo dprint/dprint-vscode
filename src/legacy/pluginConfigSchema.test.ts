@@ -2,6 +2,34 @@ import * as assert from "node:assert";
 import { describe, it } from "node:test";
 import { defaultPluginConfigSchema, getPluginConfigSchema } from "./pluginConfigSchema";
 
+describe("defaultPluginConfigSchema", () => {
+  it("has the properties the cli handles for every plugin", () => {
+    assert.deepStrictEqual(Object.keys(defaultPluginConfigSchema.properties).sort(), [
+      "associations",
+      "locked",
+      "overrides",
+    ]);
+  });
+
+  it("accepts a single override or an array of overrides that have files", () => {
+    const overrideSchema = {
+      type: "object",
+      required: ["files"],
+      minProperties: 2,
+      properties: {
+        files: {
+          description: "File patterns this override applies to.",
+          anyOf: [{ type: "string" }, { type: "array", minItems: 1, items: { type: "string" } }],
+        },
+      },
+    };
+    assert.deepStrictEqual(defaultPluginConfigSchema.properties.overrides.anyOf, [
+      overrideSchema,
+      { type: "array", items: overrideSchema },
+    ]);
+  });
+});
+
 describe("getPluginConfigSchema", () => {
   const url = "https://plugins.dprint.dev/example/schema.json";
 
