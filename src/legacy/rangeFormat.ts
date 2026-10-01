@@ -30,8 +30,31 @@ export function expandToLines(text: string, range: OffsetRange): OffsetRange {
  *
  * Plugins may format the whole file instead of only the range, so this
  * returns undefined when the formatted text has changes outside the range.
+ *
+ * The editor owns the line endings of a document, so a difference in only the
+ * line endings (ex. a plugin that emits LF for a CRLF document) is not a change
+ * and the edit's text uses the line endings of the original text.
  */
 export function getRangeFormatEdit(
+  originalText: string,
+  formattedText: string,
+  range: OffsetRange,
+): RangeFormatEdit | undefined {
+  const normalizedText = normalizeToSourceLineEndings(originalText, formattedText);
+  return getEditForRange(originalText, normalizedText, range)
+    // text with mixed line endings can't be matched after converting, so compare it as-is
+    ?? getEditForRange(originalText, formattedText, range);
+}
+
+/**
+ * Gets if the edit replaces the range with the text it already has, which
+ * happens when the formatted text differs only in its line endings.
+ */
+export function isNoChangeEdit(originalText: string, edit: RangeFormatEdit) {
+  return originalText.slice(edit.start, edit.end) === edit.newText;
+}
+
+function getEditForRange(
   originalText: string,
   formattedText: string,
   range: OffsetRange,
@@ -50,4 +73,17 @@ export function getRangeFormatEdit(
     end: range.end,
     newText: formattedText.slice(prefix.length, formattedText.length - suffix.length),
   };
+}
+
+/**
+ * Converts the line endings of the formatted text to the ones the source
+ * text uses, which is determined by the source text's first line ending.
+ */
+function normalizeToSourceLineEndings(sourceText: string, formattedText: string) {
+  const lineBreakIndex = sourceText.indexOf("\n");
+  if (lineBreakIndex === -1) {
+    return formattedText; // can't tell what the source uses, so leave it alone
+  }
+  const sourceUsesCrlf = lineBreakIndex > 0 && sourceText[lineBreakIndex - 1] === "\r";
+  return formattedText.replace(/\r?\n/g, sourceUsesCrlf ? "\r\n" : "\n");
 }

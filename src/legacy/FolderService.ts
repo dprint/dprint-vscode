@@ -9,7 +9,7 @@ import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { trimFormattedCellText } from "./notebookCellText";
-import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
+import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;
@@ -256,6 +256,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         const edit = getRangeFormatEdit(fileText, newText, offsetRange);
         if (edit == null) {
           this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
+          return [];
+        }
+        if (isNoChangeEdit(fileText, edit)) {
+          this.#logger.logDebug("Response - Formatted (No change):", filePath);
           return [];
         }
         const editRange = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
