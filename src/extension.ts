@@ -10,7 +10,7 @@ import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
 
-/** The context key for if the command to format using the global config file is shown. */
+/** The context key for if the commands to format using the global config file are shown. */
 const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
 
 class GlobalPluginState {
@@ -40,9 +40,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // reinitialize on workspace folder changes
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.formatWithGlobalConfig", formatWithGlobalConfig));
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dprint.formatWithGlobalConfig",
+      () => formatWithGlobalConfig({ selection: false }),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dprint.formatSelectionWithGlobalConfig",
+      () => formatWithGlobalConfig({ selection: true }),
+    ),
+  );
 
-  // only show the command to format using the global config file for files it would be used for
+  // only show the commands to format using the global config file for files it would be used for
   // cached so that changing the active editor doesn't always hit the file system
   const ancestorConfigFileCache = new AncestorConfigFileCache(new RealEnvironment(logger));
   let canFormatWithGlobalConfigUpdateId = 0;
@@ -156,12 +167,13 @@ export async function activate(context: vscode.ExtensionContext) {
     return await ancestorConfigFileCache.find(dirPath) == null;
   }
 
-  /** Formats the active document using the global config file. */
-  async function formatWithGlobalConfig() {
+  /** Formats the active document or its selection using the global config file. */
+  async function formatWithGlobalConfig(opts: { selection: boolean }) {
     const editor = vscode.window.activeTextEditor;
-    if (editor == null) {
+    if (editor == null || opts.selection && editor.selection.isEmpty) {
       return;
     }
+    const range = opts.selection ? editor.selection : undefined;
     const tokenSource = new vscode.CancellationTokenSource();
     try {
       const document = editor.document;
@@ -170,7 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
         tabSize: typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4,
         insertSpaces: editor.options.insertSpaces !== false,
       };
-      const edits = await backend.provideGlobalConfigFormattingEdits(document, options, tokenSource.token);
+      const edits = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
       // the edits don't apply to the document anymore when it changed while formatting
       if (edits == null || edits.length === 0 || document.version !== version) {
         return;

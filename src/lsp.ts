@@ -2,6 +2,7 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 import {
   DocumentFormattingRequest,
+  DocumentRangeFormattingRequest,
   LanguageClient,
   type LanguageClientOptions,
   type ServerOptions,
@@ -85,16 +86,21 @@ export function activateLsp(
       // the language server is restarted to pick up config changes
       return backend.reInitialize();
     },
-    async provideGlobalConfigFormattingEdits(document, options, token) {
+    async provideGlobalConfigFormattingEdits(document, range, options, token) {
       if (client == null) {
         logger.logWarn("Cannot format because the language server is not running.");
         return undefined;
       }
       // the language server uses the global config file when provided this option (requires dprint 0.59+)
-      const edits = await client.sendRequest(DocumentFormattingRequest.type, {
-        textDocument: client.code2ProtocolConverter.asTextDocumentIdentifier(document),
-        options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces, useGlobalConfig: true },
-      }, token);
+      const textDocument = client.code2ProtocolConverter.asTextDocumentIdentifier(document);
+      const formattingOptions = { tabSize: options.tabSize, insertSpaces: options.insertSpaces, useGlobalConfig: true };
+      const edits = range == null
+        ? await client.sendRequest(DocumentFormattingRequest.type, { textDocument, options: formattingOptions }, token)
+        : await client.sendRequest(DocumentRangeFormattingRequest.type, {
+          textDocument,
+          range: client.code2ProtocolConverter.asRange(range),
+          options: formattingOptions,
+        }, token);
       return await client.protocol2CodeConverter.asTextEdits(edits, token);
     },
     async dispose() {

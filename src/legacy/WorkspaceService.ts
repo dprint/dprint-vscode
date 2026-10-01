@@ -118,11 +118,13 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   /**
-   * Formats the document using the global config file when it doesn't have a config
-   * file in an ancestor directory regardless of if the user enabled always using it.
+   * Formats the document, or only the range when provided, using the global config
+   * file when the document doesn't have a config file in an ancestor directory
+   * regardless of if the user enabled always using it.
    */
   async provideGlobalConfigFormattingEdits(
     document: vscode.TextDocument,
+    range: vscode.Range | undefined,
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
@@ -130,7 +132,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     if (resolved == null || token.isCancellationRequested) {
       return [];
     }
-    return resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file);
+    return range == null
+      ? resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file)
+      : resolved.folder.provideDocumentRangeFormattingEdits(document, range, options, token, resolved.file);
   }
 
   /**

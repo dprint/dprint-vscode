@@ -6,12 +6,14 @@ export interface ExtensionBackend extends vscode.Disposable {
   /** Called when a config file's contents change (not when one is created or deleted). */
   onConfigFileChanged(): Promise<void>;
   /**
-   * Gets the edits for formatting the document using the global config file when the
-   * document doesn't have a config file in an ancestor directory. This is for explicitly
-   * formatting using the global config file when the user hasn't enabled always using it.
+   * Gets the edits for formatting the document, or only the range when provided, using
+   * the global config file when the document doesn't have a config file in an ancestor
+   * directory. This is for explicitly formatting using the global config file when the
+   * user hasn't enabled always using it.
    */
   provideGlobalConfigFormattingEdits(
     document: vscode.TextDocument,
+    range: vscode.Range | undefined,
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[] | undefined>;
