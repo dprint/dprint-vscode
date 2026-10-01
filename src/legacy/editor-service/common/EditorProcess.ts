@@ -73,7 +73,12 @@ export class EditorProcess {
       listener?.resolve();
     });
 
-    childProcess.on("exit", () => {
+    let hasExited = false;
+    const onExit = () => {
+      if (hasExited) {
+        return;
+      }
+      hasExited = true;
       this._clearInternal();
       for (const handler of this._onExitHandlers) {
         try {
@@ -82,6 +87,17 @@ export class EditorProcess {
           this.logger.logError("Error in exit handler.", err);
         }
       }
+    };
+    childProcess.on("exit", onExit);
+    // A process that fails to spawn (ex. the executable or the cwd no longer exists) emits
+    // only this event. Without handling it the process would be considered running forever.
+    childProcess.on("error", err => {
+      this.logger.logError("Editor service process error:", err);
+      onExit();
+    });
+    // a failed write is reported to the writer, so this only prevents an uncaught exception
+    childProcess.stdin.on("error", err => {
+      this.logger.logDebug("Error writing to the editor service:", err);
     });
 
     this._bufs.length = 0; // clear

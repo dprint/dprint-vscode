@@ -30,6 +30,11 @@ export class EditorService5 implements EditorService {
     this.startReadingStdout();
   }
 
+  /** The number of requests that are waiting on a response from the process. */
+  get pendingMessageCount() {
+    return this._pendingMessages.size;
+  }
+
   private async startReadingStdout() {
     while (!this._disposed) {
       try {
@@ -123,12 +128,8 @@ export class EditorService5 implements EditorService {
   canFormat(filePath: string) {
     const message = this.getMessageForKind(MessageKind.CanFormat);
     message.addPart(textEncoder.encode(filePath));
-    const buf = message.build();
     this.startProcessIfNotRunning();
-    return new Promise<boolean>(async (resolve, reject) => {
-      this._pendingMessages.store(message.id, { resolve, reject });
-      await this._process.writeBuffer(buf);
-    });
+    return this.sendRequest<boolean>(message);
   }
 
   formatText(filePath: string, fileText: string, range: ByteRange | undefined, token: vscode.CancellationToken) {
@@ -139,28 +140,20 @@ export class EditorService5 implements EditorService {
     message.addPart(range?.end ?? encodedFileText.byteLength); // end byte index
     message.addPart(new Uint8Array(0)); // override config
     message.addPart(encodedFileText);
-    const buf = message.build();
     this.startProcessIfNotRunning();
-    return new Promise<string | undefined>(async (resolve, reject) => {
-      const disposable = token.onCancellationRequested(() => {
-        resolve(undefined);
-        disposable.dispose();
-        this.cancelFormat(message.id).catch(_err => {
-          // ignore
-        });
+    const request = this.sendRequest<string | undefined>(message);
+    const disposable = token.onCancellationRequested(() => {
+      // the process doesn't respond to a cancelled format, so stop waiting on it here
+      const pendingMessage = this._pendingMessages.take(message.id);
+      if (pendingMessage == null) {
+        return; // already finished
+      }
+      pendingMessage.resolve(undefined);
+      this.cancelFormat(message.id).catch(_err => {
+        // ignore
       });
-      this._pendingMessages.store(message.id, {
-        resolve: (value) => {
-          resolve(value);
-          disposable.dispose();
-        },
-        reject: (err) => {
-          reject(err);
-          disposable.dispose();
-        },
-      });
-      await this._process.writeBuffer(buf);
     });
+    return request.finally(() => disposable.dispose());
   }
 
   private async cancelFormat(messageId: number) {
@@ -190,11 +183,24 @@ export class EditorService5 implements EditorService {
 
   private gracefulClose() {
     const message = this.getMessageForKind(MessageKind.ShutDownProcess);
+    return this.sendRequest<void>(message);
+  }
+
+  /** Sends the message, resolving with its response and rejecting when it could not be written. */
+  private sendRequest<T>(message: Message) {
     const buf = message.build();
-    return new Promise<void>(async (resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       this._pendingMessages.store(message.id, { resolve, reject });
-      await this._process.writeBuffer(buf);
+      this.writeBuffer(buf).catch(err => {
+        // no response will arrive for a message that was not sent
+        this._pendingMessages.take(message.id)?.reject(err);
+      });
     });
+  }
+
+  /** Writes to the process, rejecting instead of throwing when it's not running. */
+  private async writeBuffer(buf: Buffer) {
+    await this._process.writeBuffer(buf);
   }
 
   private getMessageForKind(kind: MessageKind) {
@@ -229,6 +235,10 @@ interface PendingMessage {
 
 class PendingMessages {
   #pending = new Map<number, PendingMessage>();
+
+  get size() {
+    return this.#pending.size;
+  }
 
   store(mesageId: number, pendingMessage: PendingMessage) {
     this.#pending.set(mesageId, pendingMessage);
