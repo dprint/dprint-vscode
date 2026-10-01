@@ -141,7 +141,8 @@ async function copyToTempDir(
     return tempFile;
   }
   // Folders resolve their executable in parallel, so share the copy between them. Otherwise
-  // the later copy would fail to replace an executable that the first folder is now running.
+  // each folder makes its own copy and a later one can fail to move its copy over the
+  // executable an earlier one created and is now running.
   let pendingCopy = pendingTempCopies.get(tempFile);
   if (pendingCopy == null) {
     logger.logDebug("Copying npm executable at", exec.path, "to", tempFile);
@@ -157,8 +158,9 @@ async function copyUnlessExists(from: string, to: string, env: Environment, logg
   try {
     await env.atomicCopyFile(from, to);
   } catch (err) {
-    // something else (ex. another window) may have made the copy in the meantime
-    // and be running it, which prevents replacing it
+    // Something else (ex. another window) may have made the copy in the meantime and be
+    // running it, which can prevent replacing it. Note that VS Code retries a rename that
+    // fails for that reason for about a minute on Windows, so this is only reached after that.
     if (!await env.fileExists(to)) {
       throw err;
     }
