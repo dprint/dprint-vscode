@@ -61,15 +61,6 @@
           "markdownDescription": "Format a file again until the output stops changing, the same as `dprint fmt`. Some plugins occasionally need more than one pass to reach their final output, but this may double the time it takes to format a file (requires dprint 0.59+).",
           "scope": "resource"
         },
-        "dprint.experimentalLsp": {
-          "type": [
-            "boolean",
-            "null"
-          ],
-          "default": false,
-          "markdownDescription": "Use dprint's experimental LSP (requires dprint 0.45+)",
-          "scope": "resource"
-        },
         "dprint.path": {
           "type": [
             "string",
@@ -121,8 +112,7 @@
     "test": "node ./out/test/runTest.js"
   },
   "dependencies": {
-    "@dsherret/which": "^0.7.4",
-    "vscode-languageclient": "^9.0.1"
+    "@dsherret/which": "^0.7.4"
   },
   "devDependencies": {
     "@types/glob": "^7.1.4",

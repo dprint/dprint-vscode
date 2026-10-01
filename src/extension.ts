@@ -1,14 +1,13 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
-import { getCombinedDprintConfig, getDprintConfig } from "./config";
+import { getDprintConfig } from "./config";
 import { AncestorConfigFileCache } from "./configPaths";
 import { DPRINT_CONFIG_FILEPATH_GLOB, FILE_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
-import { activateLsp } from "./lsp";
 
 /** The context key for if the commands to format using the global config file are shown. */
 const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
@@ -83,31 +82,10 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(fileSystemWatcher.onDidDelete(onConfigFilesMaybeChanged));
 
   // reinitialize when the vscode configuration changes
-  let hasShownLspWarning = false;
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
       updateCanFormatWithGlobalConfig();
-      if (isLsp() !== backend?.isLsp && !hasShownLspWarning) {
-        // I tried really hard to not have to reload, but having everything clean up
-        // properly was a pain and I think there might be stuff going on in the
-        // vscode-languageclient that I don't know about. So, just prompt the user
-        // to reload the vscode window when they change this option.
-        // https://stackoverflow.com/a/47189404/188246
-        const action = "Reload";
-        vscode.window.showInformationMessage(
-          "Changing dprint.experimentalLsp requires reloading the vscode window.",
-          action,
-        ).then(selectedAction => {
-          if (selectedAction === action) {
-            vscode.commands.executeCommand("workbench.action.reloadWindow");
-          }
-        });
-
-        hasShownLspWarning = true;
-      } else {
-        hasShownLspWarning = false;
-        await reInitializeBackend();
-      }
+      await reInitializeBackend();
     }
   }));
 
@@ -213,9 +191,18 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
     const approvedPaths = new ApprovedConfigPaths(context);
-    backend = isLsp()
-      ? activateLsp(logger, approvedPaths)
-      : activateLegacy(logger, approvedPaths);
+    // The extension formats using dprint's editor service (`dprint editor-service`). There
+    // used to be an experimental backend that used dprint's language server (`dprint lsp`)
+    // instead, but it was removed because a language server isn't a good fit here:
+    // - It needs a copy of every open document that's kept up to date as the user types
+    //   because a format request doesn't have the document's text, whereas the editor
+    //   service is only sent a document's text when formatting it.
+    // - What the extension does on top of formatting (ex. a dprint process per config
+    //   file, only being a formatter for the files of folders with a config file, untitled
+    //   documents, notebook cells, and the global config file) is done with vscode's api,
+    //   so the language server needed its own way of doing each of those.
+    // - It required bundling a language client, which made the extension much larger.
+    backend = activateLegacy(logger, approvedPaths);
   } catch (err) {
     outputChannel?.dispose();
     throw err;
@@ -227,8 +214,4 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
 async function clearGlobalState() {
   await globalState?.dispose();
   globalState = undefined;
-}
-
-function isLsp() {
-  return getCombinedDprintConfig(vscode.workspace.workspaceFolders ?? []).experimentalLsp;
 }
