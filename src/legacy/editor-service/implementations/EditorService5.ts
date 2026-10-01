@@ -4,7 +4,7 @@ import type * as vscode from "vscode";
 import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
 import type { ByteRange } from "../byteRange";
-import { EditorProcess } from "../common";
+import { EditorProcess, SpawnFailedError } from "../common";
 import type { EditorService } from "../EditorService";
 
 const textEncoder = new TextEncoder();
@@ -38,6 +38,12 @@ export class EditorService5 implements EditorService {
   private async startReadingStdout() {
     while (!this._disposed) {
       try {
+        if (this._process.hasSpawnFailed) {
+          // Spawning again from here would likely fail the same way twice a second,
+          // so the process is left for the next request to start.
+          await this._process.waitUntilRunning();
+          continue;
+        }
         this.startProcessIfNotRunning();
         const messageId = await this._process.readInt();
         const messageKind = await this._process.readInt();
@@ -85,6 +91,9 @@ export class EditorService5 implements EditorService {
       } catch (err) {
         if (this._disposed || this._disposing) {
           return;
+        }
+        if (err instanceof SpawnFailedError || this._process.hasSpawnFailed) {
+          continue; // the spawn error was already logged and that process is gone
         }
         this._logger.logError("Read task failed:", err);
         this._process.kill();

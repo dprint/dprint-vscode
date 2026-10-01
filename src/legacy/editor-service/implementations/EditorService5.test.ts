@@ -86,6 +86,98 @@ describe("EditorService5", () => {
     assert.strictEqual(await canFormat, true);
   });
 
+  it("leaves starting the process to the next request after it fails to spawn", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const executable = new FakeExecutable();
+    const errors: string[] = [];
+    service = new EditorService5(
+      { ...logger, logError: (message: string) => errors.push(message) } as unknown as Logger,
+      executable.asExecutable(),
+    );
+
+    try {
+      executable.lastProcess.emit("error", new Error("spawn dprint ENOENT"));
+      await nextTick();
+      // the delay the read loop waits before starting the process again after a failed read
+      t.mock.timers.tick(500);
+      await nextTick();
+
+      assert.strictEqual(executable.processes.length, 1);
+      assert.deepStrictEqual(errors, ["Editor service process error:"]);
+
+      // each request tries once
+      const failedCanFormat = service.canFormat("/file.ts");
+      assert.strictEqual(executable.processes.length, 2);
+      executable.lastProcess.emit("error", new Error("spawn dprint ENOENT"));
+      await assert.rejects(failedCanFormat, /exited while the message was in progress/);
+      t.mock.timers.tick(500);
+      await nextTick();
+
+      assert.strictEqual(executable.processes.length, 2);
+      assert.deepStrictEqual(errors, ["Editor service process error:", "Editor service process error:"]);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it("starts the process again after it exits", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const executable = new FakeExecutable();
+    service = new EditorService5(logger, executable.asExecutable());
+
+    try {
+      executable.lastProcess.exit();
+      await nextTick();
+      await nextTick();
+      assert.strictEqual(executable.processes.length, 1);
+      t.mock.timers.tick(500);
+      await nextTick();
+
+      assert.strictEqual(executable.processes.length, 2);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it("ignores the events of a killed process once a new process is running", async () => {
+    const executable = new FakeExecutable();
+    executable.exitsWhenKilled = false;
+    service = new EditorService5(logger, executable.asExecutable());
+    const killedProcess = executable.lastProcess;
+
+    const failedCanFormat = assert.rejects(service.canFormat("/file.ts"), /exited while the message was in progress/);
+    const failedMessage = await killedProcess.readMessage();
+    // the read loop kills the process when a message doesn't end with the success bytes
+    killedProcess.stdout.write(Buffer.concat([
+      uint32(1),
+      uint32(MessageKind.CanFormatResponse),
+      uint32(8),
+      uint32(failedMessage.id),
+      uint32(1),
+      Buffer.alloc(4, 0),
+    ]));
+    await nextTick();
+    assert.strictEqual(killedProcess.killCount, 1);
+    // the request is rejected without waiting on the exit of the killed process
+    assert.strictEqual(service.pendingMessageCount, 0);
+    await failedCanFormat;
+
+    const canFormat = service.canFormat("/file.ts");
+    assert.strictEqual(executable.processes.length, 2);
+    const message = await executable.lastProcess.readMessage();
+    // output of the killed process is not read as output of the new process
+    killedProcess.respond(MessageKind.CanFormatResponse, [message.id, 0]);
+    killedProcess.exit();
+    await nextTick();
+    await nextTick();
+
+    assert.strictEqual(service.pendingMessageCount, 1);
+    executable.lastProcess.respond(MessageKind.CanFormatResponse, [message.id, 1]);
+    assert.strictEqual(await canFormat, true);
+    assert.strictEqual(executable.processes.length, 2);
+    assert.strictEqual(executable.lastProcess.killCount, 0);
+  });
+
   it("rejects a request when the executable does not exist", async () => {
     const missingExecutable = {
       spawnEditorService: () => spawn(path.join(__dirname, "does-not-exist"), [], { stdio: ["pipe", "pipe", "pipe"] }),
@@ -177,6 +269,8 @@ class FakeExecutable {
   readonly processes: FakeEditorProcess[] = [];
   /** Error to fail every write to the stdin of the spawned processes with. */
   stdinWriteError: Error | undefined;
+  /** Whether the spawned processes exit when killed, rather than only once `exit()` is called. */
+  exitsWhenKilled = true;
 
   get lastProcess() {
     const process = this.processes[this.processes.length - 1];
@@ -189,7 +283,7 @@ class FakeExecutable {
   }
 
   spawnEditorService() {
-    const process = new FakeEditorProcess(this.stdinWriteError);
+    const process = new FakeEditorProcess(this.stdinWriteError, this.exitsWhenKilled);
     this.processes.push(process);
     return process;
   }
@@ -205,9 +299,12 @@ class FakeEditorProcess extends EventEmitter {
   #waiters: ((message: ReceivedMessage) => void)[] = [];
   #nextMessageId = 0;
   #hasExited = false;
+  #exitsWhenKilled: boolean;
+  killCount = 0;
 
-  constructor(stdinWriteError: Error | undefined) {
+  constructor(stdinWriteError: Error | undefined, exitsWhenKilled: boolean) {
     super();
+    this.#exitsWhenKilled = exitsWhenKilled;
     if (stdinWriteError == null) {
       this.stdin = new PassThrough();
       this.stdin.on("data", (data: Buffer) => this.#onStdinData(data));
@@ -219,8 +316,20 @@ class FakeEditorProcess extends EventEmitter {
   }
 
   kill() {
-    this.#exit();
+    this.killCount++;
+    if (this.#exitsWhenKilled) {
+      this.exit();
+    }
     return true;
+  }
+
+  /** Emits the "exit" event some time after this is called, as a process does when asked to exit. */
+  exit() {
+    if (this.#hasExited) {
+      return;
+    }
+    this.#hasExited = true;
+    setImmediate(() => this.emit("exit", 0, null));
   }
 
   /** Gets the next message the extension sent to the process. */
@@ -273,7 +382,7 @@ class FakeEditorProcess extends EventEmitter {
   #onMessage(message: ReceivedMessage) {
     if (message.kind === MessageKind.ShutDownProcess) {
       this.respond(MessageKind.SuccessResponse, [message.id]);
-      this.#exit();
+      this.exit();
       return;
     }
     const waiter = this.#waiters.shift();
@@ -282,15 +391,6 @@ class FakeEditorProcess extends EventEmitter {
     } else {
       this.#messages.push(message);
     }
-  }
-
-  #exit() {
-    if (this.#hasExited) {
-      return;
-    }
-    this.#hasExited = true;
-    // a process exits some time after it's asked to
-    setImmediate(() => this.emit("exit", 0, null));
   }
 }
 
