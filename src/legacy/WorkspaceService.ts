@@ -414,10 +414,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     this.#clearFolders();
     const generation = this.#generation;
-    if (vscode.workspace.workspaceFolders == null) {
-      return [];
-    }
-
+    // this finds nothing right away when there are no workspace folders (no workspace
+    // is open or a multi-root workspace is empty), so don't wait for folders here
     const configFiles = await discoverWorkspaceConfigFiles({
       logger: this.#logger,
     });
@@ -425,7 +423,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     this.#assertCurrentGeneration(generation);
 
     // Initialize the workspace folders with each sub configuration that's found.
-    for (const folder of vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
       const folderConfigUris = configFiles.filter(c => isPathWithin(folder.uri.fsPath, c.fsPath));
       // This is only necessary because vscode.workspace.findFiles doesn't respect .gitignore
       // files, so it finds config files in gitignored directories that the dprint cli never

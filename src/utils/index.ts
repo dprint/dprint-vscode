@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 export * from "./ActivatedDisposables.js";
 export * from "./TextDownloader.js";
 
@@ -11,12 +10,6 @@ export function shellExpand(path: string, env: { [prop: string]: string | undefi
     path = path.replace("~/", home + "/");
   }
   return path;
-}
-
-export async function waitWorkspaceInitialized() {
-  while (vscode.workspace.workspaceFolders == null || vscode.workspace.workspaceFolders.length === 0) {
-    await delay(100);
-  }
 }
 
 export function delay(ms: number) {

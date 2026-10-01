@@ -1,54 +1,17 @@
 import * as vscode from "vscode";
+import { discoverConfigFiles } from "./configFileDiscovery";
 import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { Logger } from "./logger";
-import { delay, waitWorkspaceInitialized } from "./utils";
+import { delay } from "./utils";
 
-export async function discoverWorkspaceConfigFiles(opts: { logger: Logger }) {
-  const logger = opts.logger;
-  // See https://github.com/dprint/dprint-vscode/issues/105 -- for some reason findFiles would
-  // return no results on very large projects when called too early on startup
-  await waitWorkspaceInitialized();
-  // just in case, mitigate more by waiting a little bit of time
-  await delay(250);
-  // now try to find the files
-  return await attemptFindFiles();
-
-  async function attemptFindFiles() {
-    const foundFiles = await vscodeFindFiles();
-    if (foundFiles.length === 0) {
-      return await attemptFindViaFallback();
-    } else {
-      return foundFiles;
-    }
-  }
-
-  async function attemptFindViaFallback() {
-    // retry trying to find a config file a few times if there's one found in the root directory
-    const rootConfigFile = await getWorkspaceConfigFileInRoot();
-    if (rootConfigFile == null) {
-      return [];
-    }
-    let retryCount = 0;
-    while (retryCount++ < 4) {
-      logger.logDebug("Found config file in root with fs API. Waiting a bit then retrying...");
-      await delay(1_000);
-      const foundFiles = await vscodeFindFiles();
-      if (foundFiles.length > 0) {
-        logger.logDebug("Found config file after retrying.");
-        return foundFiles;
-      }
-    }
-
-    // we don't glob for files because it's potentially incredibly slow in very large
-    // projects
-    logger.logWarn(
-      "Gave up trying to find config file. Using only root discovered via file system API. "
-        + "Maybe you have the dprint config file excluded from vscode? "
-        + "Don't do that because then vscode hides the file from the extension and the "
-        + "extension otherwise doesn't use the file system APIs to find config files.",
-    );
-    return [rootConfigFile];
-  }
+export function discoverWorkspaceConfigFiles(opts: { logger: Logger }) {
+  return discoverConfigFiles<vscode.Uri>({
+    hasWorkspaceFolders: () => (vscode.workspace.workspaceFolders?.length ?? 0) > 0,
+    findFiles: vscodeFindFiles,
+    findRootConfigFile: getWorkspaceConfigFileInRoot,
+    delay,
+    logger: opts.logger,
+  });
 
   function vscodeFindFiles() {
     return vscode.workspace.findFiles(
