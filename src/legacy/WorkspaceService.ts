@@ -414,7 +414,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
 
     this.#clearFolders();
     const generation = this.#generation;
-    if (vscode.workspace.workspaceFolders == null) {
+    // there are no folders when no workspace is open or a multi-root workspace is empty
+    if (vscode.workspace.workspaceFolders == null || vscode.workspace.workspaceFolders.length === 0) {
       return [];
     }
 
