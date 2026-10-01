@@ -92,19 +92,20 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#setEditorService(undefined);
     this.#dprintExecutable = undefined;
 
-    const dprintExe = await this.#getDprintExecutable();
-    const isInstalled = await dprintExe.checkInstalled();
-    this.#assertNotDisposed();
-    if (!isInstalled) {
-      this.#logErrorAndMaybeNotify(
-        "Failed initializing dprint.",
-        `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
-          + `or specify a "dprint.path" setting to the executable.`,
-      );
-      return false;
-    }
-
     try {
+      // resolving the executable may fail (ex. a command in the "dprint.path" setting fails)
+      const dprintExe = await this.#getDprintExecutable();
+      const isInstalled = await dprintExe.checkInstalled();
+      this.#assertNotDisposed();
+      if (!isInstalled) {
+        this.#logErrorAndMaybeNotify(
+          "Failed initializing dprint.",
+          `Error initializing dprint. Ensure it is globally installed on the path (see https://dprint.dev/install) `
+            + `or specify a "dprint.path" setting to the executable.`,
+        );
+        return false;
+      }
+
       const editorInfo = await dprintExe.getEditorInfo();
       this.#assertNotDisposed();
       this.#editorInfo = editorInfo;
@@ -133,7 +134,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
       this.#logErrorAndMaybeNotify(
         "Failed initializing dprint.",
-        `Error initializing in ${dprintExe.initializationFolderUri.fsPath}:`,
+        `Error initializing in ${this.uri.fsPath}:`,
         err,
       );
       return false;
