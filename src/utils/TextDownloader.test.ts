@@ -29,6 +29,20 @@ describe("HttpsTextDownloader", () => {
     assert.strictEqual(await createDownloader().get(url), "{ \"title\": \"dprint ✓\" }");
   });
 
+  it("decodes a character that is split between two chunks", async () => {
+    const text = "{ \"title\": \"dprint ✓\" }";
+    const bytes = Buffer.from(text, "utf8");
+    // one byte into the three byte check mark
+    const splitIndex = bytes.indexOf(Buffer.from("✓", "utf8")) + 1;
+    const url = await serve((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      // wait for the first part to be sent so the two parts can't arrive together
+      res.write(bytes.subarray(0, splitIndex), () => res.end(bytes.subarray(splitIndex)));
+    });
+
+    assert.strictEqual(await createDownloader().get(url), text);
+  });
+
   it("rejects on a server error", async () => {
     const url = await serve((_req, res) => {
       res.writeHead(503);
