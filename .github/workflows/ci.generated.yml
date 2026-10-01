@@ -35,6 +35,24 @@ jobs:
         run: npm run compile
       - name: Unit tests
         run: 'npm run test:unit'
+      - name: Install dprint
+        shell: bash
+        run: |-
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -Command "iwr https://dprint.dev/install.ps1 -useb | iex"
+            echo "$USERPROFILE\\.dprint\\bin" >> "$GITHUB_PATH"
+          else
+            curl -fsSL https://dprint.dev/install.sh | sh
+            echo "$HOME/.dprint/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Integration tests
+        shell: bash
+        run: |-
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm test
+          else
+            npm test
+          fi
       - name: Check formatting
         uses: dprint/check@7dc032d8874778fc024f6f9b4a7e6d896782c330 # v2.5
         if: matrix.os == 'ubuntu-latest'
