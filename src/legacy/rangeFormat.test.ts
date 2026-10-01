@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
+import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
 describe("expandToLines", () => {
   const text = "a\n  bb\nccc\n";
@@ -138,5 +138,34 @@ describe("getRangeFormatEdit", () => {
         newText: "let a = 1;\r\n",
       });
     });
+
+    it("returns an edit for text with mixed line endings when the text outside the range is untouched", () => {
+      // not expected from vscode, which gives a document a single kind of line ending
+      assert.deepStrictEqual(getRangeFormatEdit("a\nb\r\nc  =1\n", "a\nb\r\nc = 1\n", { start: 5, end: 11 }), {
+        start: 5,
+        end: 11,
+        newText: "c = 1\n",
+      });
+    });
+  });
+});
+
+describe("isNoChangeEdit", () => {
+  it("is true when the formatted text differs only in its line endings", () => {
+    const text = "let a = 1;\r\nlet b = 2;\r\n";
+    const edit = getRangeFormatEdit(text, "let a = 1;\nlet b = 2;\n", { start: 12, end: 24 });
+    assert.deepStrictEqual(edit, { start: 12, end: 24, newText: "let b = 2;\r\n" });
+    assert.strictEqual(isNoChangeEdit(text, edit!), true);
+  });
+
+  it("is false when the text of the range changed", () => {
+    const text = "let a = 1;\r\nlet  b = 2;\r\n";
+    const edit = getRangeFormatEdit(text, "let a = 1;\nlet b = 2;\n", { start: 12, end: 25 });
+    assert.deepStrictEqual(edit, { start: 12, end: 25, newText: "let b = 2;\r\n" });
+    assert.strictEqual(isNoChangeEdit(text, edit!), false);
+  });
+
+  it("is false when the text of the range was removed", () => {
+    assert.strictEqual(isNoChangeEdit("a\nb\n", { start: 2, end: 4, newText: "" }), false);
   });
 });

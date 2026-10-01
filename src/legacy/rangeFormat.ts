@@ -40,7 +40,25 @@ export function getRangeFormatEdit(
   formattedText: string,
   range: OffsetRange,
 ): RangeFormatEdit | undefined {
-  formattedText = normalizeToSourceLineEndings(originalText, formattedText);
+  const normalizedText = normalizeToSourceLineEndings(originalText, formattedText);
+  return getEditForRange(originalText, normalizedText, range)
+    // text with mixed line endings can't be matched after converting, so compare it as-is
+    ?? getEditForRange(originalText, formattedText, range);
+}
+
+/**
+ * Gets if the edit replaces the range with the text it already has, which
+ * happens when the formatted text differs only in its line endings.
+ */
+export function isNoChangeEdit(originalText: string, edit: RangeFormatEdit) {
+  return originalText.slice(edit.start, edit.end) === edit.newText;
+}
+
+function getEditForRange(
+  originalText: string,
+  formattedText: string,
+  range: OffsetRange,
+): RangeFormatEdit | undefined {
   const prefix = originalText.slice(0, range.start);
   const suffix = originalText.slice(range.end);
   if (
