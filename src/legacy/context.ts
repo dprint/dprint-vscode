@@ -1,6 +1,12 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
-import { FILE_SCHEME, isDprintExtensionId, JUPYTER_NOTEBOOK_TYPE, UNTITLED_SCHEME } from "../constants";
+import {
+  FILE_SCHEME,
+  isDprintExtensionId,
+  JUPYTER_NOTEBOOK_TYPE,
+  UNTITLED_SCHEME,
+  USER_DATA_SCHEME,
+} from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
@@ -8,9 +14,6 @@ import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError }
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
-
-/** The scheme of user data files such as the user settings.json. */
-const USER_DATA_SCHEME = "vscode-userdata";
 
 export function activateLegacy(
   logger: Logger,

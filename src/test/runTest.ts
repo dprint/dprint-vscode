@@ -18,6 +18,9 @@ async function main() {
   // opening a folder from a test restarts the extension host, which ends the test run.
   // It's outside the repo so that the repo's dprint config file isn't used.
   const workspaceDir = createWorkspaceDir();
+  // for formatting a file that has no config file using the global config file
+  const globalConfigDir = createGlobalConfigDir();
+  const noConfigDir = createTempDir();
   let exitCode = 0;
   try {
     // Download VS Code, unzip it and run the integration test
@@ -26,8 +29,13 @@ async function main() {
       vscodeExecutablePath: process.env.DPRINT_TEST_VSCODE_EXECUTABLE || undefined,
       extensionDevelopmentPath,
       extensionTestsPath,
-      // the tests get the path of the workspace folder from this
-      extensionTestsEnv: { DPRINT_TEST_WORKSPACE_DIR: workspaceDir },
+      extensionTestsEnv: {
+        // the tests get the path of the workspace folder from this
+        DPRINT_TEST_WORKSPACE_DIR: workspaceDir,
+        DPRINT_TEST_NO_CONFIG_DIR: noConfigDir,
+        // the extension and the dprint cli it starts find the global config file with this
+        DPRINT_CONFIG_DIR: globalConfigDir,
+      },
       launchArgs: [
         workspaceDir,
         "--disable-extensions",
@@ -39,18 +47,19 @@ async function main() {
     console.error("Failed to run tests:", err);
     exitCode = 1;
   } finally {
-    try {
-      fs.rmSync(workspaceDir, { recursive: true, force: true });
-    } catch {
-      // ignore, a process may still have a file open
+    for (const dir of [workspaceDir, globalConfigDir, noConfigDir]) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // ignore, a process may still have a file open
+      }
     }
   }
   process.exit(exitCode);
 }
 
 function createWorkspaceDir() {
-  // resolve the real path because the temp directory may be a symlink or a short path on Windows
-  const workspaceDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dprint-vscode-test-")));
+  const workspaceDir = createTempDir();
   fs.writeFileSync(
     path.join(workspaceDir, "dprint.json"),
     JSON.stringify({
@@ -71,6 +80,26 @@ function createWorkspaceDir() {
     "utf8",
   );
   return workspaceDir;
+}
+
+function createGlobalConfigDir() {
+  const globalConfigDir = createTempDir();
+  fs.writeFileSync(
+    path.join(globalConfigDir, "dprint.json"),
+    JSON.stringify({
+      // differs from the workspace's config file so the tests can tell which one was used
+      json: { indentWidth: 4 },
+      excludes: ["**/*.excluded.json"],
+      plugins: ["https://plugins.dprint.dev/json-0.15.3.wasm"],
+    }),
+    "utf8",
+  );
+  return globalConfigDir;
+}
+
+function createTempDir() {
+  // resolve the real path because the temp directory may be a symlink or a short path on Windows
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "dprint-vscode-test-")));
 }
 
 main();

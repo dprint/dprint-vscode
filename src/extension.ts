@@ -1,11 +1,10 @@
-import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
-import { getDprintConfig } from "./config";
 import { AncestorConfigFileCache } from "./configPaths";
-import { DPRINT_CONFIG_FILEPATH_GLOB, FILE_SCHEME } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB, NOTEBOOK_CELL_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
+import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 
@@ -54,7 +53,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // only show the commands to format using the global config file for files it would be used for
   // cached so that changing the active editor doesn't always hit the file system
-  const ancestorConfigFileCache = new AncestorConfigFileCache(new RealEnvironment(logger));
+  const environment = new RealEnvironment(logger);
+  const ancestorConfigFileCache = new AncestorConfigFileCache(environment);
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
   // config files outside the workspace aren't watched, so check again after the user comes back to the window
@@ -65,6 +65,8 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   updateCanFormatWithGlobalConfig();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
+  // untitled documents are formatted as a file in the first workspace folder
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(updateCanFormatWithGlobalConfig));
 
   // reinitialize when a configuration file is created or deleted and let the backend handle changes
   const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
@@ -84,7 +86,6 @@ export async function activate(context: vscode.ExtensionContext) {
   // reinitialize when the vscode configuration changes
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
-      updateCanFormatWithGlobalConfig();
       await reInitializeBackend();
     }
   }));
@@ -122,7 +123,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const updateId = ++canFormatWithGlobalConfigUpdateId;
     let value = false;
     try {
-      value = await canFormatWithGlobalConfig(vscode.window.activeTextEditor?.document);
+      value = await canFormatDocumentWithGlobalConfig(vscode.window.activeTextEditor?.document);
     } catch (err) {
       logger.logError("Error checking if a document may be formatted with the global configuration file:", err);
     }
@@ -132,20 +133,30 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  /**
-   * Gets if the command would format the document using the global config file, which is
-   * when the document has no config file in an ancestor directory. It's not necessary
-   * when the user enabled always using the global config file.
-   */
-  async function canFormatWithGlobalConfig(document: vscode.TextDocument | undefined) {
-    if (document == null || document.uri.scheme !== FILE_SCHEME || getDprintConfig(document.uri).useGlobalConfig) {
+  /** Gets if the command would format the document using the global config file. */
+  function canFormatDocumentWithGlobalConfig(document: vscode.TextDocument | undefined) {
+    if (document == null) {
       return false;
     }
-    const dirPath = path.dirname(document.uri.fsPath);
-    return await ancestorConfigFileCache.find(dirPath) == null;
+    const notebook = document.uri.scheme === NOTEBOOK_CELL_SCHEME
+      ? vscode.workspace.notebookDocuments.find(notebook => notebook.getCells().some(c => c.document === document))
+      : undefined;
+    return canFormatWithGlobalConfig({
+      scheme: document.uri.scheme,
+      fsPath: document.uri.fsPath,
+      notebook: notebook == null ? undefined : { scheme: notebook.uri.scheme, fsPath: notebook.uri.fsPath },
+    }, {
+      untitledDirPath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? environment.homeDir(),
+      isRemote: vscode.env.remoteName != null,
+      findAncestorConfigFile: dirPath => ancestorConfigFileCache.find(dirPath),
+    });
   }
 
-  /** Formats the active document or its selection using the global config file. */
+  /**
+   * Formats the active document or its selection using the global config file. The user
+   * explicitly ran the command, so this always says why when the document wasn't formatted
+   * except for when it's already formatted.
+   */
   async function formatWithGlobalConfig(opts: { selection: boolean }) {
     const editor = vscode.window.activeTextEditor;
     if (editor == null || opts.selection && editor.selection.isEmpty) {
@@ -160,19 +171,42 @@ export async function activate(context: vscode.ExtensionContext) {
         tabSize: typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4,
         insertSpaces: editor.options.insertSpaces !== false,
       };
-      const edits = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
+      const result = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
+      if (result.edits == null) {
+        showNotFormattedMessage(result.notFormattedReason);
+        return;
+      }
       // the edits don't apply to the document anymore when it changed while formatting
-      if (edits == null || edits.length === 0 || document.version !== version) {
+      if (result.edits.length === 0 || document.version !== version) {
         return;
       }
       const workspaceEdit = new vscode.WorkspaceEdit();
-      workspaceEdit.set(document.uri, edits);
-      await vscode.workspace.applyEdit(workspaceEdit);
+      workspaceEdit.set(document.uri, result.edits);
+      if (!(await vscode.workspace.applyEdit(workspaceEdit))) {
+        logger.logError("Failed applying the edits of formatting with the global configuration file.");
+        showNotFormattedMessage("failed");
+      }
     } catch (err) {
       logger.logError("Error formatting with the global configuration file:", err);
+      showNotFormattedMessage("failed");
     } finally {
       tokenSource.dispose();
     }
+  }
+
+  function showNotFormattedMessage(reason: NotFormattedReason) {
+    const message = getNotFormattedMessage(reason);
+    if (reason !== "failed") {
+      vscode.window.showInformationMessage(message);
+      return;
+    }
+    // the details were logged
+    const buttonText = "Go to output";
+    vscode.window.showWarningMessage(message, buttonText).then(selection => {
+      if (selection === buttonText) {
+        globalState.outputChannel.show();
+      }
+    });
   }
 }
 

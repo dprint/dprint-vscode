@@ -15,11 +15,14 @@ import {
 import { DPRINT_CONFIG_FILE_NAME_GLOB, FILE_SCHEME, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
+import type { FormatDocumentResult } from "../ExtensionBackend";
+import type { NotFormattedReason } from "../globalConfigCommand";
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
 import { initializeFolders, refreshOrRestartFolders } from "./folderRefresh";
-import { FolderService, type FormatFile } from "./FolderService";
+import { FolderService } from "./FolderService";
+import type { FormatFile } from "./formatFile";
 import { getNoConfigMessage } from "./noConfigMessage";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
@@ -97,8 +100,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const resolved = await this.#resolveFormatFile(document);
-    if (resolved == null || token.isCancellationRequested) {
+    const resolved = await this.#resolveFormatFile(document, { notify: true });
+    if (resolved.folder == null || token.isCancellationRequested) {
       return [];
     }
     return resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file);
@@ -110,8 +113,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
   ) {
-    const resolved = await this.#resolveFormatFile(document);
-    if (resolved == null || token.isCancellationRequested) {
+    const resolved = await this.#resolveFormatFile(document, { notify: true });
+    if (resolved.folder == null || token.isCancellationRequested) {
       return [];
     }
     return resolved.folder.provideDocumentRangeFormattingEdits(document, range, options, token, resolved.file);
@@ -121,20 +124,25 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * Formats the document, or only the range when provided, using the global config
    * file when the document doesn't have a config file in an ancestor directory
    * regardless of if the user enabled always using it.
+   *
+   * This is for a command the user explicitly runs, so instead of notifying (which only
+   * happens once per session) it provides why the document wasn't formatted to the caller.
    */
   async provideGlobalConfigFormattingEdits(
     document: vscode.TextDocument,
     range: vscode.Range | undefined,
-    options: vscode.FormattingOptions,
+    _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
-  ) {
-    const resolved = await this.#resolveFormatFile(document, { useGlobalConfig: true });
-    if (resolved == null || token.isCancellationRequested) {
-      return [];
+  ): Promise<FormatDocumentResult> {
+    const resolved = await this.#resolveFormatFile(document, { notify: false, useGlobalConfig: true });
+    if (resolved.folder == null) {
+      // there's nothing to tell the user when this was superseded (ex. by a restart)
+      return resolved.notFormattedReason == null ? { edits: [] } : { notFormattedReason: resolved.notFormattedReason };
     }
-    return range == null
-      ? resolved.folder.provideDocumentFormattingEdits(document, options, token, resolved.file)
-      : resolved.folder.provideDocumentRangeFormattingEdits(document, range, options, token, resolved.file);
+    if (token.isCancellationRequested) {
+      return { edits: [] };
+    }
+    return resolved.folder.formatDocument(document, resolved.file, range, token);
   }
 
   /**
@@ -142,7 +150,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * file if necessary, but doesn't notify when there's no config file or it fails.
    */
   async canFormatWithPlugin(uri: vscode.Uri) {
-    const folder = await this.#getFolderForUri(uri, { notify: false });
+    const { folder } = await this.#getFolderForUri(uri, { notify: false });
     return folder != null && await folder.canFormatWithPlugin(uri.fsPath);
   }
 
@@ -183,18 +191,18 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * A document that isn't on the file system is formatted as the first of its
    * candidate file names that one of the folder's plugins handles.
    */
-  async #resolveFormatFile(document: vscode.TextDocument, options: { useGlobalConfig?: boolean } = {}) {
+  async #resolveFormatFile(
+    document: vscode.TextDocument,
+    options: LooseFolderOptions,
+  ): Promise<{ folder: FolderService; file: FormatFile } | FolderNotResolved> {
     const candidates = this.#getFormatFileCandidates(document);
     if (candidates == null) {
-      return undefined;
+      return { notFormattedReason: "noFilePath" };
     }
     const firstFilePath = path.join(candidates.dirPath, candidates.fileNames[0]);
-    const folder = await this.#getFolderForUri(vscode.Uri.file(firstFilePath), {
-      notify: true,
-      useGlobalConfig: options.useGlobalConfig,
-    });
+    const { folder, notFormattedReason } = await this.#getFolderForUri(vscode.Uri.file(firstFilePath), options);
     if (folder == null) {
-      return undefined;
+      return { notFormattedReason };
     }
     const fileName = candidates.fileNames.find(fileName => folder.hasPluginForFile(fileName))
       ?? candidates.fileNames[0];
@@ -261,13 +269,14 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
   }
 
-  async #getFolderForUri(uri: vscode.Uri, options: LooseFolderOptions) {
+  async #getFolderForUri(uri: vscode.Uri, options: LooseFolderOptions): Promise<FolderResolution> {
     // wait for the workspace folders so a file in one doesn't get a loose folder
     await this.#waitWorkspaceInitialization();
     if (this.#disposed) {
-      return undefined;
+      return {};
     }
-    return this.#getWorkspaceFolderForUri(uri) ?? await this.#getLooseFolderForUri(uri, options);
+    const folder = this.#getWorkspaceFolderForUri(uri);
+    return folder == null ? await this.#getLooseFolderForUri(uri, options) : { folder };
   }
 
   #getWorkspaceFolderForUri(uri: vscode.Uri) {
@@ -278,19 +287,19 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
    * Gets a folder for a file not in a workspace folder with a config file. It uses
    * the file's closest ancestor config file or otherwise the global config file.
    */
-  async #getLooseFolderForUri(uri: vscode.Uri, options: LooseFolderOptions) {
+  async #getLooseFolderForUri(uri: vscode.Uri, options: LooseFolderOptions): Promise<FolderResolution> {
     const generation = this.#generation;
     const useGlobalConfig = options.useGlobalConfig ?? getDprintConfig(uri).useGlobalConfig;
     const looseConfig = await resolveLooseFolderConfig(this.#environment, uri.fsPath, { useGlobalConfig });
     if (this.#disposed || generation !== this.#generation) {
-      return undefined;
+      return {};
     }
     if (looseConfig == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
       if (options.notify) {
         await this.#notifyNoConfig(useGlobalConfig);
       }
-      return undefined;
+      return { notFormattedReason: "noConfigFile" };
     }
 
     // include whether it's the global config in the key because a config file at the file
@@ -303,12 +312,18 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       this.#looseFolders.set(key, entry);
     }
     const folder = await entry.folder;
-    if (folder == null && options.notify) {
+    if (folder != null) {
+      return { folder };
+    }
+    if (options.notify) {
       // these folders don't notify on errors themselves because they may be created
       // without the user formatting (ex. to check if a user data file can be formatted)
       this.#logger.logErrorAndNotify("Failed initializing dprint.", "Failed initializing dprint in:", looseConfig.cwd);
     }
-    return folder;
+    if (this.#disposed || generation !== this.#generation) {
+      return {}; // superseded
+    }
+    return { notFormattedReason: entry.hasNoPlugins ? "noPlugins" : "failed" };
   }
 
   #createLooseFolderEntry(key: string, looseConfig: LooseFolderConfig, generation: number) {
@@ -319,7 +334,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     // so only refresh its plugin information in that case.
     const configFileWatcher = createConfigFileWatcher(looseConfig.configFilePath);
     const entry: LooseFolderEntry = {
-      folder: this.#initializeLooseFolder(looseConfig, generation),
+      folder: this.#initializeLooseFolder(looseConfig, generation, () => entry.hasNoPlugins = true),
+      hasNoPlugins: false,
       configFileWatcher,
     };
     const removeEntry = () => {
@@ -347,7 +363,11 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     return entry;
   }
 
-  async #initializeLooseFolder({ cwd, isGlobalConfig }: LooseFolderConfig, generation: number) {
+  async #initializeLooseFolder(
+    { cwd, isGlobalConfig }: LooseFolderConfig,
+    generation: number,
+    onNoPlugins: () => void,
+  ) {
     const folder = new FolderService({
       approvedPaths: this.#approvedPaths,
       cwd: vscode.Uri.file(cwd),
@@ -365,6 +385,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       if (!(await folder.initialize())) {
         if (folder.getEditorInfo()?.plugins.length === 0) {
           this.#logger.logWarn("No plugins found in the configuration file used in:", cwd);
+          onNoPlugins();
         }
         folder.dispose();
         return undefined;
@@ -556,6 +577,14 @@ function createConfigFileWatcher(configFilePath: string) {
   );
 }
 
+/** The folder to format a file with or otherwise why there's none, which is not set when superseded. */
+type FolderResolution = { folder: FolderService; notFormattedReason?: undefined } | FolderNotResolved;
+
+interface FolderNotResolved {
+  folder?: undefined;
+  notFormattedReason?: NotFormattedReason;
+}
+
 interface LooseFolderOptions {
   /** Whether to notify when there's no config file or dprint fails to start. */
   notify: boolean;
@@ -565,6 +594,8 @@ interface LooseFolderOptions {
 
 interface LooseFolderEntry {
   folder: Promise<FolderService | undefined>;
+  /** Whether dprint wasn't started because the config file has no plugins. */
+  hasNoPlugins: boolean;
   configFileWatcher: vscode.Disposable;
 }
 
