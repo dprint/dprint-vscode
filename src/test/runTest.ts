@@ -28,7 +28,12 @@ async function main() {
       extensionTestsPath,
       // the tests get the path of the workspace folder from this
       extensionTestsEnv: { DPRINT_TEST_WORKSPACE_DIR: workspaceDir },
-      launchArgs: [workspaceDir, "--disable-extensions"],
+      launchArgs: [
+        workspaceDir,
+        "--disable-extensions",
+        // the window doesn't become responsive on a headless Linux machine (ex. CI) without these
+        ...(process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : []),
+      ],
     });
   } catch (err) {
     console.error("Failed to run tests:", err);
