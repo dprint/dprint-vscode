@@ -36,31 +36,6 @@ export async function substituteCommands(text: string, runCommand: (command: str
 }
 
 /**
- * Gets if what a `dprint.path` setting runs depends on the directory it's run in, which
- * is when it's a relative path or substitutes a command (ex. `$(yarn bin dprint)`). Such
- * a setting isn't safe to use in a directory the user didn't open (ex. the directory of
- * a file outside the workspace) because it could run an executable from that directory.
- */
-export function isCwdDependentSettingPath(settingPath: string) {
-  // a substituted command runs in the directory
-  if (settingPath.includes("$(") || settingPath.includes("`")) {
-    return true;
-  }
-  const isAbsolute = settingPath.startsWith("/")
-    || settingPath.startsWith("\\")
-    || /^[a-zA-Z]:[\\/]/.test(settingPath)
-    // home directory and environment variables (ex. `~/bin/dprint`, `$HOME/bin/dprint`, `%USERPROFILE%\bin\dprint`)
-    || settingPath.startsWith("~")
-    || settingPath.startsWith("$")
-    || settingPath.startsWith("%");
-  if (isAbsolute) {
-    return false;
-  }
-  // a command name on its own is found on the path
-  return settingPath.includes("/") || settingPath.includes("\\");
-}
-
-/**
  * Replaces each `%NAME%` in the text with the environment variable's value like
  * cmd.exe does, leaving undefined variables as-is. This is used on Windows because
  * dprint is launched without cmd.exe when possible.
