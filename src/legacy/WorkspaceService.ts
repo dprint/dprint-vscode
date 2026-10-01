@@ -18,7 +18,7 @@ import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import { Logger } from "../logger";
 import { ObjectDisposedError } from "../utils";
-import { refreshOrRestartFolders, tryInitializeFolder } from "./folderRefresh";
+import { initializeFolders, refreshOrRestartFolders } from "./folderRefresh";
 import { FolderService, type FormatFile } from "./FolderService";
 import { getNoConfigMessage } from "./noConfigMessage";
 
@@ -155,7 +155,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     await this.#waitWorkspaceInitialization();
     this.#assertNotDisposed();
     const generation = this.#generation;
-    await refreshOrRestartFolders(this.#folders, err => this.#onFolderInitializeError(err));
+    await refreshOrRestartFolders(this.#folders, (folder, err) => this.#onFolderInitializeError(folder, err));
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
     return getFolderInfos(this.#folders.filter(folder => folder.isRunning()));
@@ -465,23 +465,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
 
     // now initialize in parallel
-    const initializedFolders = await Promise.all(this.#folders.map(async f => {
-      if (await tryInitializeFolder(f, err => this.#onFolderInitializeError(err))) {
-        return f;
-      } else {
-        return undefined;
-      }
-    }));
+    const initializedFolders = await initializeFolders(
+      this.#folders,
+      (folder, err) => this.#onFolderInitializeError(folder, err),
+    );
 
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
     return getFolderInfos(initializedFolders);
   }
 
-  #onFolderInitializeError(err: unknown) {
+  #onFolderInitializeError(folder: FolderService, err: unknown) {
     // a disposed folder means it was superseded, which the callers check for after waiting on the folders
     if (!(err instanceof ObjectDisposedError)) {
-      this.#logger.logError("Error initializing folder:", err);
+      this.#logger.logError(`Error initializing in ${folder.uri.fsPath}:`, err);
     }
   }
 
