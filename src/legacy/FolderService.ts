@@ -8,6 +8,7 @@ import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
+import { trimFormattedCellText } from "./notebookCellText";
 import { expandToLines, getRangeFormatEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
@@ -22,6 +23,17 @@ export interface FolderServiceOptions {
   /** Whether to show a notification on errors. Defaults to only when there's a config file. */
   notifyOnError?: boolean;
   logger: Logger;
+}
+
+/** The file dprint formats a document as. */
+export interface FormatFile {
+  /**
+   * The file path to format the document's text as, which differs from the document's
+   * for documents that aren't on the file system (ex. untitled documents and notebook cells).
+   */
+  filePath: string;
+  /** The notebook file's path when the document is a notebook cell. */
+  notebookPath?: string;
 }
 
 /** Represents an instance of dprint for a single directory. */
@@ -154,12 +166,17 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     }
   }
 
+  /** Gets if one of the plugins handles the file based on its file name or extension. */
+  hasPluginForFile(filePath: string) {
+    return hasPluginForFile(this.#editorInfo?.plugins ?? [], filePath);
+  }
+
   /**
    * Gets if a plugin can format the file. This is stricter than the cli's check,
    * which only checks the config's includes and excludes.
    */
   async canFormatWithPlugin(filePath: string) {
-    if (this.#editorService == null || !hasPluginForFile(this.#editorInfo?.plugins ?? [], filePath)) {
+    if (this.#editorService == null || !this.hasPluginForFile(filePath)) {
       return false;
     }
     try {
@@ -171,16 +188,16 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   /**
-   * Formats the document. The file path defaults to the document's and is provided
-   * for documents that aren't on the file system (ex. untitled documents).
+   * Formats the document. The file defaults to the document's and is provided for
+   * documents that aren't on the file system (ex. untitled documents and notebook cells).
    */
   provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
-    filePath = document.fileName,
+    file: FormatFile = { filePath: document.fileName },
   ) {
-    return this.#formatDocument(document, filePath, undefined, token);
+    return this.#formatDocument(document, file, undefined, token);
   }
 
   provideDocumentRangeFormattingEdits(
@@ -188,17 +205,18 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     range: vscode.Range,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
-    filePath = document.fileName,
+    file: FormatFile = { filePath: document.fileName },
   ) {
-    return this.#formatDocument(document, filePath, range, token);
+    return this.#formatDocument(document, file, range, token);
   }
 
   async #formatDocument(
     document: vscode.TextDocument,
-    filePath: string,
+    file: FormatFile,
     range: vscode.Range | undefined,
     token: vscode.CancellationToken,
   ) {
+    const filePath = file.filePath;
     if (this.#editorInfo != null && this.#editorInfo.plugins.length === 0) {
       return undefined;
     }
@@ -209,7 +227,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return []; // not ready yet
       }
 
-      if (!(await this.#editorService.canFormat(filePath))) {
+      if (!(await this.#canFormatFile(this.#editorService, file))) {
         this.#logger.logDebug("Response - File not matched:", filePath);
         return undefined;
       }
@@ -221,7 +239,13 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       const byteRange = offsetRange == null
         ? undefined
         : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
-      const newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
+      let newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
+      if (newText != null && file.notebookPath != null) {
+        newText = trimFormattedCellText(fileText, newText, offsetRange);
+        if (newText === fileText) {
+          newText = undefined;
+        }
+      }
       if (newText == null) {
         this.#logger.logDebug("Response - Formatted (No change):", filePath);
         return [];
@@ -247,6 +271,17 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       this.#logger.logError("Error formatting text.", err);
       return [];
     }
+  }
+
+  async #canFormatFile(editorService: EditorService, file: FormatFile) {
+    if (file.notebookPath == null) {
+      return await editorService.canFormat(file.filePath);
+    }
+    // The cli formats a notebook's cells when a plugin (the jupyter plugin) formats
+    // the notebook, so only format a cell when the notebook would be formatted.
+    return this.hasPluginForFile(file.notebookPath)
+      && this.hasPluginForFile(file.filePath)
+      && await editorService.canFormat(file.notebookPath);
   }
 
   #setEditorService(newService: EditorService | undefined) {

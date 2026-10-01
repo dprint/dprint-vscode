@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
-import { isDprintExtensionId, UNTITLED_SCHEME } from "../constants";
+import { FILE_SCHEME, isDprintExtensionId, JUPYTER_NOTEBOOK_TYPE, UNTITLED_SCHEME } from "../constants";
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
+import { hasPluginForFile } from "../pluginFiles";
 import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
@@ -112,12 +113,14 @@ export function activateLegacy(
 
   async function updateFormattingRegistration() {
     const workspaceFolderUris = getFormattingWorkspaceFolderUris();
+    const notebookWorkspaceFolderUris = getNotebookFormattingWorkspaceFolderUris();
     const defaultFormatterLanguageIds = await getDefaultFormatterLanguageIds();
     if (disposed) {
       return;
     }
     const newRegistrationKey = JSON.stringify([
       workspaceFolderUris.map(uri => uri.toString()),
+      notebookWorkspaceFolderUris.map(uri => uri.toString()),
       defaultFormatterLanguageIds,
       userDataFilePaths,
     ]);
@@ -134,15 +137,24 @@ export function activateLegacy(
       // we can't use the "includes" and "excludes" patterns from the config file because we
       // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
       // pattern matching being the same.
-      ...workspaceFolderUris.map(uri => ({ scheme: "file", pattern: new vscode.RelativePattern(uri, "**/*") })),
+      ...workspaceFolderUris.map(uri => ({ scheme: FILE_SCHEME, pattern: new vscode.RelativePattern(uri, "**/*") })),
+      // Notebook cells are formatted when a plugin (the jupyter plugin) formats the notebook
+      // (see FolderService). When a notebook type is specified, vscode matches the scheme
+      // and pattern against the notebook's uri instead of the cell's.
+      ...notebookWorkspaceFolderUris.map(uri => ({
+        notebookType: JUPYTER_NOTEBOOK_TYPE,
+        scheme: FILE_SCHEME,
+        pattern: new vscode.RelativePattern(uri, "**/*"),
+      })),
       // Files outside of those are only formatted when the user chose dprint as the
       // default formatter for the language. They're formatted using the file's closest
       // ancestor config file or the global config file. This is limited to those languages
       // so that dprint doesn't cause a "multiple formatters" prompt for other files.
       ...defaultFormatterLanguageIds.flatMap(language => [
-        { scheme: "file", language },
+        { scheme: FILE_SCHEME, language },
         // untitled documents are formatted as a file in the workspace (see WorkspaceService)
         { scheme: UNTITLED_SCHEME, language },
+        { notebookType: JUPYTER_NOTEBOOK_TYPE, scheme: FILE_SCHEME, language },
       ]),
       // User data files (ex. the user settings.json) aren't file scheme documents. They're
       // only registered when a plugin in the file's config can format them.
@@ -198,6 +210,12 @@ export function activateLegacy(
 
   function getFormattingWorkspaceFolderUris() {
     return folderInfos.filter(folderInfo => folderInfo.editorInfo.plugins.length > 0).map(folderInfo => folderInfo.uri);
+  }
+
+  function getNotebookFormattingWorkspaceFolderUris() {
+    return folderInfos
+      .filter(folderInfo => hasPluginForFile(folderInfo.editorInfo.plugins, "notebook.ipynb"))
+      .map(folderInfo => folderInfo.uri);
   }
 }
 
