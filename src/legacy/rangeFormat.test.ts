@@ -66,4 +66,77 @@ describe("getRangeFormatEdit", () => {
     // the formatted text is shorter than the unchanged text around the range
     assert.strictEqual(getRangeFormatEdit("aaXaa", "aaa", { start: 2, end: 3 }), undefined);
   });
+
+  describe("line endings that differ from the document's", () => {
+    const crlfText = "let  a = 1;\r\nlet  b = 2;\r\nlet  c = 3;\r\n";
+    const crlfSecondLine = { start: 13, end: 26 };
+
+    it("returns an edit for a CRLF document when the formatted text uses LF", () => {
+      const formatted = "let  a = 1;\nlet b = 2;\nlet  c = 3;\n";
+      assert.deepStrictEqual(getRangeFormatEdit(crlfText, formatted, crlfSecondLine), {
+        start: 13,
+        end: 26,
+        newText: "let b = 2;\r\n",
+      });
+    });
+
+    it("uses the document's line endings within the new text", () => {
+      const formatted = "let  a = 1;\nlet b =\n  2;\nlet  c = 3;\n";
+      assert.deepStrictEqual(getRangeFormatEdit(crlfText, formatted, crlfSecondLine), {
+        start: 13,
+        end: 26,
+        newText: "let b =\r\n  2;\r\n",
+      });
+    });
+
+    it("returns an edit for the first and last lines of a CRLF document", () => {
+      const originalText = "let  a = 1;\r\nlet  b = 2;\r\nlet  c = 3;";
+      assert.deepStrictEqual(
+        getRangeFormatEdit(originalText, "let a = 1;\nlet  b = 2;\nlet  c = 3;", { start: 0, end: 13 }),
+        { start: 0, end: 13, newText: "let a = 1;\r\n" },
+      );
+      assert.deepStrictEqual(
+        getRangeFormatEdit(originalText, "let  a = 1;\nlet  b = 2;\nlet c = 3;\n", { start: 26, end: 37 }),
+        { start: 26, end: 37, newText: "let c = 3;\r\n" },
+      );
+    });
+
+    it("returns an edit for a CRLF document when the formatted text has mixed line endings", () => {
+      // ex. a notebook cell's formatted text gets the cell's original trailing whitespace
+      const formatted = "let  a = 1;\nlet b = 2;\nlet  c = 3;\r\n";
+      assert.deepStrictEqual(getRangeFormatEdit(crlfText, formatted, crlfSecondLine), {
+        start: 13,
+        end: 26,
+        newText: "let b = 2;\r\n",
+      });
+    });
+
+    it("returns an edit for an LF document when the formatted text uses CRLF", () => {
+      const formatted = "let  a = 1;\r\nlet b = 2;\r\nlet  c = 3;\r\n";
+      assert.deepStrictEqual(getRangeFormatEdit(text, formatted, secondLine), {
+        start: 12,
+        end: 24,
+        newText: "let b = 2;\n",
+      });
+    });
+
+    it("returns undefined for a CRLF document when text outside the range changed", () => {
+      assert.strictEqual(
+        getRangeFormatEdit(crlfText, "let a = 1;\nlet b = 2;\nlet  c = 3;\n", crlfSecondLine),
+        undefined,
+      );
+      assert.strictEqual(
+        getRangeFormatEdit(crlfText, "let  a = 1;\nlet b = 2;\nlet c = 3;\n", crlfSecondLine),
+        undefined,
+      );
+    });
+
+    it("leaves the formatted text's line endings alone when the document has no line endings", () => {
+      assert.deepStrictEqual(getRangeFormatEdit("let  a = 1;", "let a = 1;\r\n", { start: 0, end: 11 }), {
+        start: 0,
+        end: 11,
+        newText: "let a = 1;\r\n",
+      });
+    });
+  });
 });
