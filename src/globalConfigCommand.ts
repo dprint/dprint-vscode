@@ -29,11 +29,19 @@ export type NotFormattedReason =
   | "noConfigFile"
   /** The config file's includes and excludes don't match the file. */
   | "notMatched"
+  /** The config file has no plugins. */
+  | "noPlugins"
   /**
    * Nothing changed and none of the config file's plugins handle the file's name or extension. The
-   * extension doesn't know the config file's associations, so a plugin may still have formatted it.
+   * extension doesn't know the config file's associations and shebangs or the file's shebang, so a
+   * plugin may still have formatted it.
    */
   | "noPlugin"
+  /**
+   * None of the config file's plugins handle the notebook cell's notebook file or the file the cell
+   * is formatted as based on its language. The extension doesn't format a cell in that case.
+   */
+  | "noCellPlugin"
   /** Starting dprint or formatting failed, which is logged. */
   | "failed";
 
@@ -63,9 +71,15 @@ export function getNotFormattedMessage(reason: NotFormattedReason) {
     case "notMatched":
       return "dprint did not format this document because the \"includes\" and \"excludes\" of the "
         + "configuration file in use don't match it.";
+    case "noPlugins":
+      return "dprint did not format this document because the configuration file in use has no plugins.";
     case "noPlugin":
       return "dprint did not change this document. No plugin in the configuration file in use handles its file name "
-        + "or extension, so it's only formatted when the configuration file associates a plugin with it.";
+        + "or extension, so it's only formatted when the \"associations\" or \"shebangs\" of the configuration "
+        + "file match it to a plugin.";
+    case "noCellPlugin":
+      return "dprint did not format this notebook cell. A cell is only formatted when the plugins in the "
+        + "configuration file in use handle both the notebook file (ex. the jupyter plugin) and the cell's language.";
     case "failed":
       return "dprint failed to format this document. See the dprint output for details.";
   }

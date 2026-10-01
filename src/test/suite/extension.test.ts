@@ -178,8 +178,19 @@ suite("Extension Test Suite", function() {
     process.env.DPRINT_CONFIG_DIR = path.join(noConfigDir, "no-global-config");
     try {
       await formatAndAssertMessage(/No dprint configuration file found/);
+
+      // the global config file has no plugins
+      const noPluginsConfigDir = path.join(noConfigDir, "no-plugins-global-config");
+      fs.mkdirSync(noPluginsConfigDir);
+      fs.writeFileSync(path.join(noPluginsConfigDir, "dprint.json"), JSON.stringify({ plugins: [] }), "utf8");
+      process.env.DPRINT_CONFIG_DIR = noPluginsConfigDir;
+      // restart because the dprint process that's running for the global config file was
+      // started with the other directory and is otherwise used until its config file changes
+      await vscode.commands.executeCommand("dprint.restart");
+      await formatAndAssertMessage(/the configuration file in use has no plugins/);
     } finally {
       process.env.DPRINT_CONFIG_DIR = globalConfigDir;
+      await vscode.commands.executeCommand("dprint.restart");
     }
     assert.equal(textDoc.getText(), "some   text");
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");

@@ -107,11 +107,28 @@ describe("getNotFormattedMessage", () => {
     );
   });
 
+  it("says the config file has no plugins when it has none", () => {
+    assert.strictEqual(
+      getNotFormattedMessage("noPlugins"),
+      "dprint did not format this document because the configuration file in use has no plugins.",
+    );
+  });
+
   it("says no plugin handles the document when there's no plugin for it", () => {
+    // worded to stay true for an already formatted file that an association or shebang matches
     assert.strictEqual(
       getNotFormattedMessage("noPlugin"),
       "dprint did not change this document. No plugin in the configuration file in use handles its file name "
-        + "or extension, so it's only formatted when the configuration file associates a plugin with it.",
+        + "or extension, so it's only formatted when the \"associations\" or \"shebangs\" of the configuration "
+        + "file match it to a plugin.",
+    );
+  });
+
+  it("says which plugins a notebook cell needs when there's no plugin for it", () => {
+    assert.strictEqual(
+      getNotFormattedMessage("noCellPlugin"),
+      "dprint did not format this notebook cell. A cell is only formatted when the plugins in the "
+        + "configuration file in use handle both the notebook file (ex. the jupyter plugin) and the cell's language.",
     );
   });
 

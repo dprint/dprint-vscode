@@ -9,6 +9,7 @@ import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
+import { type FormatFile, getCannotFormatReason } from "./formatFile";
 import { trimFormattedCellText } from "./notebookCellText";
 import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
@@ -24,17 +25,6 @@ export interface FolderServiceOptions {
   /** Whether to show a notification on errors. Defaults to only when there's a config file. */
   notifyOnError?: boolean;
   logger: Logger;
-}
-
-/** The file dprint formats a document as. */
-export interface FormatFile {
-  /**
-   * The file path to format the document's text as, which differs from the document's
-   * for documents that aren't on the file system (ex. untitled documents and notebook cells).
-   */
-  filePath: string;
-  /** The notebook file's path when the document is a notebook cell. */
-  notebookPath?: string;
 }
 
 /** Represents an instance of dprint for a single directory. */
@@ -224,7 +214,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   ): Promise<FormatDocumentResult> {
     const filePath = file.filePath;
     if (this.#editorInfo != null && this.#editorInfo.plugins.length === 0) {
-      return { notFormattedReason: "noPlugin" };
+      return { notFormattedReason: "noPlugins" };
     }
 
     try {
@@ -233,9 +223,17 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return { notFormattedReason: "failed" }; // not ready yet
       }
 
-      if (!(await this.#canFormatFile(this.#editorService, file))) {
-        this.#logger.logDebug("Response - File not matched:", filePath);
-        return { notFormattedReason: "notMatched" };
+      const editorService = this.#editorService;
+      const cannotFormatReason = await getCannotFormatReason(file, {
+        hasPluginForFile: filePath => this.hasPluginForFile(filePath),
+        canFormat: filePath => editorService.canFormat(filePath),
+      });
+      if (cannotFormatReason != null) {
+        this.#logger.logDebug(
+          cannotFormatReason === "notMatched" ? "Response - File not matched:" : "Response - No plugin for the cell:",
+          filePath,
+        );
+        return { notFormattedReason: cannotFormatReason };
       }
 
       const fileText = document.getText();
@@ -245,10 +243,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       const byteRange = offsetRange == null
         ? undefined
         : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
-      let newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
+      let newText = await editorService.formatText(filePath, fileText, byteRange, token);
       // The cli responds the same way for a file that's already formatted as for one without a
       // plugin. A file without a plugin based on its name may still have been formatted because
-      // of the config's associations, which aren't known here, so this reason says that.
+      // of the config's associations or shebangs, which aren't known here, so this reason says that.
       if (newText == null && !this.hasPluginForFile(filePath)) {
         this.#logger.logDebug("Response - No change and no plugin for the file name:", filePath);
         return { notFormattedReason: "noPlugin" };
@@ -288,17 +286,6 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       this.#logger.logError("Error formatting text.", err);
       return { notFormattedReason: "failed" };
     }
-  }
-
-  async #canFormatFile(editorService: EditorService, file: FormatFile) {
-    if (file.notebookPath == null) {
-      return await editorService.canFormat(file.filePath);
-    }
-    // The cli formats a notebook's cells when a plugin (the jupyter plugin) formats
-    // the notebook, so only format a cell when the notebook would be formatted.
-    return this.hasPluginForFile(file.notebookPath)
-      && this.hasPluginForFile(file.filePath)
-      && await editorService.canFormat(file.notebookPath);
   }
 
   #setEditorService(newService: EditorService | undefined) {
