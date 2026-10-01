@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { getCombinedDprintConfig, getDprintConfig } from "./config";
-import { findConfigFileInAncestorDirectories } from "./configPaths";
+import { AncestorConfigFileCache } from "./configPaths";
 import { DPRINT_CONFIG_FILEPATH_GLOB, FILE_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
@@ -43,9 +43,16 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand("dprint.formatWithGlobalConfig", formatWithGlobalConfig));
 
   // only show the command to format using the global config file for files it would be used for
-  const environment = new RealEnvironment(logger);
+  // cached so that changing the active editor doesn't always hit the file system
+  const ancestorConfigFileCache = new AncestorConfigFileCache(new RealEnvironment(logger));
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
+  // config files outside the workspace aren't watched, so check again after the user comes back to the window
+  context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
+    if (state.focused) {
+      onConfigFilesMaybeChanged();
+    }
+  }));
   updateCanFormatWithGlobalConfig();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
@@ -61,8 +68,8 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
-  context.subscriptions.push(fileSystemWatcher.onDidCreate(updateCanFormatWithGlobalConfig));
-  context.subscriptions.push(fileSystemWatcher.onDidDelete(updateCanFormatWithGlobalConfig));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(onConfigFilesMaybeChanged));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(onConfigFilesMaybeChanged));
 
   // reinitialize when the vscode configuration changes
   let hasShownLspWarning = false;
@@ -117,6 +124,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
+  function onConfigFilesMaybeChanged() {
+    ancestorConfigFileCache.clear();
+    updateCanFormatWithGlobalConfig();
+  }
+
   async function updateCanFormatWithGlobalConfig() {
     const updateId = ++canFormatWithGlobalConfigUpdateId;
     let value = false;
@@ -141,7 +153,7 @@ export async function activate(context: vscode.ExtensionContext) {
       return false;
     }
     const dirPath = path.dirname(document.uri.fsPath);
-    return await findConfigFileInAncestorDirectories(environment, dirPath) == null;
+    return await ancestorConfigFileCache.find(dirPath) == null;
   }
 
   /** Formats the active document using the global config file. */
