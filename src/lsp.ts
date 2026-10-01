@@ -73,9 +73,9 @@ export function activateLsp(
       await client.start();
       logger.logInfo("Started experimental language server.");
     },
-    onConfigFileChanged() {
-      // the language server is restarted to pick up config changes
-      return backend.reInitialize();
+    async onConfigFileChanged() {
+      // the language server resolves the config file on each
+      // format request, so it picks up the changes itself
     },
     async dispose() {
       emptySchemaProvider.dispose();
