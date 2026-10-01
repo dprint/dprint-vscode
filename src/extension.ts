@@ -1,11 +1,17 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
-import { getCombinedDprintConfig } from "./config";
-import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import { getCombinedDprintConfig, getDprintConfig } from "./config";
+import { findConfigFileInAncestorDirectories } from "./configPaths";
+import { DPRINT_CONFIG_FILEPATH_GLOB, FILE_SCHEME } from "./constants";
+import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
+
+/** The context key for if the command to format using the global config file is shown. */
+const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
 
 class GlobalPluginState {
   constructor(
@@ -35,6 +41,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // reinitialize on workspace folder changes
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
   context.subscriptions.push(vscode.commands.registerCommand("dprint.formatWithGlobalConfig", formatWithGlobalConfig));
+
+  // only show the command to format using the global config file for files it would be used for
+  const environment = new RealEnvironment(logger);
+  let canFormatWithGlobalConfigUpdateId = 0;
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
+  updateCanFormatWithGlobalConfig();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
   // reinitialize when a configuration file is created or deleted and let the backend handle changes
@@ -49,11 +61,14 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(updateCanFormatWithGlobalConfig));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(updateCanFormatWithGlobalConfig));
 
   // reinitialize when the vscode configuration changes
   let hasShownLspWarning = false;
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
+      updateCanFormatWithGlobalConfig();
       if (isLsp() !== backend?.isLsp && !hasShownLspWarning) {
         // I tried really hard to not have to reload, but having everything clean up
         // properly was a pain and I think there might be stuff going on in the
@@ -100,6 +115,33 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.logError("Error initializing:", err);
       return false;
     }
+  }
+
+  async function updateCanFormatWithGlobalConfig() {
+    const updateId = ++canFormatWithGlobalConfigUpdateId;
+    let value = false;
+    try {
+      value = await canFormatWithGlobalConfig(vscode.window.activeTextEditor?.document);
+    } catch (err) {
+      logger.logError("Error checking if a document may be formatted with the global configuration file:", err);
+    }
+    // ignore when superseded by a newer update
+    if (updateId === canFormatWithGlobalConfigUpdateId) {
+      await vscode.commands.executeCommand("setContext", CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY, value);
+    }
+  }
+
+  /**
+   * Gets if the command would format the document using the global config file, which is
+   * when the document has no config file in an ancestor directory. It's not necessary
+   * when the user enabled always using the global config file.
+   */
+  async function canFormatWithGlobalConfig(document: vscode.TextDocument | undefined) {
+    if (document == null || document.uri.scheme !== FILE_SCHEME || getDprintConfig(document.uri).useGlobalConfig) {
+      return false;
+    }
+    const dirPath = path.dirname(document.uri.fsPath);
+    return await findConfigFileInAncestorDirectories(environment, dirPath) == null;
   }
 
   /** Formats the active document using the global config file. */

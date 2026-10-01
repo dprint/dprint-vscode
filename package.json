@@ -32,6 +32,14 @@
         "title": "Dprint: Format Document (global config)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "dprint.formatWithGlobalConfig",
+          "when": "dprint.canFormatWithGlobalConfig"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "dprint",
