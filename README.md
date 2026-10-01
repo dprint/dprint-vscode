@@ -50,7 +50,8 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // (requires dprint 0.59+)
   "dprint.ensureStableFormat": false,
   // Change this to `true` to format files that don't have a dprint configuration file
-  // in an ancestor directory using the global configuration file. When `false`, use the
+  // in an ancestor directory using the global configuration file. This only applies to
+  // languages where dprint is the default formatter. Regardless of this setting, use the
   // "Dprint: Format Document (global config)" or "Dprint: Format Selection (global config)"
   // command to format a file using it.
   "dprint.useGlobalConfig": false

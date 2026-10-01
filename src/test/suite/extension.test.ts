@@ -11,6 +11,8 @@ suite("Extension Test Suite", function() {
 
   // see runTest.ts, which creates the workspace folder and opens it when launching vscode
   const workspaceDir = process.env.DPRINT_TEST_WORKSPACE_DIR!;
+  // a directory outside the workspace without a config file
+  const noConfigDir = process.env.DPRINT_TEST_NO_CONFIG_DIR!;
   let fileCount = 0;
 
   const context = {
@@ -127,6 +129,98 @@ suite("Extension Test Suite", function() {
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
     await doc.save();
   });
+
+  test("format with global config command", async function() {
+    // a config file in an ancestor directory of the temp directory would be used instead of the global one
+    if (hasAncestorConfigFile(noConfigDir)) {
+      this.skip();
+    }
+    const uri = vscode.Uri.file(path.join(noConfigDir, "global.json"));
+    fs.writeFileSync(uri.fsPath, `{\n"test":     5\n}`, "utf8");
+
+    const doc = await context.openAndShowDocument(uri);
+    const messages = await captureMessages(() => vscode.commands.executeCommand("dprint.formatWithGlobalConfig"));
+
+    // should be formatted with the indent width of the global config file (see runTest.ts)
+    assert.equal(doc.getText(), `{\n    "test": 5\n}\n`);
+    assert.deepStrictEqual(messages, []);
+
+    // says nothing when the document is already formatted
+    assert.deepStrictEqual(
+      await captureMessages(() => vscode.commands.executeCommand("dprint.formatWithGlobalConfig")),
+      [],
+    );
+    assert.equal(doc.getText(), `{\n    "test": 5\n}\n`);
+  });
+
+  test("format with global config command says why a document wasn't formatted", async function() {
+    if (hasAncestorConfigFile(noConfigDir)) {
+      this.skip();
+    }
+    const formatAndAssertMessage = async (expectedMessage: RegExp) => {
+      // every time and not only the first time in a session
+      for (let i = 0; i < 2; i++) {
+        const messages = await captureMessages(() => vscode.commands.executeCommand("dprint.formatWithGlobalConfig"));
+        assert.equal(messages.length, 1);
+        assert.match(messages[0], expectedMessage);
+      }
+    };
+
+    // the global config file has no plugin for this file
+    const textFileUri = vscode.Uri.file(path.join(noConfigDir, "global.txt"));
+    fs.writeFileSync(textFileUri.fsPath, "some   text", "utf8");
+    const textDoc = await context.openAndShowDocument(textFileUri);
+    await formatAndAssertMessage(/No plugin in the configuration file in use handles its file name or extension/);
+
+    // there's no global config file
+    // (the extension reads this in the extension host, which is this process)
+    const globalConfigDir = process.env.DPRINT_CONFIG_DIR;
+    process.env.DPRINT_CONFIG_DIR = path.join(noConfigDir, "no-global-config");
+    try {
+      await formatAndAssertMessage(/No dprint configuration file found/);
+    } finally {
+      process.env.DPRINT_CONFIG_DIR = globalConfigDir;
+    }
+    assert.equal(textDoc.getText(), "some   text");
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+
+    // the global config file excludes this file (see runTest.ts)
+    const excludedFileUri = vscode.Uri.file(path.join(noConfigDir, "global.excluded.json"));
+    fs.writeFileSync(excludedFileUri.fsPath, `{\n"test":     5\n}`, "utf8");
+    const excludedDoc = await context.openAndShowDocument(excludedFileUri);
+    await formatAndAssertMessage(/"includes" and "excludes" of the configuration file in use don't match it/);
+    assert.equal(excludedDoc.getText(), `{\n"test":     5\n}`);
+  });
+
+  /**
+   * Runs the action and returns the messages the extension showed while it ran. The tests
+   * are part of the extension, so they have the same instance of vscode's api as it does.
+   */
+  async function captureMessages(action: () => Thenable<unknown>) {
+    const messages: string[] = [];
+    const window = vscode.window as any;
+    const { showInformationMessage, showWarningMessage } = window;
+    const showMessage = (message: string) => {
+      messages.push(message);
+      return Promise.resolve(undefined);
+    };
+    window.showInformationMessage = showMessage;
+    window.showWarningMessage = showMessage;
+    try {
+      await action();
+    } finally {
+      window.showInformationMessage = showInformationMessage;
+      window.showWarningMessage = showWarningMessage;
+    }
+    return messages;
+  }
+
+  function hasAncestorConfigFile(dirPath: string): boolean {
+    const hasConfigFile = ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"]
+      .some(fileName => fs.existsSync(path.join(dirPath, fileName)));
+    const parentPath = path.dirname(dirPath);
+    return hasConfigFile || parentPath !== dirPath && hasAncestorConfigFile(parentPath);
+  }
 
   async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
     const edit = new vscode.WorkspaceEdit();

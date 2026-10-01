@@ -8,6 +8,8 @@ export const FILE_SCHEME = "file";
 export const UNTITLED_SCHEME = "untitled";
 /** The scheme of notebook cell documents. */
 export const NOTEBOOK_CELL_SCHEME = "vscode-notebook-cell";
+/** The scheme of user data files such as the user settings.json. */
+export const USER_DATA_SCHEME = "vscode-userdata";
 /** The notebook type of jupyter notebooks (.ipynb files). */
 export const JUPYTER_NOTEBOOK_TYPE = "jupyter-notebook";
 

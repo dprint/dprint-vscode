@@ -3,6 +3,7 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
 import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
+import type { FormatDocumentResult } from "../ExtensionBackend";
 import { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
 import { ObjectDisposedError } from "../utils";
@@ -192,45 +193,49 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
    * Formats the document. The file defaults to the document's and is provided for
    * documents that aren't on the file system (ex. untitled documents and notebook cells).
    */
-  provideDocumentFormattingEdits(
+  async provideDocumentFormattingEdits(
     document: vscode.TextDocument,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
     file: FormatFile = { filePath: document.fileName },
   ) {
-    return this.#formatDocument(document, file, undefined, token);
+    return getProviderEdits(await this.formatDocument(document, file, undefined, token));
   }
 
-  provideDocumentRangeFormattingEdits(
+  async provideDocumentRangeFormattingEdits(
     document: vscode.TextDocument,
     range: vscode.Range,
     _options: vscode.FormattingOptions,
     token: vscode.CancellationToken,
     file: FormatFile = { filePath: document.fileName },
   ) {
-    return this.#formatDocument(document, file, range, token);
+    return getProviderEdits(await this.formatDocument(document, file, range, token));
   }
 
-  async #formatDocument(
+  /**
+   * Formats the document, or only the range when provided, as the file. Unlike the formatting
+   * provider methods, this says why the document wasn't formatted when that's the case.
+   */
+  async formatDocument(
     document: vscode.TextDocument,
     file: FormatFile,
     range: vscode.Range | undefined,
     token: vscode.CancellationToken,
-  ) {
+  ): Promise<FormatDocumentResult> {
     const filePath = file.filePath;
     if (this.#editorInfo != null && this.#editorInfo.plugins.length === 0) {
-      return undefined;
+      return { notFormattedReason: "noPlugin" };
     }
 
     try {
       if (this.#editorService == null) {
         this.#logger.logWarn("Editor service not ready on format request.");
-        return []; // not ready yet
+        return { notFormattedReason: "failed" }; // not ready yet
       }
 
       if (!(await this.#canFormatFile(this.#editorService, file))) {
         this.#logger.logDebug("Response - File not matched:", filePath);
-        return undefined;
+        return { notFormattedReason: "notMatched" };
       }
 
       const fileText = document.getText();
@@ -241,6 +246,13 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         ? undefined
         : getUtf8ByteRange(fileText, offsetRange.start, offsetRange.end);
       let newText = await this.#editorService.formatText(filePath, fileText, byteRange, token);
+      // The cli responds the same way for a file that's already formatted as for one without a
+      // plugin. A file without a plugin based on its name may still have been formatted because
+      // of the config's associations, which aren't known here, so this reason says that.
+      if (newText == null && !this.hasPluginForFile(filePath)) {
+        this.#logger.logDebug("Response - No change and no plugin for the file name:", filePath);
+        return { notFormattedReason: "noPlugin" };
+      }
       if (newText != null && file.notebookPath != null) {
         newText = trimFormattedCellText(fileText, newText, offsetRange);
         if (newText === fileText) {
@@ -249,32 +261,32 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       }
       if (newText == null) {
         this.#logger.logDebug("Response - Formatted (No change):", filePath);
-        return [];
+        return { edits: [] };
       }
 
       if (offsetRange != null) {
         const edit = getRangeFormatEdit(fileText, newText, offsetRange);
         if (edit == null) {
           this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
-          return [];
+          return { edits: [] };
         }
         if (isNoChangeEdit(fileText, edit)) {
           this.#logger.logDebug("Response - Formatted (No change):", filePath);
-          return [];
+          return { edits: [] };
         }
         const editRange = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
         this.#logger.logDebug("Response - Formatted range:", filePath);
-        return [vscode.TextEdit.replace(editRange, edit.newText)];
+        return { edits: [vscode.TextEdit.replace(editRange, edit.newText)] };
       }
 
       const lastLineNumber = document.lineCount - 1;
       const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
-      const result = [vscode.TextEdit.replace(replaceRange, newText)];
+      const edits = [vscode.TextEdit.replace(replaceRange, newText)];
       this.#logger.logDebug("Response - Formatted:", filePath);
-      return result;
+      return { edits };
     } catch (err: any) {
       this.#logger.logError("Error formatting text.", err);
-      return [];
+      return { notFormattedReason: "failed" };
     }
   }
 
@@ -325,4 +337,15 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
       this.#logger.logErrorAndNotify(notificationMessage, message, ...args);
     }
   }
+}
+
+/**
+ * Gets what a formatting provider returns for the result, which is no edits
+ * when formatting failed and undefined when dprint doesn't format the file.
+ */
+function getProviderEdits(result: FormatDocumentResult) {
+  if (result.edits != null) {
+    return result.edits;
+  }
+  return result.notFormattedReason === "failed" ? [] : undefined;
 }
