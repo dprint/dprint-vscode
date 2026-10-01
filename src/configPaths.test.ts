@@ -2,6 +2,7 @@ import * as assert from "node:assert";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  AncestorConfigFileCache,
   filterCacheDirConfigFiles,
   findClosestFolder,
   findConfigFileInAncestorDirectories,
@@ -10,6 +11,7 @@ import {
   isPathWithin,
   resolveLooseFolderConfig,
 } from "./configPaths";
+import type { Environment } from "./environment";
 import { TestEnvironment } from "./TestEnvironment";
 
 const homeDir = path.resolve("/home/user");
@@ -142,6 +144,61 @@ describe("findConfigFileInAncestorDirectories", () => {
     const env = new TestEnvironment();
 
     assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), undefined);
+  });
+});
+
+describe("AncestorConfigFileCache", () => {
+  function setup() {
+    const env = new TestEnvironment({ homeDir });
+    const checkedPaths: string[] = [];
+    // only the file existence checks are used
+    const countingEnv = {
+      fileExists(filePath: string) {
+        checkedPaths.push(filePath);
+        return env.fileExists(filePath);
+      },
+    } as unknown as Environment;
+    return { env, checkedPaths, cache: new AncestorConfigFileCache(countingEnv) };
+  }
+
+  it("finds the config file in the closest ancestor directory", async () => {
+    const { env, cache } = setup();
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+    env.writeFile(path.resolve("/project/sub/.dprint.jsonc"), "{}");
+
+    assert.strictEqual(await cache.find(path.resolve("/project/src")), path.resolve("/project/dprint.json"));
+    assert.strictEqual(await cache.find(path.resolve("/project")), path.resolve("/project/dprint.json"));
+    assert.strictEqual(await cache.find(path.resolve("/project/sub/dir")), path.resolve("/project/sub/.dprint.jsonc"));
+    assert.strictEqual(await cache.find(path.resolve("/other/dir")), undefined);
+  });
+
+  it("does not check the file system again for directories it already looked in", async () => {
+    const { env, checkedPaths, cache } = setup();
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+
+    await cache.find(path.resolve("/project/src/a"));
+    assert.ok(checkedPaths.length > 0);
+    checkedPaths.length = 0;
+
+    // same directory
+    assert.strictEqual(await cache.find(path.resolve("/project/src/a")), path.resolve("/project/dprint.json"));
+    assert.deepStrictEqual(checkedPaths, []);
+
+    // a sibling directory only checks itself
+    assert.strictEqual(await cache.find(path.resolve("/project/src/b")), path.resolve("/project/dprint.json"));
+    assert.ok(checkedPaths.length > 0);
+    assert.ok(checkedPaths.every(checkedPath => path.dirname(checkedPath) === path.resolve("/project/src/b")));
+  });
+
+  it("checks the file system again after being cleared", async () => {
+    const { env, cache } = setup();
+    assert.strictEqual(await cache.find(path.resolve("/project/src")), undefined);
+
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+    assert.strictEqual(await cache.find(path.resolve("/project/src")), undefined);
+
+    cache.clear();
+    assert.strictEqual(await cache.find(path.resolve("/project/src")), path.resolve("/project/dprint.json"));
   });
 });
 

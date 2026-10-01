@@ -56,6 +56,9 @@ export function activateLegacy(
     isLsp: false,
     reInitialize,
     onConfigFileChanged: scheduleConfigFileRefresh,
+    provideGlobalConfigFormattingEdits(document, range, options, token) {
+      return workspaceService.provideGlobalConfigFormattingEdits(document, range, options, token);
+    },
     dispose() {
       disposed = true;
       initializationDisposables.dispose();

@@ -123,6 +123,54 @@ export async function findConfigFileInAncestorDirectories(env: Environment, dirP
 }
 
 /**
+ * Finds the config file in a directory or its closest ancestor directory like
+ * `findConfigFileInAncestorDirectories`, but caches the result for each directory
+ * it looks in. This is so that finding the config file for a directory that was
+ * already searched, or that shares ancestor directories with one that was, doesn't
+ * hit the file system again. The cache needs to be cleared when a config file may
+ * have been created or deleted.
+ */
+export class AncestorConfigFileCache {
+  readonly #env: Environment;
+  readonly #configFilePathsByDir = new Map<string, Promise<string | undefined>>();
+
+  constructor(env: Environment) {
+    this.#env = env;
+  }
+
+  find(dirPath: string): Promise<string | undefined> {
+    let configFilePath = this.#configFilePathsByDir.get(dirPath);
+    if (configFilePath == null) {
+      const newConfigFilePath = this.#find(dirPath);
+      configFilePath = newConfigFilePath;
+      this.#configFilePathsByDir.set(dirPath, newConfigFilePath);
+      // don't cache failures
+      newConfigFilePath.catch(() => {
+        if (this.#configFilePathsByDir.get(dirPath) === newConfigFilePath) {
+          this.#configFilePathsByDir.delete(dirPath);
+        }
+      });
+    }
+    return configFilePath;
+  }
+
+  clear() {
+    this.#configFilePathsByDir.clear();
+  }
+
+  async #find(dirPath: string): Promise<string | undefined> {
+    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
+      const configFilePath = path.join(dirPath, configFileName);
+      if (await this.#env.fileExists(configFilePath)) {
+        return configFilePath;
+      }
+    }
+    const parentPath = path.dirname(dirPath);
+    return parentPath === dirPath ? undefined : this.find(parentPath);
+  }
+}
+
+/**
  * Finds the user's global config file. This mirrors how the dprint CLI
  * resolves the global config file.
  */

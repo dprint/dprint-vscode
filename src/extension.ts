@@ -1,11 +1,17 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
-import { getCombinedDprintConfig } from "./config";
-import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import { getCombinedDprintConfig, getDprintConfig } from "./config";
+import { AncestorConfigFileCache } from "./configPaths";
+import { DPRINT_CONFIG_FILEPATH_GLOB, FILE_SCHEME } from "./constants";
+import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 import { activateLsp } from "./lsp";
+
+/** The context key for if the commands to format using the global config file are shown. */
+const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
 
 class GlobalPluginState {
   constructor(
@@ -34,6 +40,31 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // reinitialize on workspace folder changes
   context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dprint.formatWithGlobalConfig",
+      () => formatWithGlobalConfig({ selection: false }),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "dprint.formatSelectionWithGlobalConfig",
+      () => formatWithGlobalConfig({ selection: true }),
+    ),
+  );
+
+  // only show the commands to format using the global config file for files it would be used for
+  // cached so that changing the active editor doesn't always hit the file system
+  const ancestorConfigFileCache = new AncestorConfigFileCache(new RealEnvironment(logger));
+  let canFormatWithGlobalConfigUpdateId = 0;
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
+  // config files outside the workspace aren't watched, so check again after the user comes back to the window
+  context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
+    if (state.focused) {
+      onConfigFilesMaybeChanged();
+    }
+  }));
+  updateCanFormatWithGlobalConfig();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
 
   // reinitialize when a configuration file is created or deleted and let the backend handle changes
@@ -48,11 +79,14 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(onConfigFilesMaybeChanged));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(onConfigFilesMaybeChanged));
 
   // reinitialize when the vscode configuration changes
   let hasShownLspWarning = false;
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
     if (evt.affectsConfiguration("dprint")) {
+      updateCanFormatWithGlobalConfig();
       if (isLsp() !== backend?.isLsp && !hasShownLspWarning) {
         // I tried really hard to not have to reload, but having everything clean up
         // properly was a pain and I think there might be stuff going on in the
@@ -98,6 +132,68 @@ export async function activate(context: vscode.ExtensionContext) {
     } catch (err) {
       logger.logError("Error initializing:", err);
       return false;
+    }
+  }
+
+  function onConfigFilesMaybeChanged() {
+    ancestorConfigFileCache.clear();
+    updateCanFormatWithGlobalConfig();
+  }
+
+  async function updateCanFormatWithGlobalConfig() {
+    const updateId = ++canFormatWithGlobalConfigUpdateId;
+    let value = false;
+    try {
+      value = await canFormatWithGlobalConfig(vscode.window.activeTextEditor?.document);
+    } catch (err) {
+      logger.logError("Error checking if a document may be formatted with the global configuration file:", err);
+    }
+    // ignore when superseded by a newer update
+    if (updateId === canFormatWithGlobalConfigUpdateId) {
+      await vscode.commands.executeCommand("setContext", CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY, value);
+    }
+  }
+
+  /**
+   * Gets if the command would format the document using the global config file, which is
+   * when the document has no config file in an ancestor directory. It's not necessary
+   * when the user enabled always using the global config file.
+   */
+  async function canFormatWithGlobalConfig(document: vscode.TextDocument | undefined) {
+    if (document == null || document.uri.scheme !== FILE_SCHEME || getDprintConfig(document.uri).useGlobalConfig) {
+      return false;
+    }
+    const dirPath = path.dirname(document.uri.fsPath);
+    return await ancestorConfigFileCache.find(dirPath) == null;
+  }
+
+  /** Formats the active document or its selection using the global config file. */
+  async function formatWithGlobalConfig(opts: { selection: boolean }) {
+    const editor = vscode.window.activeTextEditor;
+    if (editor == null || opts.selection && editor.selection.isEmpty) {
+      return;
+    }
+    const range = opts.selection ? editor.selection : undefined;
+    const tokenSource = new vscode.CancellationTokenSource();
+    try {
+      const document = editor.document;
+      const version = document.version;
+      const options: vscode.FormattingOptions = {
+        tabSize: typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4,
+        insertSpaces: editor.options.insertSpaces !== false,
+      };
+      const edits = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
+      // the edits don't apply to the document anymore when it changed while formatting
+      if (edits == null || edits.length === 0 || document.version !== version) {
+        return;
+      }
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      workspaceEdit.set(document.uri, edits);
+      await vscode.workspace.applyEdit(workspaceEdit);
+    } catch (err) {
+      logger.logError("Error formatting with the global configuration file:", err);
+    } finally {
+      tokenSource.dispose();
     }
   }
 }
