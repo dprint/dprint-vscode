@@ -9,6 +9,7 @@ describe("discoverConfigFiles", () => {
     assert.deepStrictEqual(await discoverConfigFiles(host), []);
 
     // it shouldn't wait for folders that may never be added or search an empty workspace
+    // (this is the only check for an empty workspace when initializing the folders)
     assert.deepStrictEqual(host.delays, []);
     assert.strictEqual(host.findFilesCount, 0);
     assert.strictEqual(host.findRootConfigFileCount, 0);
