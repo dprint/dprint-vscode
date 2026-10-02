@@ -83,8 +83,8 @@
             "null"
           ],
           "default": true,
-          "markdownDescription": "Show a notification the first time in a session that a file isn't formatted because no dprint configuration file was found for it. Regardless of this setting, the `Dprint: Format Document (global config)` and `Dprint: Format Selection (global config)` commands say when no configuration file was found.",
-          "scope": "application"
+          "markdownDescription": "Show a notification the first time in a session that a file isn't formatted because no dprint configuration file was found for it.",
+          "scope": "window"
         },
         "dprint.useGlobalConfig": {
           "type": [
