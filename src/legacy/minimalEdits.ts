@@ -8,14 +8,6 @@ export interface OffsetEdit extends OffsetRange {
 }
 
 /**
- * The length of text above which the extension should get the minimal edits itself.
- *
- * vscode reduces the edits of an extension to what changed, but only for text of up to
- * 100,000 characters. This is lower than that in order to not depend on the exact limit.
- */
-export const MINIMAL_EDITS_MIN_TEXT_LENGTH = 90_000;
-
-/**
  * The number of edits after which the rest of the changed text is replaced with a
  * single edit instead. This bounds the time spent here and by the editor on applying
  * the edits to text that changed in very many places, which then gets little out of
@@ -46,6 +38,8 @@ const SYNC_LINE_COUNT = 3;
  * Gets the edits that change the original text to the formatted text while
  * leaving the lines that are the same alone, which is what allows the editor
  * to keep the cursors, selections, folded regions, and breakpoints in place.
+ * vscode also reduces the edits of an extension to what changed, but only
+ * for text of up to 100,000 characters.
  *
  * The editor owns the line endings of a document, so the edits use the line
  * endings of the original text and a difference in only the line endings is

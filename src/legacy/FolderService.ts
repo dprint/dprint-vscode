@@ -10,7 +10,7 @@ import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { type FormatFile, getCannotFormatReason } from "./formatFile";
-import { getMinimalEdits, MINIMAL_EDITS_MIN_TEXT_LENGTH } from "./minimalEdits";
+import { getMinimalEdits } from "./minimalEdits";
 import { trimFormattedCellText } from "./notebookCellText";
 import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
@@ -278,26 +278,18 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return { edits: [vscode.TextEdit.replace(editRange, edit.newText)] };
       }
 
-      // vscode doesn't reduce an edit of this much text to what changed, which is what keeps
-      // the cursors, selections, and folded regions in place, so only edit what changed
-      if (Math.max(fileText.length, newText.length) > MINIMAL_EDITS_MIN_TEXT_LENGTH) {
-        const edits = getMinimalEdits(fileText, newText).map(edit =>
-          vscode.TextEdit.replace(
-            new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
-            edit.newText,
-          )
-        );
-        this.#logger.logDebug(
-          edits.length === 0 ? "Response - Formatted (No change):" : "Response - Formatted:",
-          filePath,
-        );
-        return { edits };
-      }
-
-      const lastLineNumber = document.lineCount - 1;
-      const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
-      const edits = [vscode.TextEdit.replace(replaceRange, newText)];
-      this.#logger.logDebug("Response - Formatted:", filePath);
+      // only edit what changed, which is what keeps the cursors, selections, and folded regions
+      // in place (vscode only reduces an edit to what changed for text up to a certain length)
+      const edits = getMinimalEdits(fileText, newText).map(edit =>
+        vscode.TextEdit.replace(
+          new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
+          edit.newText,
+        )
+      );
+      this.#logger.logDebug(
+        edits.length === 0 ? "Response - Formatted (No change):" : "Response - Formatted:",
+        filePath,
+      );
       return { edits };
     } catch (err: any) {
       this.#logger.logError("Error formatting text.", err);
