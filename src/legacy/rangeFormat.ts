@@ -79,7 +79,7 @@ function getEditForRange(
  * Converts the line endings of the formatted text to the ones the source
  * text uses, which is determined by the source text's first line ending.
  */
-function normalizeToSourceLineEndings(sourceText: string, formattedText: string) {
+export function normalizeToSourceLineEndings(sourceText: string, formattedText: string) {
   const lineBreakIndex = sourceText.indexOf("\n");
   if (lineBreakIndex === -1) {
     return formattedText; // can't tell what the source uses, so leave it alone

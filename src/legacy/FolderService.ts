@@ -10,6 +10,7 @@ import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { type FormatFile, getCannotFormatReason } from "./formatFile";
+import { getMinimalEdits } from "./minimalEdits";
 import { trimFormattedCellText } from "./notebookCellText";
 import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
@@ -277,9 +278,18 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
         return { edits: [vscode.TextEdit.replace(editRange, edit.newText)] };
       }
 
-      const lastLineNumber = document.lineCount - 1;
-      const replaceRange = new vscode.Range(0, 0, lastLineNumber, document.lineAt(lastLineNumber).text.length);
-      const edits = [vscode.TextEdit.replace(replaceRange, newText)];
+      // only edit what changed instead of replacing the whole document in order
+      // to keep the cursors, selections, and folded regions in place
+      const edits = getMinimalEdits(fileText, newText).map(edit =>
+        vscode.TextEdit.replace(
+          new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
+          edit.newText,
+        )
+      );
+      if (edits.length === 0) {
+        this.#logger.logDebug("Response - Formatted (No change):", filePath);
+        return { edits };
+      }
       this.#logger.logDebug("Response - Formatted:", filePath);
       return { edits };
     } catch (err: any) {
