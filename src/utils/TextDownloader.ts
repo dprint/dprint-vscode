@@ -22,7 +22,7 @@ export interface HttpsTextDownloaderOptions {
  * Downloads text over https.
  *
  * Only resolves for a complete response with a successful status code.
- * Redirects are not followed and are treated as a failure.
+ * A few redirects are followed as long as they don't change the protocol.
  */
 export class HttpsTextDownloader implements TextDownloader {
   #timeoutMs: number;
@@ -52,40 +52,68 @@ export class HttpsTextDownloader implements TextDownloader {
         }
       };
 
-      const req = this.#request(url, (res) => {
-        const statusCode = res.statusCode;
-        if (statusCode == null || statusCode < 200 || statusCode >= 300) {
-          fail(new Error(`Failed downloading ${url} (status code ${statusCode}).`));
-          // nothing is going to read the body, so stop receiving it
-          req.destroy();
-          return;
-        }
+      let currentReq: http.ClientRequest;
+      const startRequest = (requestUrl: string, redirectCount: number) => {
+        const req = this.#request(requestUrl, (res) => {
+          const statusCode = res.statusCode;
+          const location = res.headers.location;
+          if (statusCode != null && REDIRECT_STATUS_CODES.has(statusCode) && location != null) {
+            try {
+              if (redirectCount >= MAX_REDIRECTS) {
+                throw new Error(`Failed downloading ${url} (too many redirects).`);
+              }
+              startRequest(getRedirectUrl(requestUrl, location), redirectCount + 1);
+            } catch (err) {
+              fail(err);
+            }
+            req.destroy();
+            return;
+          }
+          if (statusCode == null || statusCode < 200 || statusCode >= 300) {
+            fail(new Error(`Failed downloading ${requestUrl} (status code ${statusCode}).`));
+            // nothing is going to read the body, so stop receiving it
+            req.destroy();
+            return;
+          }
 
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          body += chunk;
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            body += chunk;
+          });
+          res.on("end", () => {
+            if (res.complete) {
+              succeed(body);
+            } else {
+              fail(new Error(`Failed downloading ${requestUrl} (the response was incomplete).`));
+            }
+          });
+          res.on("error", fail);
+          // in case the connection is lost without an error being emitted
+          res.on("close", () => fail(new Error(`Failed downloading ${requestUrl} (the connection was closed).`)));
         });
-        res.on("end", () => {
-          if (res.complete) {
-            succeed(body);
-          } else {
-            fail(new Error(`Failed downloading ${url} (the response was incomplete).`));
+        currentReq = req;
+        // this is also what prevents an error after the request is destroyed from being unhandled
+        req.on("error", err => {
+          // a request that was redirected is destroyed, which is not a failure
+          if (req === currentReq) {
+            fail(err);
           }
         });
-        res.on("error", fail);
-        // in case the connection is lost without an error being emitted
-        res.on("close", () => fail(new Error(`Failed downloading ${url} (the connection was closed).`)));
-      });
-      // this is also what prevents an error after the request is destroyed from being unhandled
-      req.on("error", fail);
+      };
 
       // limits the whole download rather than the time between chunks so that
       // a response that trickles in can't keep this pending
       const timeout = setTimeout(() => {
         fail(new Error(`Timed out after ${timeoutMs}ms downloading ${url}.`));
-        req.destroy();
+        currentReq.destroy();
       }, timeoutMs);
+
+      try {
+        startRequest(url, 0);
+      } catch (err) {
+        fail(err);
+      }
     });
   }
 }
@@ -118,4 +146,17 @@ export class RacyCacheTextDownloader implements TextDownloader {
   forget(url: string) {
     this.#cache.delete(url);
   }
+}
+
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+
+/** Gets the url to request for a redirect, which may not change the protocol (ex. from https to http). */
+function getRedirectUrl(url: string, location: string) {
+  const fromUrl = new URL(url);
+  const redirectUrl = new URL(location, fromUrl);
+  if (redirectUrl.protocol !== fromUrl.protocol) {
+    throw new Error(`Failed downloading ${url} (redirected to another protocol: ${redirectUrl.protocol}).`);
+  }
+  return redirectUrl.href;
 }

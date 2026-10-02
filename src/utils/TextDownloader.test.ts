@@ -61,13 +61,80 @@ describe("HttpsTextDownloader", () => {
     await assert.rejects(createDownloader().get(url), /status code 429/);
   });
 
-  it("rejects on a redirect", async () => {
+  it("follows redirects", async () => {
+    const paths: (string | undefined)[] = [];
+    const url = await serve((req, res) => {
+      paths.push(req.url);
+      if (req.url === "/schema.json") {
+        res.writeHead(302, { location: "/asset/schema.json" });
+        res.end("Found");
+      } else if (req.url === "/asset/schema.json") {
+        // an absolute url
+        res.writeHead(307, { location: new URL("/final.json", `http://${req.headers.host}`).href });
+        res.end();
+      } else {
+        res.writeHead(200);
+        res.end("{}");
+      }
+    });
+
+    assert.strictEqual(await createDownloader().get(url), "{}");
+    assert.deepStrictEqual(paths, ["/schema.json", "/asset/schema.json", "/final.json"]);
+  });
+
+  it("rejects when redirected too many times", async () => {
+    let requestCount = 0;
     const url = await serve((_req, res) => {
-      res.writeHead(302, { location: "/login" });
-      res.end("<html>Sign in to the network</html>");
+      requestCount++;
+      res.writeHead(302, { location: "/schema.json" });
+      res.end();
+    });
+
+    await assert.rejects(createDownloader().get(url), /too many redirects/);
+    assert.strictEqual(requestCount, 6);
+  });
+
+  it("rejects when redirected to another protocol", async () => {
+    const url = await serve((_req, res) => {
+      res.writeHead(302, { location: "https://127.0.0.1/schema.json" });
+      res.end();
+    });
+
+    await assert.rejects(createDownloader().get(url), /redirected to another protocol: https:/);
+  });
+
+  it("rejects on the status code of the response it was redirected to", async () => {
+    const url = await serve((req, res) => {
+      if (req.url === "/schema.json") {
+        res.writeHead(301, { location: "/missing.json" });
+      } else {
+        res.writeHead(404);
+      }
+      res.end();
+    });
+
+    await assert.rejects(createDownloader().get(url), /missing\.json \(status code 404\)/);
+  });
+
+  it("rejects on a redirect status code without a location", async () => {
+    const url = await serve((_req, res) => {
+      res.writeHead(302);
+      res.end();
     });
 
     await assert.rejects(createDownloader().get(url), /status code 302/);
+  });
+
+  it("rejects when a redirect takes longer than the timeout", async () => {
+    const url = await serve((req, res) => {
+      if (req.url === "/schema.json") {
+        res.writeHead(302, { location: "/slow.json" });
+        res.end();
+      }
+      // otherwise leave the request hanging
+    });
+
+    await assert.rejects(createDownloader({ timeoutMs: 100 }).get(url), /Timed out after 100ms/);
   });
 
   it("rejects when the server never responds", async () => {
