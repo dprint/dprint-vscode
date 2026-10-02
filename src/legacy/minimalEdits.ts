@@ -16,9 +16,17 @@ export interface OffsetEdit extends OffsetRange {
 export const MINIMAL_EDITS_MIN_TEXT_LENGTH = 90_000;
 
 /**
+ * The number of edits after which the rest of the changed text is replaced with a
+ * single edit instead. This bounds the time spent here and by the editor on applying
+ * the edits to text that changed in very many places, which then gets little out of
+ * edits for only what changed.
+ */
+const MAX_EDITS = 5_000;
+
+/**
  * The amount of work after which the lines aren't diffed anymore and the rest of
  * the changed text is replaced with a single edit instead. This bounds the time
- * (to a couple of milliseconds) and memory used on text that mostly changed.
+ * and memory used on diffing the lines of text where many lines in a row changed.
  *
  * The work to diff lines that changed with no lines that are the same between them is
  * about half the square of the number of differing lines, so this allows about 350
@@ -60,7 +68,7 @@ export function getMinimalEdits(originalText: string, formattedText: string): Of
   const newEnd = newText.length - suffixLength;
   const edits: OffsetEdit[] = [];
   const buffers = createDiffBuffers();
-  const lineIds = new Map<string, number>();
+  const lineIds: LineIds = { byLine: new Map(), count: 0 };
   let remainingWork = MAX_WORK;
   let oldOffset = 0;
   let newOffset = 0;
@@ -75,8 +83,8 @@ export function getMinimalEdits(originalText: string, formattedText: string): Of
     // diff the lines from here until the texts line up again
     const oldLines = createLines(originalText, oldOffset, oldEnd, lineIds);
     const newLines = createLines(newText, newOffset, newEnd, lineIds);
-    const diff = oldOffset === oldEnd || newOffset === newEnd
-      ? undefined // nothing to diff because the rest was added or removed
+    const diff = oldOffset === oldEnd || newOffset === newEnd || edits.length >= MAX_EDITS
+      ? undefined // nothing to diff because the rest was added or removed, or there's too many edits
       : diffLinesUntilSynced(oldLines, newLines, buffers, remainingWork);
     if (diff == null) {
       const hunk = { oldStart: oldOffset, oldEnd, newStart: newOffset, newEnd };
@@ -147,17 +155,31 @@ interface Lines {
   end: number;
   /** A number for each line found so far, where the lines with the same text have the same number. */
   ids: number[];
-  /** The number for the text of a line, which is shared by the old and new lines. */
-  idsByLine: Map<string, number>;
+  lineIds: LineIds;
   /** The offset of the start of each line found so far followed by the end of the last one. */
   starts: number[];
 }
 
-function createLines(text: string, start: number, end: number, idsByLine: Map<string, number>): Lines {
-  return { text, end, ids: [], idsByLine, starts: [start] };
+/** The numbers given to the text of lines, which are shared by the old and new lines. */
+interface LineIds {
+  byLine: Map<string, number>;
+  /** The number of numbers given out. */
+  count: number;
+}
+
+function createLines(text: string, start: number, end: number, lineIds: LineIds): Lines {
+  return { text, end, ids: [], lineIds, starts: [start] };
 }
 
 const NO_LINE = -1;
+/**
+ * The length above which a line is always given its own number, which makes it differ
+ * from every other line. Looking up a very long line is slow because the engine doesn't
+ * hash all of a long string, so many long lines that start the same would all be compared
+ * with each other. The text at the start and end of an edit that's the same is removed
+ * afterwards, so this only means that less of the same lines are found around these lines.
+ */
+const MAX_LOOKUP_LINE_LENGTH = 10_000;
 
 /**
  * Gets the number for the text of the line at the index, or `NO_LINE` when it's past the
@@ -176,11 +198,14 @@ function findLineId(lines: Lines, index: number): number {
     }
     const lineBreakIndex = lines.text.indexOf("\n", start);
     const end = lineBreakIndex === -1 || lineBreakIndex >= lines.end ? lines.end : lineBreakIndex + 1;
-    const line = lines.text.substring(start, end);
-    let id = lines.idsByLine.get(line);
+    const lineIds = lines.lineIds;
+    const line = end - start > MAX_LOOKUP_LINE_LENGTH ? undefined : lines.text.substring(start, end);
+    let id = line === undefined ? undefined : lineIds.byLine.get(line);
     if (id === undefined) {
-      id = lines.idsByLine.size;
-      lines.idsByLine.set(line, id);
+      id = lineIds.count++;
+      if (line !== undefined) {
+        lineIds.byLine.set(line, id);
+      }
     }
     lines.ids.push(id);
     lines.starts.push(end);
@@ -382,7 +407,7 @@ function getHunkEdit(oldText: string, newText: string, hunk: Hunk): OffsetEdit {
   const suffixLength = getCommonSuffixLength(oldText, oldStart, oldEnd, newText, newStart, newEnd);
   oldEnd -= suffixLength;
   newEnd -= suffixLength;
-  // an edit can't start or end in the middle of a line break or a surrogate pair. These
+  // An edit can't start or end in the middle of a line break or a surrogate pair. These
   // only move over text that's the same and a hunk never starts or ends within one.
   if (isWithinCharacter(oldText, oldStart) || isWithinCharacter(newText, newStart)) {
     oldStart--;

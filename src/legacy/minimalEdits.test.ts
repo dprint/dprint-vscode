@@ -144,6 +144,33 @@ describe("getMinimalEdits", () => {
     assert.strictEqual(applyEdits(originalText, edits), formattedText);
   });
 
+  it("stops diffing the lines once there are too many edits", () => {
+    const lineCount = 30_000;
+    const createText = (changedText: string) =>
+      Array.from({ length: lineCount }, (_, i) => i % 5 === 0 ? `${changedText}${i};\n` : `same${i};\n`).join("");
+    const originalText = createText("a  b");
+    const formattedText = createText("a b");
+    const edits = getMinimalEdits(originalText, formattedText);
+    // an edit for each changed line until the limit and then a single edit for the rest
+    assert.strictEqual(edits.length, 5_001);
+    assert.strictEqual(applyEdits(originalText, edits), formattedText);
+  });
+
+  it("handles many very long lines that only differ at their ends", () => {
+    // these are not looked up by their text because that's slow for many long lines that start the same
+    const createText = (end: string) =>
+      Array.from({ length: 300 }, (_, i) => `${"x".repeat(20_000)}${i}${i % 3 === 0 ? end : ";"}\n`).join("");
+    const originalText = createText("  ;");
+    const formattedText = createText(";");
+    const startTime = performance.now();
+    const edits = getMinimalEdits(originalText, formattedText);
+    const elapsedTime = performance.now() - startTime;
+    assert.strictEqual(applyEdits(originalText, edits), formattedText);
+    assertValidEdits(originalText, formattedText, edits, "long lines");
+    // this took seconds when the lines were looked up by their text
+    assert.ok(elapsedTime < 500, `took ${elapsedTime}ms`);
+  });
+
   it("produces the formatted text for random changes", () => {
     const random = createRandom(1234);
     const randomInt = (max: number) => Math.floor(random() * max);
@@ -158,11 +185,28 @@ describe("getMinimalEdits", () => {
       "}",
       "a line that is longer than the others",
       "a line that is longer than the other lines",
+      // a lone carriage return and lone surrogates
+      "a\rb",
+      "\r",
+      "\uD83D",
+      "\uDE00",
     ];
     for (let i = 0; i < 5_000; i++) {
       const lineBreak = randomInt(2) === 0 ? "\n" : "\r\n";
-      const createText = (lines: string[], hasFinalLineBreak: boolean) =>
-        lines.join(lineBreak) + (hasFinalLineBreak && lines.length > 0 ? lineBreak : "");
+      // the formatted text has its own line endings, which are sometimes mixed
+      const newLineBreakKind = randomInt(4);
+      const getNewLineBreak = () =>
+        newLineBreakKind === 0
+          ? lineBreak
+          : newLineBreakKind === 1
+          ? "\n"
+          : newLineBreakKind === 2
+          ? "\r\n"
+          : randomInt(2) === 0
+          ? "\n"
+          : "\r\n";
+      const createText = (lines: string[], hasFinalLineBreak: boolean, getLineBreak: () => string) =>
+        lines.map((line, i) => line + (i < lines.length - 1 || hasFinalLineBreak ? getLineBreak() : "")).join("");
       // only a couple of different lines has many lines in a row that are the same by chance
       const lineTexts = randomInt(2) === 0 ? allLineTexts.slice(0, 2) : allLineTexts;
       // some longer texts with more changes in order to have changes that are far apart
@@ -184,26 +228,76 @@ describe("getMinimalEdits", () => {
             break;
         }
       }
-      const originalText = createText(lines, randomInt(2) === 0);
-      const formattedText = createText(newLines, randomInt(2) === 0);
+      const originalText = createText(lines, randomInt(2) === 0, () => lineBreak);
+      const formattedText = createText(newLines, randomInt(2) === 0, getNewLineBreak);
+      // The edits produce the formatted text with the line endings of the original text, which
+      // are the ones of its first line ending. That's not always the line break used above
+      // because a line may end with a carriage return.
+      const firstLineBreakIndex = originalText.indexOf("\n");
+      const expectedText = firstLineBreakIndex === -1
+        ? formattedText
+        : formattedText.replace(/\r?\n/g, originalText[firstLineBreakIndex - 1] === "\r" ? "\r\n" : "\n");
       const edits = getMinimalEdits(originalText, formattedText);
       const message = JSON.stringify({ originalText, formattedText, edits });
-      assert.strictEqual(applyEdits(originalText, edits), formattedText, message);
-      assertValidEdits(originalText, edits, message);
+      assert.strictEqual(applyEdits(originalText, edits), expectedText, message);
+      assertValidEdits(originalText, expectedText, edits, message);
+    }
+  });
+
+  it("produces the formatted text for random changes to a lot of lines", () => {
+    const random = createRandom(4321);
+    const randomInt = (max: number) => Math.floor(random() * max);
+    for (let i = 0; i < 20; i++) {
+      const lines = Array.from({ length: 5_000 }, (_, line) => `line ${line % (i % 2 === 0 ? 5_000 : 7)};\n`);
+      const newLines = [...lines];
+      // groups of changes, which are large enough at times to stop diffing the lines
+      for (let groups = randomInt(40); groups > 0; groups--) {
+        const groupStart = randomInt(newLines.length);
+        const maxSpread = randomInt(3) === 0 ? 1 : 10;
+        for (let changes = randomInt(i % 4 === 0 ? 600 : 40), index = groupStart; changes > 0; changes--) {
+          index += randomInt(maxSpread);
+          switch (randomInt(3)) {
+            case 0:
+              newLines.splice(index, 0, `added ${randomInt(1_000)};\n`);
+              break;
+            case 1:
+              newLines.splice(index, 1);
+              break;
+            default:
+              newLines.splice(index, 1, `changed ${randomInt(1_000)};\n`);
+              break;
+          }
+        }
+      }
+      const originalText = lines.join("");
+      const formattedText = newLines.join("");
+      const edits = getMinimalEdits(originalText, formattedText);
+      assert.strictEqual(applyEdits(originalText, edits), formattedText, `iteration ${i}`);
+      assertValidEdits(originalText, formattedText, edits, `iteration ${i}`);
     }
   });
 });
 
-/** Asserts the edits are in order, don't overlap, change something, and don't split a character. */
-function assertValidEdits(text: string, edits: OffsetEdit[], message: string) {
+/**
+ * Asserts the edits are in order, don't overlap, change something, and don't split
+ * a character in the original text or in the text that applying them results in.
+ */
+function assertValidEdits(text: string, resultText: string, edits: OffsetEdit[], message: string) {
+  const assertNotWithinCharacter = (text: string, offset: number) => {
+    assert.ok(!(text[offset - 1] === "\r" && text[offset] === "\n"), message);
+    assert.ok(!(isHighSurrogate(text.charCodeAt(offset - 1)) && isLowSurrogate(text.charCodeAt(offset))), message);
+  };
   let lastEnd = 0;
+  // the difference between an offset in the original text and in the resulting text
+  let resultOffset = 0;
   for (const edit of edits) {
     assert.ok(edit.start >= lastEnd && edit.end >= edit.start && edit.end <= text.length, message);
     assert.notStrictEqual(text.substring(edit.start, edit.end), edit.newText, message);
-    for (const offset of [edit.start, edit.end]) {
-      assert.ok(!(text[offset - 1] === "\r" && text[offset] === "\n"), message);
-      assert.ok(!(isHighSurrogate(text.charCodeAt(offset - 1)) && isLowSurrogate(text.charCodeAt(offset))), message);
-    }
+    assertNotWithinCharacter(text, edit.start);
+    assertNotWithinCharacter(text, edit.end);
+    assertNotWithinCharacter(resultText, edit.start + resultOffset);
+    resultOffset += edit.newText.length - (edit.end - edit.start);
+    assertNotWithinCharacter(resultText, edit.end + resultOffset);
     lastEnd = edit.end;
   }
 }
