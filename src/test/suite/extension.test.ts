@@ -153,6 +153,26 @@ suite("Extension Test Suite", function() {
     assert.equal(doc.getText(), `{\n    "test": 5\n}\n`);
   });
 
+  test("format with global config command keeps the cursor in place in a large file", async function() {
+    if (hasAncestorConfigFile(noConfigDir)) {
+      this.skip();
+    }
+    // vscode only reduces the edits of an extension to what changed for text up to
+    // 100,000 characters, so use more than that to test the extension doing it
+    const properties = Array.from({ length: 6_000 }, (_, i) => `    "property${i}": ${i},\n`).join("");
+    assert.ok(properties.length > 100_000);
+    const uri = vscode.Uri.file(path.join(noConfigDir, "cursor.json"));
+    fs.writeFileSync(uri.fsPath, `{\n"test":     5,\n${properties}    "last": 1\n}\n`, "utf8");
+
+    const doc = await context.openAndShowDocument(uri);
+    const editor = vscode.window.activeTextEditor!;
+    editor.selection = new vscode.Selection(3_000, 8, 3_000, 8);
+    await vscode.commands.executeCommand("dprint.formatWithGlobalConfig");
+
+    assert.equal(doc.getText(), `{\n    "test": 5,\n${properties}    "last": 1\n}\n`);
+    assert.deepStrictEqual([editor.selection.active.line, editor.selection.active.character], [3_000, 8]);
+  });
+
   test("format with global config command says why a document wasn't formatted", async function() {
     if (hasAncestorConfigFile(noConfigDir)) {
       this.skip();

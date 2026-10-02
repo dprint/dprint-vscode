@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
+import { expandToLines, getRangeFormatEdit, isNoChangeEdit, normalizeToSourceLineEndings } from "./rangeFormat";
 
 describe("expandToLines", () => {
   const text = "a\n  bb\nccc\n";
@@ -167,5 +167,34 @@ describe("isNoChangeEdit", () => {
 
   it("is false when the text of the range was removed", () => {
     assert.strictEqual(isNoChangeEdit("a\nb\n", { start: 2, end: 4, newText: "" }), false);
+  });
+});
+
+describe("normalizeToSourceLineEndings", () => {
+  it("converts to the line endings of the source text", () => {
+    assert.strictEqual(normalizeToSourceLineEndings("a\r\nb", "c\nd\n"), "c\r\nd\r\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c\r\nd\r\n"), "c\nd\n");
+  });
+
+  it("converts mixed line endings", () => {
+    assert.strictEqual(normalizeToSourceLineEndings("a\r\nb", "c\r\nd\ne\r\n"), "c\r\nd\r\ne\r\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c\nd\r\ne\n"), "c\nd\ne\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\r\nb", "\nc"), "\r\nc");
+  });
+
+  it("leaves text alone that has the line endings already", () => {
+    assert.strictEqual(normalizeToSourceLineEndings("a\r\nb", "c\r\nd\r\n"), "c\r\nd\r\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c\nd\n"), "c\nd\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c"), "c");
+  });
+
+  it("leaves carriage returns alone that aren't part of a line ending", () => {
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c\rd\n"), "c\rd\n");
+    assert.strictEqual(normalizeToSourceLineEndings("a\nb", "c\r\r\nd"), "c\r\nd");
+    assert.strictEqual(normalizeToSourceLineEndings("a\r\nb", "c\r\r\nd\re"), "c\r\r\nd\re");
+  });
+
+  it("leaves the text alone when the source text has no line endings", () => {
+    assert.strictEqual(normalizeToSourceLineEndings("a", "c\r\nd\n"), "c\r\nd\n");
   });
 });

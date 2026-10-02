@@ -79,11 +79,26 @@ function getEditForRange(
  * Converts the line endings of the formatted text to the ones the source
  * text uses, which is determined by the source text's first line ending.
  */
-function normalizeToSourceLineEndings(sourceText: string, formattedText: string) {
+export function normalizeToSourceLineEndings(sourceText: string, formattedText: string) {
   const lineBreakIndex = sourceText.indexOf("\n");
   if (lineBreakIndex === -1) {
     return formattedText; // can't tell what the source uses, so leave it alone
   }
   const sourceUsesCrlf = lineBreakIndex > 0 && sourceText[lineBreakIndex - 1] === "\r";
+  // the formatted text usually has these line endings already, which is faster to check than to replace
+  if (sourceUsesCrlf ? !hasLineFeedWithoutCarriageReturn(formattedText) : !formattedText.includes("\r")) {
+    return formattedText;
+  }
   return formattedText.replace(/\r?\n/g, sourceUsesCrlf ? "\r\n" : "\n");
+}
+
+function hasLineFeedWithoutCarriageReturn(text: string) {
+  let index = text.indexOf("\n");
+  while (index !== -1) {
+    if (index === 0 || text.charCodeAt(index - 1) !== 0x0D) {
+      return true;
+    }
+    index = text.indexOf("\n", index + 1);
+  }
+  return false;
 }
