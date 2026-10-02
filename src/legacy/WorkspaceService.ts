@@ -411,20 +411,24 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
     this.#hasNotifiedNoConfig = true;
     const hasGlobalConfig = !useGlobalConfig && await findGlobalConfigFile(this.#environment) != null;
-    const buttonText = "Don't show again";
+    const workspaceButtonText = "Don't show in this workspace";
+    const globalButtonText = "Don't show again";
+    // the workspace settings can only be updated when a workspace is open
+    const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+    const buttons = hasWorkspace ? [workspaceButtonText, globalButtonText] : [globalButtonText];
     const message = getNoConfigMessage({ useGlobalConfig, hasGlobalConfig });
     // don't await this because it only resolves once the notification is dismissed
-    vscode.window.showInformationMessage(message, buttonText).then(async selection => {
-      if (selection === buttonText) {
-        try {
-          await vscode.workspace.getConfiguration("dprint").update(
-            "showNoConfigNotification",
-            false,
-            vscode.ConfigurationTarget.Global,
-          );
-        } catch (err) {
-          this.#logger.logError("Error updating the dprint.showNoConfigNotification setting:", err);
-        }
+    vscode.window.showInformationMessage(message, ...buttons).then(async selection => {
+      if (selection == null) {
+        return;
+      }
+      const target = selection === workspaceButtonText
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      try {
+        await vscode.workspace.getConfiguration("dprint").update("showNoConfigNotification", false, target);
+      } catch (err) {
+        this.#logger.logError("Error updating the dprint.showNoConfigNotification setting:", err);
       }
     });
   }
