@@ -3,6 +3,7 @@
 ### 0.18.1
 
 - feat: add `dprint.showNoConfigNotification` setting (#186)
+- feat: allow turning off the no config notification for only the workspace (#188)
 
 ### 0.18.0
 
