@@ -3,6 +3,7 @@
 ### 0.18.0
 
 - feat(BREAKING): remove the experimental language server backend (#170)
+- feat(BREAKING): bump minimum vscode version to 1.82 (#148)
 - feat: support format selection (#146)
 - feat: support global config and formatting files outside a config's directory (#147)
 - feat: format user data files such as the user settings.json (#151)
@@ -28,7 +29,6 @@
 - fix: give feedback from the global config commands and show them for more documents (#180)
 - fix: fail config schema downloads that did not succeed and update the built-in schema (#181)
 - fix: provide the plugin schemas instead of having vscode download them (#183)
-- chore: bump minimum vscode version to 1.82 (#148)
 
 The `dprint.experimentalLsp` setting was removed. The extension always uses dprint's editor service.
 
