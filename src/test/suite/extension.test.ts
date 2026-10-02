@@ -223,6 +223,34 @@ suite("Extension Test Suite", function() {
     assert.equal(excludedDoc.getText(), `{\n"test":     5\n}`);
   });
 
+  test("provides the schemas of the plugins for the config file", async () => {
+    const doc = await context.openAndShowDocument(vscode.Uri.file(path.join(workspaceDir, "dprint.json")));
+    // not saved, so this doesn't change the config that the other tests use
+    await applyTextChanges(doc, [
+      vscode.TextEdit.replace(
+        getRange([0, 0], [doc.lineCount, 0]),
+        JSON.stringify({ json: { lineWidth: "text", indentWidth: 2 }, plugins: [] }, undefined, 2),
+      ),
+    ]);
+
+    // vscode says when it couldn't load a schema, which is what happens when it's left to
+    // download a plugin's schema because that's not on a domain that the user trusts
+    const messages = await waitForDiagnosticMessages(doc.uri);
+    assert.deepStrictEqual(messages, ["Incorrect type. Expected \"number\"."]);
+  });
+
+  /** Waits for vscode to report problems in the document and returns their messages. */
+  async function waitForDiagnosticMessages(uri: vscode.Uri) {
+    for (let i = 0; i < 300; i++) {
+      const diagnostics = vscode.languages.getDiagnostics(uri);
+      if (diagnostics.length > 0) {
+        return diagnostics.map(diagnostic => diagnostic.message);
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return [];
+  }
+
   /**
    * Runs the action and returns the messages the extension showed while it ran. The tests
    * are part of the extension, so they have the same instance of vscode's api as it does.
