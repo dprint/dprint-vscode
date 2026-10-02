@@ -10,8 +10,8 @@ on:
       - main
 jobs:
   build:
-    name: 'build (${{ matrix.os }})'
-    runs-on: '${{ matrix.os }}'
+    name: "build (${{ matrix.os }})"
+    runs-on: "${{ matrix.os }}"
     strategy:
       matrix:
         os:
@@ -34,7 +34,7 @@ jobs:
       - name: Build
         run: npm run compile
       - name: Unit tests
-        run: 'npm run test:unit'
+        run: "npm run test:unit"
       - name: Install dprint
         shell: bash
         run: |-
