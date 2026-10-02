@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.18.1
+
+- feat: add `dprint.showNoConfigNotification` setting (#186)
+
 ### 0.18.0
 
 - feat(BREAKING): remove the experimental language server backend (#170)
