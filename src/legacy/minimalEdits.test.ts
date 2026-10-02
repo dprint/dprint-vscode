@@ -97,17 +97,80 @@ describe("getMinimalEdits", () => {
     assert.strictEqual(applyEdits(originalText, edits), formattedText);
   });
 
+  it("finds a change after a lot of text that's the same", () => {
+    // the text that's the same is compared in chunks of different lengths
+    for (const length of [1, 15, 16, 17, 31, 32, 33, 100, 1_000, 5_000, 70_000]) {
+      const same = "abcdefg\n".repeat(length).substring(0, length);
+      assert.deepStrictEqual(
+        getMinimalEdits(`${same}\nx  y\n${same}`, `${same}\nx y\n${same}`),
+        [{ start: length + 3, end: length + 4, newText: "" }],
+        `length ${length}`,
+      );
+    }
+  });
+
+  it("returns an edit for each change when they're far apart", () => {
+    const same = Array.from({ length: 100 }, (_, i) => `line${i};\n`).join("");
+    const originalText = `a  b\n${same}c  d\n${same}e  f\n`;
+    const formattedText = `a b\n${same}c d\nnew\n${same}e f\n`;
+    const edits = getMinimalEdits(originalText, formattedText);
+    assert.deepStrictEqual(edits.map(edit => edit.newText), ["", "d\nnew", ""]);
+    assert.strictEqual(applyEdits(originalText, edits), formattedText);
+  });
+
+  it("returns an edit for each change when there's only a few of the same lines between them", () => {
+    // these don't have enough of the same lines between them to stop diffing the lines
+    const originalText = "a  b\nsame1\nc  d\nsame2\nsame3\ne  f\n";
+    assert.deepStrictEqual(getMinimalEdits(originalText, "a b\nsame1\nc d\nsame2\nsame3\ne f\n"), [
+      { start: 2, end: 3, newText: "" },
+      { start: 13, end: 14, newText: "" },
+      { start: 30, end: 31, newText: "" },
+    ]);
+  });
+
+  it("stops diffing the lines once that took too much work in total", () => {
+    const createText = (indent: string) =>
+      Array.from(
+        { length: 30 },
+        (_, group) =>
+          Array.from({ length: 150 }, (_, i) => `${indent}changed${group}_${i};\n`).join("")
+          + Array.from({ length: 10 }, (_, i) => `same${group}_${i};\n`).join(""),
+      ).join("");
+    const originalText = createText("  ");
+    const formattedText = createText("");
+    const edits = getMinimalEdits(originalText, formattedText);
+    // an edit for each group until the limit and then a single edit for the rest
+    assert.ok(edits.length > 1 && edits.length < 30, `edits: ${edits.length}`);
+    assert.strictEqual(applyEdits(originalText, edits), formattedText);
+  });
+
   it("produces the formatted text for random changes", () => {
     const random = createRandom(1234);
     const randomInt = (max: number) => Math.floor(random() * max);
-    const lineTexts = ["a", "b", "  a", "a  b", "", "\u{1F600}", "{", "}"];
-    for (let i = 0; i < 2_000; i++) {
+    const allLineTexts = [
+      "a",
+      "b",
+      "  a",
+      "a  b",
+      "",
+      "\u{1F600}",
+      "{",
+      "}",
+      "a line that is longer than the others",
+      "a line that is longer than the other lines",
+    ];
+    for (let i = 0; i < 5_000; i++) {
       const lineBreak = randomInt(2) === 0 ? "\n" : "\r\n";
       const createText = (lines: string[], hasFinalLineBreak: boolean) =>
         lines.join(lineBreak) + (hasFinalLineBreak && lines.length > 0 ? lineBreak : "");
-      const lines = Array.from({ length: randomInt(12) }, () => lineTexts[randomInt(lineTexts.length)]);
+      // only a couple of different lines has many lines in a row that are the same by chance
+      const lineTexts = randomInt(2) === 0 ? allLineTexts.slice(0, 2) : allLineTexts;
+      // some longer texts with more changes in order to have changes that are far apart
+      const maxLineCount = i % 5 === 0 ? 200 : 12;
+      const maxChangeCount = i % 10 === 0 ? 40 : 5;
+      const lines = Array.from({ length: randomInt(maxLineCount) }, () => lineTexts[randomInt(lineTexts.length)]);
       const newLines = [...lines];
-      for (let changes = randomInt(5); changes > 0; changes--) {
+      for (let changes = randomInt(maxChangeCount); changes > 0; changes--) {
         const index = randomInt(newLines.length + 1);
         switch (randomInt(3)) {
           case 0:

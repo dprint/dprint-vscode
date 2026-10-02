@@ -85,5 +85,20 @@ export function normalizeToSourceLineEndings(sourceText: string, formattedText: 
     return formattedText; // can't tell what the source uses, so leave it alone
   }
   const sourceUsesCrlf = lineBreakIndex > 0 && sourceText[lineBreakIndex - 1] === "\r";
+  // the formatted text usually has these line endings already, which is faster to check than to replace
+  if (sourceUsesCrlf ? !hasLineFeedWithoutCarriageReturn(formattedText) : !formattedText.includes("\r")) {
+    return formattedText;
+  }
   return formattedText.replace(/\r?\n/g, sourceUsesCrlf ? "\r\n" : "\n");
+}
+
+function hasLineFeedWithoutCarriageReturn(text: string) {
+  let index = text.indexOf("\n");
+  while (index !== -1) {
+    if (index === 0 || text.charCodeAt(index - 1) !== 0x0D) {
+      return true;
+    }
+    index = text.indexOf("\n", index + 1);
+  }
+  return false;
 }
