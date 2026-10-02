@@ -11,6 +11,7 @@ export interface DprintExtensionConfig {
   verbose: boolean;
   useGlobalConfig: boolean;
   ensureStableFormat: boolean;
+  showNoConfigNotification: boolean;
 }
 
 export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
@@ -21,6 +22,8 @@ export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
     verbose: getBool("verbose"),
     useGlobalConfig: getBool("useGlobalConfig"),
     ensureStableFormat: getBool("ensureStableFormat"),
+    // enabled by default
+    showNoConfigNotification: config.get("showNoConfigNotification") !== false,
   };
 
   function getPathInfo(): DprintExtensionConfigPathInfo | undefined {

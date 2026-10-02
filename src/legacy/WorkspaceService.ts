@@ -296,7 +296,7 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
     if (looseConfig == null) {
       this.#logger.logInfo("Configuration file not found for:", uri.fsPath);
-      if (options.notify) {
+      if (options.notify && getDprintConfig(uri).showNoConfigNotification) {
         await this.#notifyNoConfig(useGlobalConfig);
       }
       return { notFormattedReason: "noConfigFile" };
@@ -411,7 +411,22 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
     this.#hasNotifiedNoConfig = true;
     const hasGlobalConfig = !useGlobalConfig && await findGlobalConfigFile(this.#environment) != null;
-    vscode.window.showInformationMessage(getNoConfigMessage({ useGlobalConfig, hasGlobalConfig }));
+    const buttonText = "Don't show again";
+    const message = getNoConfigMessage({ useGlobalConfig, hasGlobalConfig });
+    // don't await this because it only resolves once the notification is dismissed
+    vscode.window.showInformationMessage(message, buttonText).then(async selection => {
+      if (selection === buttonText) {
+        try {
+          await vscode.workspace.getConfiguration("dprint").update(
+            "showNoConfigNotification",
+            false,
+            vscode.ConfigurationTarget.Global,
+          );
+        } catch (err) {
+          this.#logger.logError("Error updating the dprint.showNoConfigNotification setting:", err);
+        }
+      }
+    });
   }
 
   #clearFolders() {

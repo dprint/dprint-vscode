@@ -54,7 +54,10 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // languages where dprint is the default formatter. Regardless of this setting, use the
   // "Dprint: Format Document (global config)" or "Dprint: Format Selection (global config)"
   // command to format a file using it.
-  "dprint.useGlobalConfig": false
+  "dprint.useGlobalConfig": false,
+  // Change this to `false` to not show a notification when a file isn't formatted
+  // because no dprint configuration file was found for it.
+  "dprint.showNoConfigNotification": true
 }
 ```
 
