@@ -1,5 +1,37 @@
 # Change Log
 
+### 0.18.0
+
+- feat(BREAKING): remove the experimental language server backend (#170)
+- feat(BREAKING): bump minimum vscode version to 1.82 (#148)
+- feat: support format selection (#146)
+- feat: support global config and formatting files outside a config's directory (#147)
+- feat: format user data files such as the user settings.json (#151)
+- feat: refresh plugin information instead of restarting when a config file changes (#152)
+- feat: add `dprint.ensureStableFormat` setting (#157)
+- feat: support shell expansion in `dprint.path` (#159)
+- feat: provide associations and locked in plugin config json schema (#162)
+- feat: format jupyter notebook cells (#166)
+- feat: add commands to format using the global config (#168)
+- perf: only edit what changed when formatting a document (#182)
+- fix: resolve npm executable when installed with pnpm (#145)
+- fix: watch config files used outside the workspace and don't fall back to the global config (#149)
+- fix: watch ancestor config files of workspace folders and don't fall back to the global config (#150)
+- fix: resolve the npm dprint executable from the config file's directory (#154)
+- fix: format untitled documents (#156)
+- fix: launch dprint without cmd.exe on Windows when possible (#163)
+- fix: ignore config files in cache directories such as Cargo's target directory (#165)
+- fix: do not poll forever when the workspace has no folders (#174)
+- fix: do not fail every folder when one fails to resolve its executable (#175)
+- fix: format a range when the plugin's line endings differ from the document's (#177)
+- fix: reject format requests when writing to or spawning dprint fails (#178)
+- fix: share the temp copy of the npm dprint executable between folders (#179)
+- fix: give feedback from the global config commands and show them for more documents (#180)
+- fix: fail config schema downloads that did not succeed and update the built-in schema (#181)
+- fix: provide the plugin schemas instead of having vscode download them (#183)
+
+The `dprint.experimentalLsp` setting was removed. The extension always uses dprint's editor service.
+
 ### 0.17.2
 
 - fix: dispose formatting edit provider on config reinitialization (#141)
