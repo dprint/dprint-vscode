@@ -72,6 +72,11 @@ describe("getCommandLaunchInfo", () => {
       getCommandLaunchInfo({ kind: "setting", path: "./bin/dprint.bat", cwd: "C:\\project" }, ["-v"], "win32").command,
       "\"C:\\project\\bin\\dprint.bat\" \"-v\"",
     );
+    assert.strictEqual(
+      getCommandLaunchInfo({ kind: "setting", path: ".vscode/dprint.BAT", cwd: "C:\\project" }, ["-v"], "win32")
+        .command,
+      "\"C:\\project\\.vscode\\dprint.BAT\" \"-v\"",
+    );
   });
 });
 
@@ -89,7 +94,7 @@ describe("resolveWindowsCommand", () => {
     const searched: string[] = [];
     const which = (command: string) => {
       searched.push(command);
-      return Promise.resolve(command === "dprint" ? "C:\\npm prefix\\dprint.cmd" : `${command}.exe`);
+      return Promise.resolve(command === "dprint" ? "C:\\npm prefix\\dprint.cmd" : command.replace(/\.EXE$/, ".exe"));
     };
     assert.deepStrictEqual(
       await resolveWindowsCommand({ kind: "path", path: "dprint" }, which),
@@ -99,7 +104,51 @@ describe("resolveWindowsCommand", () => {
       await resolveWindowsCommand({ kind: "setting", path: "./bin/dprint", cwd: "C:\\project" }, which),
       { kind: "setting", path: "C:\\project\\bin\\dprint.exe", cwd: "C:\\project" },
     );
-    assert.deepStrictEqual(searched, ["dprint", "C:\\project\\bin\\dprint"]);
+    assert.deepStrictEqual(searched, ["dprint", "C:\\project\\bin\\dprint.EXE"]);
+  });
+
+  it("prefers a file with an executable extension over the file at the path", async () => {
+    // ex. a `dprint` shell script for other platforms beside a `dprint.bat`
+    const files = ["C:\\project\\.vscode\\dprint", "C:\\project\\.vscode\\dprint.bat"];
+    const which = (command: string) =>
+      Promise.resolve(files.find(file => file.toLowerCase() === command.toLowerCase()));
+    for (const settingPath of [".vscode/dprint", ".vscode\\dprint", "./.vscode/dprint"]) {
+      assert.deepStrictEqual(
+        await resolveWindowsCommand({ kind: "setting", path: settingPath, cwd: "C:\\project" }, which, ".EXE;.BAT"),
+        { kind: "setting", path: "C:\\project\\.vscode\\dprint.bat", cwd: "C:\\project" },
+      );
+    }
+  });
+
+  it("searches the launchable extensions in order and only once for a path with an extension", async () => {
+    const searched: string[] = [];
+    const which = (command: string) => {
+      searched.push(command);
+      return Promise.resolve(undefined);
+    };
+    const pathExt = ".COM;.EXE;.BAT;.CMD;.VBS;.JS";
+    await resolveWindowsCommand({ kind: "path", path: "C:/bin/dprint" }, which, pathExt);
+    await resolveWindowsCommand({ kind: "setting", path: "bin/dprint.Cmd", cwd: "C:\\project" }, which, pathExt);
+    await resolveWindowsCommand({ kind: "setting", path: "\\\\srv\\share\\dprint.exe", cwd: "C:\\project" }, which);
+    await resolveWindowsCommand({ kind: "setting", path: "C:bin\\dprint.exe", cwd: "C:\\project" }, which);
+    assert.deepStrictEqual(searched, [
+      "C:/bin/dprint.COM",
+      "C:/bin/dprint.EXE",
+      "C:/bin/dprint.BAT",
+      "C:/bin/dprint.CMD",
+      "C:/bin/dprint",
+      "C:\\project\\bin\\dprint.Cmd",
+      "\\\\srv\\share\\dprint.exe",
+      "C:\\project\\bin\\dprint.exe",
+    ]);
+  });
+
+  it("uses the file at the path when there's none with an executable extension", async () => {
+    const which = (command: string) => Promise.resolve(command === "C:\\bin\\dprint" ? command : undefined);
+    assert.deepStrictEqual(
+      await resolveWindowsCommand({ kind: "setting", path: "C:\\bin\\dprint", cwd: "C:\\project" }, which),
+      { kind: "setting", path: "C:\\bin\\dprint", cwd: "C:\\project" },
+    );
   });
 
   it("keeps the command when the file isn't found", async () => {

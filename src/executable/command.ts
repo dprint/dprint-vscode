@@ -48,13 +48,24 @@ export function expandWindowsEnvVars(text: string, env: { [name: string]: string
  * Resolves the executable file of a command on Windows (ex. `dprint` to
  * `C:\bin\dprint.exe`) so that it can be launched without cmd.exe when possible.
  * The command is kept as-is when the file isn't found.
+ *
+ * Like cmd.exe, a file with an executable extension is preferred over the file at
+ * a path without one (ex. `bin/dprint.bat` over a `bin/dprint` shell script that's
+ * there for other platforms).
  */
 export async function resolveWindowsCommand(
   command: DprintCommand,
   which: (command: string) => Promise<string | undefined>,
+  pathExt?: string,
 ): Promise<DprintCommand> {
-  const filePath = await which(getWindowsCommandPath(command));
-  return filePath == null ? command : { ...command, path: filePath };
+  const commandPath = getWindowsCommandPath(command);
+  for (const candidate of [...getWindowsExecutableCandidates(commandPath, pathExt), commandPath]) {
+    const filePath = await which(candidate);
+    if (filePath != null) {
+      return { ...command, path: filePath };
+    }
+  }
+  return command;
 }
 
 /** Gets the text to display for the command. */
@@ -102,9 +113,29 @@ export function getCommandLaunchInfo(
 }
 
 function getWindowsCommandPath(command: DprintCommand) {
-  return command.kind === "setting" && command.cwd != null && isRelativePath(command.path)
-    ? path.win32.join(command.cwd, command.path)
+  return command.kind === "setting" && command.cwd != null && isWindowsRelativePath(command.path)
+    // resolve instead of join for a drive-relative path (ex. `C:bin\dprint`)
+    ? path.win32.resolve(command.cwd, command.path)
     : command.path;
+}
+
+/** Gets the path with each executable extension when it's a file path without one. */
+function getWindowsExecutableCandidates(commandPath: string, pathExt: string | undefined) {
+  if (!/[\\/]/.test(commandPath)) {
+    return []; // a command name, which is searched for on the path with the extensions
+  }
+  const extensions = (pathExt ?? ".EXE;.CMD;.BAT;.COM").split(";").map(ext => ext.trim()).filter(ext => ext.length > 0);
+  const lowerCasePath = commandPath.toLowerCase();
+  if (extensions.some(ext => lowerCasePath.endsWith(ext.toLowerCase()))) {
+    return [];
+  }
+  // only the extensions that can be launched (ex. not a `dprint.js` beside the file)
+  return extensions.filter(ext => /^\.(exe|com|cmd|bat)$/i.test(ext)).map(ext => commandPath + ext);
+}
+
+/** If it's a file path relative to the folder (ex. `bin/dprint`) rather than a command name. */
+function isWindowsRelativePath(commandPath: string) {
+  return /[\\/]/.test(commandPath) && !path.win32.isAbsolute(commandPath);
 }
 
 function getPosixSettingCommand(command: DprintCommand & { kind: "setting" }) {
