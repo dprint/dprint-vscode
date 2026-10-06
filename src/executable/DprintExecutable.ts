@@ -81,7 +81,11 @@ export class DprintExecutable {
   static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const command = await getCommand(options);
     return process.platform === "win32"
-      ? await resolveWindowsCommand(command, commandPath => which(commandPath, whichEnvironment))
+      ? await resolveWindowsCommand(
+        command,
+        commandPath => which(commandPath, whichEnvironment),
+        process.env.PATHEXT,
+      )
       : command;
   }
 
