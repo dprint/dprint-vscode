@@ -77,6 +77,10 @@ To run the tests:
 
 ## Release Notes
 
+### 0.18.2
+
+- fix: probe for an executable at a relative `dprint.path` on Windows (#189)
+
 ### 0.18.1
 
 - feat: add `dprint.showNoConfigNotification` setting (#186)
