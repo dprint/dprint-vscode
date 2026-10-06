@@ -1,7 +1,7 @@
 {
   "name": "dprint",
   "displayName": "dprint - Code Formatter",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "description": "Formats code in VSCode using dprint.",
   "categories": [
     "Formatters"
