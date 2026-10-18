@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { DPRINT_CONFIG_FILE_NAMES } from "./constants";
+import { DOT_CONFIG_DIR_NAME, DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "./constants";
 import type { Environment } from "./environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -17,16 +17,32 @@ export async function findWorkspaceFolderAncestorConfigFile(
   configFilePaths: readonly string[],
 ) {
   // the config file in the folder is used instead
-  if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDirPath(configFilePath)) === "")) {
+  if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDir(env, configFilePath)) === "")) {
     return undefined;
   }
   return findConfigFileInAncestorDirectories(env, path.dirname(folderPath));
 }
 
-/** Gets the directory whose files the config file formats, which is the directory it's in unless that's a `.config` directory. */
-export function getConfigFileDirPath(configFilePath: string) {
-  const dirPath = path.dirname(configFilePath);
-  return path.basename(dirPath) === ".config" ? path.dirname(dirPath) : dirPath;
+/**
+ * Removes the config files the cli doesn't use because there's another config file
+ * for the same directory that it uses instead (ex. a `.config/dprint.json` when
+ * there's a `dprint.json` beside the `.config` directory) or because it doesn't
+ * search for the config file's name in a `.config` directory (ex. `.config/.dprint.json`).
+ *
+ * @param configFilePaths - The config files found in the folder.
+ */
+export function filterUnusedConfigFiles(env: Environment, configFilePaths: readonly string[]) {
+  const bestConfigFileByDir = new Map<string, { configFilePath: string; rank: number }>();
+  for (const configFilePath of configFilePaths) {
+    const rank = getConfigFileRank(env, configFilePath);
+    const dirPath = getConfigFileDir(env, configFilePath);
+    const best = bestConfigFileByDir.get(dirPath);
+    if (rank != null && (best == null || rank < best.rank)) {
+      bestConfigFileByDir.set(dirPath, { configFilePath, rank });
+    }
+  }
+  const usedConfigFilePaths = new Set(Array.from(bestConfigFileByDir.values(), best => best.configFilePath));
+  return configFilePaths.filter(configFilePath => usedConfigFilePaths.has(configFilePath));
 }
 
 /**
@@ -72,9 +88,10 @@ export async function filterCacheDirConfigFiles(
 export async function findConfigFileInAncestorDirectories(env: Environment, dirPath: string) {
   let currentPath = dirPath;
   while (true) {
-    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
-      const configFilePath = path.join(currentPath, configFileName);
-      if (await env.fileExists(configFilePath)) {
+    // a `.config` directory is searched as part of its parent directory, which is next
+    if (!isDotConfigDir(env, currentPath)) {
+      const configFilePath = await findConfigFileInDir(env, currentPath);
+      if (configFilePath != null) {
         return configFilePath;
       }
     }
@@ -124,15 +141,37 @@ export class AncestorConfigFileCache {
   }
 
   async #find(dirPath: string): Promise<string | undefined> {
-    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
-      const configFilePath = path.join(dirPath, configFileName);
-      if (await this.#env.fileExists(configFilePath)) {
+    // a `.config` directory is searched as part of its parent directory, which is next
+    if (!isDotConfigDir(this.#env, dirPath)) {
+      const configFilePath = await findConfigFileInDir(this.#env, dirPath);
+      if (configFilePath != null) {
         return configFilePath;
       }
     }
     const parentPath = path.dirname(dirPath);
     return parentPath === dirPath ? undefined : this.find(parentPath);
   }
+}
+
+/**
+ * Gets the directory a config file applies to, which is the directory it's in
+ * except for a config file in a `.config` directory, which applies to the parent
+ * of that directory. This mirrors the dprint CLI.
+ */
+export function getConfigFileDir(env: Environment, configFilePath: string) {
+  const dirPath = path.dirname(configFilePath);
+  return isDotConfigFile(env, configFilePath) ? path.dirname(dirPath) : dirPath;
+}
+
+/**
+ * Gets if the directory is a `.config` directory, which the dprint CLI treats as
+ * part of its parent directory. The exception is the home directory's `.config`,
+ * which is where the user's configuration goes (ex. `XDG_CONFIG_HOME`) and so is
+ * an ordinary directory.
+ */
+export function isDotConfigDir(env: Environment, dirPath: string) {
+  const parentPath = path.dirname(dirPath);
+  return path.basename(dirPath) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath && !isHomeDir(env, parentPath);
 }
 
 /**
@@ -157,4 +196,49 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
   const relativePath = path.relative(parentPath, candidatePath);
   return relativePath === ""
     || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
+}
+
+/** Finds the config file the dprint CLI uses in the directory. */
+async function findConfigFileInDir(env: Environment, dirPath: string) {
+  for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
+    const configFilePath = path.join(dirPath, configFileName);
+    if (await env.fileExists(configFilePath)) {
+      return configFilePath;
+    }
+  }
+  // only look in the `.config` directory when there is one, which most directories don't have
+  const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
+  if (isDotConfigDir(env, dotConfigDirPath) && await env.fileExists(dotConfigDirPath)) {
+    for (const configFileName of DOT_CONFIG_FILE_NAMES) {
+      const configFilePath = path.join(dotConfigDirPath, configFileName);
+      if (await env.fileExists(configFilePath)) {
+        return configFilePath;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Gets where the config file is in the order the dprint CLI searches a directory
+ * for its config file, or undefined when it's not a name the CLI searches for.
+ */
+function getConfigFileRank(env: Environment, configFilePath: string) {
+  const fileName = path.basename(configFilePath);
+  if (isDotConfigDir(env, path.dirname(configFilePath))) {
+    const index = DOT_CONFIG_FILE_NAMES.indexOf(fileName);
+    return index === -1 ? undefined : DPRINT_CONFIG_FILE_NAMES.length + index;
+  }
+  const index = DPRINT_CONFIG_FILE_NAMES.indexOf(fileName);
+  return index === -1 ? undefined : index;
+}
+
+function isDotConfigFile(env: Environment, configFilePath: string) {
+  return DOT_CONFIG_FILE_NAMES.includes(path.basename(configFilePath))
+    && isDotConfigDir(env, path.dirname(configFilePath));
+}
+
+function isHomeDir(env: Environment, dirPath: string) {
+  const homeDir = env.homeDir();
+  return homeDir != null && path.relative(homeDir, dirPath) === "";
 }

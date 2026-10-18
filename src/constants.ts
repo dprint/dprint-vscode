@@ -1,6 +1,16 @@
 export const DPRINT_CONFIG_FILE_NAME_GLOB = "{dprint,.dprint}.{json,jsonc}";
 export const DPRINT_CONFIG_FILEPATH_GLOB = `**/${DPRINT_CONFIG_FILE_NAME_GLOB}`;
 export const DPRINT_CONFIG_FILE_NAMES = ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"];
+/**
+ * The directory a config file may be put in instead of the directory it applies to
+ * (ex. `.config/dprint.json`), which the cli treats as part of its parent directory.
+ */
+export const DOT_CONFIG_DIR_NAME = ".config";
+/** The config file names the cli searches for within a `.config` directory. */
+export const DOT_CONFIG_FILE_NAMES = ["dprint.json", "dprint.jsonc"];
+/** Matches the config files the cli searches for in a directory, including in its `.config` directory. */
+export const DPRINT_DIR_CONFIG_FILE_GLOB =
+  "{dprint.json,dprint.jsonc,.dprint.json,.dprint.jsonc,.config/dprint.json,.config/dprint.jsonc}";
 export const DPRINT_EXTENSION_ID = "dprint.dprint";
 /** The scheme of documents on the file system. */
 export const FILE_SCHEME = "file";

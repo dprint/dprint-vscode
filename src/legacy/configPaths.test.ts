@@ -25,6 +25,18 @@ describe("resolveLooseFolderConfig", () => {
     assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), expected);
   });
 
+  it("uses the parent of the .config directory for a config file in one", async () => {
+    const env = new TestEnvironment({ homeDir });
+    const configPath = path.resolve("/project/.config/dprint.json");
+    env.writeFile(configPath, "{}");
+
+    assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), {
+      cwd: path.resolve("/project"),
+      configFilePath: configPath,
+      isGlobalConfig: false,
+    });
+  });
+
   it("uses the file system root when there's only a global config file", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.join(homeDir, ".config/dprint/dprint.json"), "{}");

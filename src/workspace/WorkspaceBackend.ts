@@ -6,14 +6,15 @@ import { discoverWorkspaceConfigFiles } from "../configFile";
 import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
   filterCacheDirConfigFiles,
+  filterUnusedConfigFiles,
   findClosestFolder,
   findWorkspaceFolderAncestorConfigFile,
-  getConfigFileDirPath,
+  getConfigFileDir,
   isPathWithin,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
 import {
-  DPRINT_CONFIG_FILE_NAME_GLOB,
+  DPRINT_DIR_CONFIG_FILE_GLOB,
   FILE_SCHEME,
   isDprintExtensionId,
   JUPYTER_NOTEBOOK_TYPE,
@@ -304,11 +305,13 @@ export class WorkspaceBackend implements vscode.Disposable {
       const configFilePaths = await filterCacheDirConfigFiles(
         this.#environment,
         folder.uri.fsPath,
-        folderConfigUris.map(uri => uri.fsPath),
+        // the cli only uses one config file for each directory (ex. not a `.config/dprint.json`
+        // when there's a `dprint.json` beside the `.config` directory)
+        filterUnusedConfigFiles(this.#environment, folderConfigUris.map(uri => uri.fsPath)),
       );
       for (const configFilePath of configFilePaths) {
         configFiles.push({
-          dirUri: vscode.Uri.file(getConfigFileDirPath(configFilePath)),
+          dirUri: vscode.Uri.file(getConfigFileDir(this.#environment, configFilePath)),
           folderUri: folder.uri,
           configFilePath,
           isAncestor: false,
@@ -847,7 +850,7 @@ class WorkspaceState {
   }
 
   watchAncestorConfigFile(configFilePath: string) {
-    const dirPath = path.dirname(configFilePath);
+    const dirPath = getConfigFileDir(this.#environment, configFilePath);
     // config files in workspace folders are already watched by the extension
     if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
       return;
@@ -858,7 +861,7 @@ class WorkspaceState {
     }
     this.#watchedDirPaths.add(dirPath);
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_CONFIG_FILE_NAME_GLOB),
+      new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_DIR_CONFIG_FILE_GLOB),
     );
     const onCreateOrDelete = () => {
       this.#logger.logDebug("Ancestor configuration file created or deleted in:", dirPath);
@@ -867,11 +870,11 @@ class WorkspaceState {
     watcher.onDidCreate(onCreateOrDelete);
     watcher.onDidChange(uri => {
       this.#logger.logDebug("Ancestor configuration file changed in:", dirPath);
-      // dprint doesn't watch the config files, so tell it (ex. to publish their problems)
+      // dprint doesn't watch the config files, so tell it, which sends dprint/configChanged when
+      // what it formats changed
       for (const service of this.#resolvedServices) {
         service.connection.configFileChanged(uri.toString(), FileChangeType.Changed);
       }
-      this.scheduleRefresh();
     });
     watcher.onDidDelete(onCreateOrDelete);
     this.#disposables.push(watcher);

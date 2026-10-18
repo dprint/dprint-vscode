@@ -1,6 +1,8 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
+import { getConfigFileDir } from "../configPaths";
 import { type Environment, RealEnvironment } from "../environment";
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import { Logger } from "../logger";
@@ -58,7 +60,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   get uri() {
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      // the directory the config file applies to (ex. the parent of a `.config` directory)
+      const configFilePath = this.#configUri.fsPath;
+      const isInConfigFileDir = getConfigFileDir(this.#environment, configFilePath) === path.dirname(configFilePath);
+      return vscode.Uri.joinPath(this.#configUri, isInConfigFileDir ? "../" : "../../");
     }
     return this.#cwd;
   }

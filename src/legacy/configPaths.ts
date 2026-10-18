@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { findConfigFileInAncestorDirectories } from "../configPaths";
+import { findConfigFileInAncestorDirectories, getConfigFileDir } from "../configPaths";
 import type { Environment } from "../environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -34,7 +34,7 @@ export async function resolveLooseFolderConfig(
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line
-    return { cwd: path.dirname(configFilePath), configFilePath, isGlobalConfig: false };
+    return { cwd: getConfigFileDir(env, configFilePath), configFilePath, isGlobalConfig: false };
   }
   const globalConfigFilePath = options.useGlobalConfig ? await findGlobalConfigFile(env) : undefined;
   if (globalConfigFilePath != null) {
