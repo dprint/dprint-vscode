@@ -5,14 +5,16 @@ import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import {
   filterCacheDirConfigFiles,
+  filterUnusedConfigFiles,
   findClosestFolder,
   findGlobalConfigFile,
   findWorkspaceFolderAncestorConfigFile,
+  getConfigFileDir,
   isPathWithin,
   type LooseFolderConfig,
   resolveLooseFolderConfig,
 } from "../configPaths";
-import { DPRINT_CONFIG_FILE_NAME_GLOB, FILE_SCHEME, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
+import { DPRINT_DIR_CONFIG_FILE_GLOB, FILE_SCHEME, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
@@ -332,7 +334,9 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     // dprint again when a config file is created or deleted, or when one changes after
     // dprint failed to start. A running dprint picks up changes to its config file itself,
     // so only refresh its plugin information in that case.
-    const configFileWatcher = createConfigFileWatcher(looseConfig.configFilePath);
+    const configFileWatcher = createConfigFileWatcher(
+      looseConfig.isGlobalConfig ? path.dirname(looseConfig.configFilePath) : looseConfig.cwd,
+    );
     const entry: LooseFolderEntry = {
       folder: this.#initializeLooseFolder(looseConfig, generation, () => entry.hasNoPlugins = true),
       hasNoPlugins: false,
@@ -462,9 +466,20 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     this.#assertNotDisposed();
     this.#assertCurrentGeneration(generation);
 
+    // the cli only uses one config file for each directory (ex. not a `.config/dprint.json`
+    // when there's a `dprint.json` beside the `.config` directory)
+    const usedConfigFilePaths = new Set(filterUnusedConfigFiles(this.#environment, configFiles.map(uri => uri.fsPath)));
+    for (const configFile of configFiles) {
+      if (!usedConfigFilePaths.has(configFile.fsPath)) {
+        this.#logger.logDebug("Ignoring config file the cli doesn't use:", configFile.fsPath);
+      }
+    }
+
     // Initialize the workspace folders with each sub configuration that's found.
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      const folderConfigUris = configFiles.filter(c => isPathWithin(folder.uri.fsPath, c.fsPath));
+      const folderConfigUris = configFiles.filter(c =>
+        isPathWithin(folder.uri.fsPath, c.fsPath) && usedConfigFilePaths.has(c.fsPath)
+      );
       // This is only necessary because vscode.workspace.findFiles doesn't respect .gitignore
       // files, so it finds config files in gitignored directories that the dprint cli never
       // uses (ex. copies of a crate's config file in Cargo's target/package directory).
@@ -549,13 +564,13 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   }
 
   #watchAncestorConfigFile(configFilePath: string) {
-    const dirPath = path.dirname(configFilePath);
+    const dirPath = getConfigFileDir(this.#environment, configFilePath);
     // config files in workspace folders are already watched by the extension
     const isInWorkspace = vscode.workspace.workspaceFolders?.some(f => isPathWithin(f.uri.fsPath, dirPath)) ?? false;
     if (isInWorkspace || this.#ancestorConfigFileWatchers.has(dirPath)) {
       return;
     }
-    const watcher = createConfigFileWatcher(configFilePath);
+    const watcher = createConfigFileWatcher(dirPath);
     const onCreateOrDelete = () => {
       this.#logger.logDebug("Ancestor configuration file created or deleted in:", dirPath);
       this.#onAncestorConfigFileCreatedOrDeleted();
@@ -589,10 +604,10 @@ function getLanguageContributions(): LanguageContribution[] {
   return vscode.extensions.all.flatMap(extension => extension.packageJSON?.contributes?.languages ?? []);
 }
 
-/** Watches the config files in the config file's directory. */
-function createConfigFileWatcher(configFilePath: string) {
+/** Watches the config files the cli searches for in the directory. */
+function createConfigFileWatcher(dirPath: string) {
   return vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(vscode.Uri.file(path.dirname(configFilePath)), DPRINT_CONFIG_FILE_NAME_GLOB),
+    new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_DIR_CONFIG_FILE_GLOB),
   );
 }
 

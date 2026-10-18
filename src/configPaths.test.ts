@@ -4,10 +4,12 @@ import { describe, it } from "node:test";
 import {
   AncestorConfigFileCache,
   filterCacheDirConfigFiles,
+  filterUnusedConfigFiles,
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findGlobalConfigFile,
   findWorkspaceFolderAncestorConfigFile,
+  getConfigFileDir,
   isPathWithin,
   resolveLooseFolderConfig,
 } from "./configPaths";
@@ -32,6 +34,18 @@ describe("resolveLooseFolderConfig", () => {
     };
     assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: true }), expected);
     assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), expected);
+  });
+
+  it("uses the parent of the .config directory for a config file in one", async () => {
+    const env = new TestEnvironment({ homeDir });
+    const configPath = path.resolve("/project/.config/dprint.json");
+    env.writeFile(configPath, "{}");
+
+    assert.deepStrictEqual(await resolveLooseFolderConfig(env, filePath, { useGlobalConfig: false }), {
+      cwd: path.resolve("/project"),
+      configFilePath: configPath,
+      isGlobalConfig: false,
+    });
   });
 
   it("uses the file system root when there's only a global config file", async () => {
@@ -79,6 +93,15 @@ describe("findWorkspaceFolderAncestorConfigFile", () => {
     env.writeFile(subConfigPath, "{}");
 
     assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [subConfigPath]), configPath);
+  });
+
+  it("returns undefined when the folder has a config file in its .config directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/dprint.json"), "{}");
+
+    const folderPath = path.resolve("/project");
+    const folderConfigPath = path.resolve("/project/.config/dprint.json");
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [folderConfigPath]), undefined);
   });
 
   it("returns undefined when the folder has a config file", async () => {
@@ -132,6 +155,47 @@ describe("findConfigFileInAncestorDirectories", () => {
     assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project")), configPath);
   });
 
+  it("finds a config file in the .config directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/dprint.json"), "{}");
+    const configPath = path.resolve("/project/.config/dprint.jsonc");
+    env.writeFile(configPath, "{}");
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), configPath);
+    // the .config directory is searched as part of its parent directory
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/.config")), configPath);
+    assert.strictEqual(
+      await findConfigFileInAncestorDirectories(env, path.resolve("/project/.config/sub")),
+      configPath,
+    );
+  });
+
+  it("prefers a config file in the directory over one in its .config directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/project/.config/dprint.json"), "{}");
+    const configPath = path.resolve("/project/.dprint.jsonc");
+    env.writeFile(configPath, "{}");
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project")), configPath);
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/.config")), configPath);
+  });
+
+  it("only finds the cli's config file names in the .config directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/project/.config/.dprint.json"), "{}");
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/.config")), undefined);
+  });
+
+  it("treats the home directory's .config directory as an ordinary directory", async () => {
+    const env = new TestEnvironment({ homeDir });
+    const configPath = path.join(homeDir, ".config/dprint.json");
+    env.writeFile(configPath, "{}");
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.join(homeDir, "project")), undefined);
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.join(homeDir, ".config")), configPath);
+  });
+
   it("finds a config file at the file system root", async () => {
     const env = new TestEnvironment();
     const configPath = path.join(rootDir, "dprint.json");
@@ -151,11 +215,14 @@ describe("AncestorConfigFileCache", () => {
   function setup() {
     const env = new TestEnvironment({ homeDir });
     const checkedPaths: string[] = [];
-    // only the file existence checks are used
+    // only the file existence checks and home directory are used
     const countingEnv = {
       fileExists(filePath: string) {
         checkedPaths.push(filePath);
         return env.fileExists(filePath);
+      },
+      homeDir() {
+        return env.homeDir();
       },
     } as unknown as Environment;
     return { env, checkedPaths, cache: new AncestorConfigFileCache(countingEnv) };
@@ -170,6 +237,17 @@ describe("AncestorConfigFileCache", () => {
     assert.strictEqual(await cache.find(path.resolve("/project")), path.resolve("/project/dprint.json"));
     assert.strictEqual(await cache.find(path.resolve("/project/sub/dir")), path.resolve("/project/sub/.dprint.jsonc"));
     assert.strictEqual(await cache.find(path.resolve("/other/dir")), undefined);
+  });
+
+  it("finds the config file in a .config directory", async () => {
+    const { env, cache } = setup();
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+    const configPath = path.resolve("/project/sub/.config/dprint.json");
+    env.writeFile(configPath, "{}");
+
+    assert.strictEqual(await cache.find(path.resolve("/project/sub/dir")), configPath);
+    assert.strictEqual(await cache.find(path.resolve("/project/sub/.config")), configPath);
+    assert.strictEqual(await cache.find(path.resolve("/project/src")), path.resolve("/project/dprint.json"));
   });
 
   it("does not check the file system again for directories it already looked in", async () => {
@@ -358,6 +436,64 @@ describe("findGlobalConfigFile", () => {
 
       assert.strictEqual(await findGlobalConfigFile(env), undefined);
     });
+  });
+});
+
+describe("getConfigFileDir", () => {
+  const env = new TestEnvironment({ homeDir });
+
+  it("gets the config file's directory", () => {
+    assert.strictEqual(getConfigFileDir(env, path.resolve("/project/dprint.json")), path.resolve("/project"));
+  });
+
+  it("gets the parent of the .config directory for a config file in one", () => {
+    assert.strictEqual(getConfigFileDir(env, path.resolve("/project/.config/dprint.json")), path.resolve("/project"));
+    assert.strictEqual(getConfigFileDir(env, path.resolve("/project/.config/dprint.jsonc")), path.resolve("/project"));
+  });
+
+  it("gets the .config directory for a config file name the cli doesn't search for in one", () => {
+    assert.strictEqual(
+      getConfigFileDir(env, path.resolve("/project/.config/.dprint.json")),
+      path.resolve("/project/.config"),
+    );
+  });
+
+  it("gets the home directory's .config directory for a config file in it", () => {
+    assert.strictEqual(getConfigFileDir(env, path.join(homeDir, ".config/dprint.json")), path.join(homeDir, ".config"));
+  });
+});
+
+describe("filterUnusedConfigFiles", () => {
+  const env = new TestEnvironment({ homeDir });
+
+  it("keeps the config files the cli uses", () => {
+    const configPaths = [
+      path.resolve("/project/dprint.json"),
+      path.resolve("/project/sub/.config/dprint.jsonc"),
+      path.join(homeDir, ".config/dprint.json"),
+    ];
+    assert.deepStrictEqual(filterUnusedConfigFiles(env, configPaths), configPaths);
+  });
+
+  it("removes the config files with a lower precedence for the same directory", () => {
+    const configPath = path.resolve("/project/.dprint.json");
+    assert.deepStrictEqual(
+      filterUnusedConfigFiles(env, [
+        path.resolve("/project/.config/dprint.json"),
+        configPath,
+        path.resolve("/project/.config/dprint.jsonc"),
+      ]),
+      [configPath],
+    );
+    const dotConfigPath = path.resolve("/project/.config/dprint.json");
+    assert.deepStrictEqual(
+      filterUnusedConfigFiles(env, [path.resolve("/project/.config/dprint.jsonc"), dotConfigPath]),
+      [dotConfigPath],
+    );
+  });
+
+  it("removes the config file names the cli doesn't search for in a .config directory", () => {
+    assert.deepStrictEqual(filterUnusedConfigFiles(env, [path.resolve("/project/.config/.dprint.json")]), []);
   });
 });
 
