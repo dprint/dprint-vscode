@@ -19,11 +19,11 @@ import type { FormatDocumentResult } from "../ExtensionBackend";
 import type { NotFormattedReason } from "../globalConfigCommand";
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import { Logger } from "../logger";
+import { getNoConfigMessage } from "../noConfigMessage";
 import { ObjectDisposedError } from "../utils";
 import { initializeFolders, refreshOrRestartFolders } from "./folderRefresh";
 import { FolderService } from "./FolderService";
 import type { FormatFile } from "./formatFile";
-import { getNoConfigMessage } from "./noConfigMessage";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 

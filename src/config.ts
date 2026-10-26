@@ -14,7 +14,8 @@ export interface DprintExtensionConfig {
   showNoConfigNotification: boolean;
 }
 
-export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
+/** Gets the settings of the scope, which are the user and workspace settings when there's no scope. */
+export function getDprintConfig(scope: vscode.Uri | undefined): DprintExtensionConfig {
   const config = vscode.workspace.getConfiguration("dprint", scope);
   const pathInfo = getPathInfo();
   return {

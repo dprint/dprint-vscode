@@ -6,13 +6,14 @@ import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../exec
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
+import { expandToLines } from "../textRange";
 import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { type FormatFile, getCannotFormatReason } from "./formatFile";
 import { getMinimalEdits } from "./minimalEdits";
 import { trimFormattedCellText } from "./notebookCellText";
-import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
+import { getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;

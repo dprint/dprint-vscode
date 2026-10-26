@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
+import { activateBackend } from "./backend";
 import { AncestorConfigFileCache } from "./configPaths";
 import { DPRINT_CONFIG_FILEPATH_GLOB, NOTEBOOK_CELL_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
-import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
 
 /** The context key for if the commands to format using the global config file are shown. */
@@ -247,7 +247,7 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
     //   documents, notebook cells, and the global config file) is done with vscode's api,
     //   so the language server needed its own way of doing each of those.
     // - It required bundling a language client, which made the extension much larger.
-    backend = activateLegacy(logger, approvedPaths);
+    backend = activateBackend(logger, approvedPaths);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

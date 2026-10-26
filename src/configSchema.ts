@@ -1,5 +1,5 @@
-import type { RacyCacheTextDownloader } from "../utils/TextDownloader";
 import { defaultPluginConfigSchema } from "./pluginConfigSchema";
+import type { RacyCacheTextDownloader } from "./utils/TextDownloader";
 
 /**
  * Downloads and parses the config schema.

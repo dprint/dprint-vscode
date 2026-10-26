@@ -197,6 +197,8 @@ suite("Extension Test Suite", function() {
     const globalConfigDir = process.env.DPRINT_CONFIG_DIR;
     process.env.DPRINT_CONFIG_DIR = path.join(noConfigDir, "no-global-config");
     try {
+      // restart because a running dprint process finds the global config file with its own environment
+      await vscode.commands.executeCommand("dprint.restart");
       await formatAndAssertMessage(/No dprint configuration file found/);
 
       // the global config file has no plugins

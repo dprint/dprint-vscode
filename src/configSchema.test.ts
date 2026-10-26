@@ -1,8 +1,8 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { RacyCacheTextDownloader, type TextDownloader } from "../utils/TextDownloader";
 import { downloadConfigSchema, getDefaultConfigSchema } from "./configSchema";
 import { defaultPluginConfigSchema } from "./pluginConfigSchema";
+import { RacyCacheTextDownloader, type TextDownloader } from "./utils/TextDownloader";
 
 describe("getDefaultConfigSchema", () => {
   const schema = getDefaultConfigSchema("dprint://schemas/config.json");

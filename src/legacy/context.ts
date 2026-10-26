@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
+import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
   FILE_SCHEME,
   isDprintExtensionId,
@@ -10,14 +11,14 @@ import {
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, delay, ObjectDisposedError } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
+  configSchemaProvider: ConfigJsonSchemaProvider,
 ): ExtensionBackend {
   const resourceDisposables = new ActivatedDisposables(logger);
   const initializationDisposables = new ActivatedDisposables(logger);
@@ -29,13 +30,6 @@ export function activateLegacy(
     onLooseFolderChanged: scheduleUserDataFilePathsUpdate,
   });
   resourceDisposables.push(workspaceService);
-
-  // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
-  // for ConfigJsonSchemaProvider based on the file that's shown
-  const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  resourceDisposables.push(
-    vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
-  );
 
   let disposed = false;
   let folderInfos: FolderInfos = [];
@@ -72,7 +66,7 @@ export function activateLegacy(
   async function reInitialize() {
     try {
       folderInfos = await workspaceService.initializeFolders();
-      configSchemaProvider.setFolderInfos(folderInfos);
+      configSchemaProvider.setConfigSchemaInfos(folderInfos.map(info => info.editorInfo));
       await scheduleFormattingRegistrationUpdate();
       // don't wait for this because it may need to start dprint for a config outside the workspace
       scheduleUserDataFilePathsUpdate();
@@ -95,7 +89,7 @@ export function activateLegacy(
   async function refreshAfterConfigFileChange() {
     try {
       folderInfos = await workspaceService.refreshFolders();
-      configSchemaProvider.setFolderInfos(folderInfos);
+      configSchemaProvider.setConfigSchemaInfos(folderInfos.map(info => info.editorInfo));
       await scheduleFormattingRegistrationUpdate();
       scheduleUserDataFilePathsUpdate();
       logger.logDebug("Refreshed the plugin information.");

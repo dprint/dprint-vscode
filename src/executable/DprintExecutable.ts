@@ -93,6 +93,14 @@ export class DprintExecutable {
     return getCommandDisplayText(this.#command);
   }
 
+  /**
+   * Identifies the executable and how it's launched, which is the same for the
+   * executables that can share an editor service process.
+   */
+  get processKey() {
+    return JSON.stringify([this.cmdPath, this.#env?.DPRINT_EDITOR_STABLE_FORMAT ?? null, this.#verbose]);
+  }
+
   get initializationFolderUri() {
     if (this.#configUri != null) {
       return vscode.Uri.joinPath(this.#configUri, "../");
@@ -134,6 +142,40 @@ export class DprintExecutable {
         throw new Error(`Error parsing editor info. Output was: ${stdout}\n\nError: ${err}`);
       }
     }
+  }
+
+  /**
+   * Gets what the editor service supports (`dprint editor-service --info`), which
+   * fails for a version of dprint that doesn't have it.
+   */
+  async getEditorServiceInfo(): Promise<unknown> {
+    const stdout = await this.#execShell(["editor-service", "--info"], undefined, undefined);
+    try {
+      return JSON.parse(stdout);
+    } catch (err) {
+      throw new Error(`Error parsing the editor service info. Output was: ${stdout}\n\nError: ${err}`);
+    }
+  }
+
+  /** Starts the editor service of a schema version that formats the files of a whole workspace. */
+  spawnWorkspaceEditorService(schemaVersion: number) {
+    const args = [
+      "editor-service",
+      "--parent-pid",
+      process.pid.toString(),
+      "--schema-version",
+      schemaVersion.toString(),
+    ];
+    if (this.#verbose) {
+      args.push("--verbose");
+    }
+    const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
+    return spawn(launchInfo.command, launchInfo.args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: this.#cwd.fsPath,
+      env: this.#env,
+      shell: launchInfo.shell,
+    });
   }
 
   spawnEditorService() {
