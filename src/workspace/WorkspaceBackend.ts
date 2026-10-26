@@ -121,6 +121,14 @@ export class WorkspaceBackend implements vscode.Disposable {
     }
   }
 
+  /**
+   * Gets if a change to the settings needs the backend to be initialized again, which is only
+   * for the setting of the executable because the others are sent to the editor service.
+   */
+  affectsInitialization(evt: vscode.ConfigurationChangeEvent) {
+    return evt.affectsConfiguration("dprint.path");
+  }
+
   onConfigFileChanged() {
     return this.#state?.scheduleRefresh() ?? Promise.resolve();
   }
@@ -199,8 +207,9 @@ export class WorkspaceBackend implements vscode.Disposable {
       // search from the config file's directory so that a project in a sub directory
       // uses the dprint installed in its own node_modules folder
       npmSearchDir: dirUri,
-      ensureStableFormat: config.ensureStableFormat,
-      verbose: config.verbose,
+      // these are sent to the editor service, so they don't need a process each
+      ensureStableFormat: false,
+      verbose: false,
       logger: this.#logger,
       environment: this.#environment,
     });
@@ -272,7 +281,10 @@ class WorkspaceState {
     // update the formatting registration when the default formatter settings or languages change
     this.#disposables.push(vscode.workspace.onDidChangeConfiguration(evt => {
       this.#scheduleRegistrationUpdate();
-      if (evt.affectsConfiguration("dprint.showNoConfigNotification")) {
+      if (evt.affectsConfiguration("dprint.verbose")) {
+        this.#logger.setDebug(getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose);
+      }
+      if (evt.affectsConfiguration("dprint.showNoConfigNotification") || evt.affectsConfiguration("dprint.verbose")) {
         this.#updateSettings();
       }
     }));
@@ -341,23 +353,15 @@ class WorkspaceState {
         }
       } catch (err) {
         config.plugins = [];
-        if (!this.#disposed) {
-          this.#logger.logErrorAndNotify(
-            "Failed initializing dprint.",
-            `Error initializing in ${config.dirUri.fsPath}:`,
-            err,
-          );
-        }
+        // the editor service shows the user why the config file failed to resolve
+        this.#logger.logError(`Error initializing in ${config.dirUri.fsPath}:`, err);
       }
     }));
     if (this.#disposed) {
       return;
     }
-    const configsWithPlugins = this.#configs.filter(config => config.plugins.length > 0);
-    this.#options.configSchemaProvider.setConfigSchemaInfos(configsWithPlugins.map(config => ({
-      configSchemaUrl: config.service.info.configSchemaUrl,
-      plugins: config.plugins,
-    })));
+    // this also tells vscode to get the schema again
+    this.#options.configSchemaProvider.setConfigSchemaGetter(() => this.#getConfigSchema());
     await this.#scheduleRegistrationUpdate();
     // don't wait for this because it may need to start dprint for a config outside the workspace
     this.#scheduleUserDataFilePathsUpdate();
@@ -392,7 +396,11 @@ class WorkspaceState {
         filePath,
         text,
         offsetRange,
-        { notebookPath: candidates.notebookPath, allowGlobalConfig },
+        {
+          notebookPath: candidates.notebookPath,
+          allowGlobalConfig,
+          ensureStableFormat: getDprintConfig(document.uri).ensureStableFormat,
+        },
         token,
       );
       if (result == null) {
@@ -400,14 +408,7 @@ class WorkspaceState {
       }
       if (result.edits == null) {
         this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, filePath);
-        if (result.reason === "noPlugin" && candidates.notebookPath == null) {
-          // say when it's because the config file has no plugins at all
-          const info = await service.connection.configInfo({ filePath, allowGlobalConfig });
-          if (info.plugins.length === 0) {
-            return { notFormattedReason: "noPlugins" };
-          }
-        }
-        return getFormatDocumentResult(result.reason, candidates.notebookPath != null);
+        return getFormatDocumentResult(result.reason, result.message, candidates.notebookPath != null);
       }
       // plugins may format the whole file instead of only the range
       if (range != null && result.edits.some(edit => edit.start < offsetRange.start || edit.end > offsetRange.end)) {
@@ -501,11 +502,32 @@ class WorkspaceState {
       configUri: undefined,
       // don't run executables from arbitrary node_modules folders outside the workspace
       resolveNpmExecutable: false,
-      ensureStableFormat: config.ensureStableFormat,
-      verbose: config.verbose,
+      // these are sent to the editor service, so they don't need a process each
+      ensureStableFormat: false,
+      verbose: false,
       logger: this.#logger,
       environment: this.#environment,
     });
+  }
+
+  /**
+   * Gets the schema of the config files in the workspace from dprint. A config file's plugins
+   * are in the schema of its executable's editor service, so these are combined when there
+   * are multiple executables.
+   */
+  async #getConfigSchema() {
+    const filePathsByService = new Map<Service, string[]>();
+    for (const config of this.#configs) {
+      const filePaths = filePathsByService.get(config.service) ?? [];
+      filePaths.push(config.configFilePath);
+      filePathsByService.set(config.service, filePaths);
+    }
+    const schemas = await Promise.all(
+      [...filePathsByService].map(([service, filePaths]) =>
+        service.connection.configSchema({ filePaths }).then(response => response.schema)
+      ),
+    );
+    return combineConfigSchemas(schemas);
   }
 
   /** Gets the editor service of the config file in the workspace that's closest to the file or otherwise the default one. */
@@ -746,11 +768,33 @@ function getEditorSettings(): EditorSettings {
     // the setting is resource scoped, so it's sent with each request instead
     allowGlobalConfig: false,
     showNoConfigNotification: getDprintConfig(undefined).showNoConfigNotification,
+    verbose: getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose,
   };
 }
 
+/**
+ * Combines the schemas, which is the first schema with the plugin properties
+ * and definitions of the others that it doesn't have.
+ */
+function combineConfigSchemas(schemas: ReadonlyArray<{ [key: string]: any }>) {
+  const [schema, ...otherSchemas] = schemas;
+  if (schema == null) {
+    return undefined;
+  }
+  for (const otherSchema of otherSchemas) {
+    for (const key of ["properties", "definitions"]) {
+      schema[key] = { ...otherSchema[key], ...schema[key] };
+    }
+  }
+  return schema;
+}
+
 /** Gets the result for a file that dprint didn't format. */
-function getFormatDocumentResult(reason: NotFormattedReason, isNotebookCell: boolean): FormatDocumentResult {
+function getFormatDocumentResult(
+  reason: NotFormattedReason,
+  message: string | undefined,
+  isNotebookCell: boolean,
+): FormatDocumentResult {
   let notFormattedReason: ExtensionNotFormattedReason;
   switch (reason) {
     case "unchanged":
@@ -762,12 +806,15 @@ function getFormatDocumentResult(reason: NotFormattedReason, isNotebookCell: boo
     case "noPlugin":
       notFormattedReason = isNotebookCell ? "noCellPlugin" : "noPlugin";
       break;
+    case "noPlugins":
+      notFormattedReason = "noPlugins";
+      break;
     default:
       // includes the reasons that are newer than the extension
       notFormattedReason = "notMatched";
       break;
   }
-  return { notFormattedReason };
+  return { notFormattedReason, notFormattedMessage: message };
 }
 
 /**

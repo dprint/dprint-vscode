@@ -16,9 +16,17 @@ export interface ConfigSchemaInfo {
   plugins: ReadonlyArray<{ configKey: string; configSchemaUrl: string | undefined }>;
 }
 
+/**
+ * Gets the schema of the configuration files with the schemas of the plugins in it,
+ * which is undefined when there are no configuration files.
+ */
+export type GetConfigSchema = () => Promise<{ [key: string]: any } | undefined>;
+
 /** Provides the dprint configuration JSON schema and the schemas of the plugins it references to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
   #configSchemaInfos: ReadonlyArray<ConfigSchemaInfo> | undefined;
+  /** Gets the whole schema from dprint instead of building it from the infos. */
+  #getConfigSchema: GetConfigSchema | undefined;
   /** The url of each plugin's schema by the plugin's config key. */
   #pluginSchemaUrls: ReadonlyMap<string, string> = new Map();
   #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
@@ -41,8 +49,10 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     this.#onDidChangeEmitter.dispose();
   }
 
+  /** Provides the schema that's built from the urls of the schemas of the config files and their plugins. */
   setConfigSchemaInfos(infos: ReadonlyArray<ConfigSchemaInfo> | undefined) {
     const previousPluginSchemaUrls = this.#pluginSchemaUrls;
+    this.#getConfigSchema = undefined;
     this.#configSchemaInfos = infos;
     this.#pluginSchemaUrls = getPluginSchemaUrls(infos?.map(info => info.plugins) ?? []);
     // always refresh to reduce complexity (it's cheap to refresh)
@@ -50,6 +60,12 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
     for (const configKey of new Set([...previousPluginSchemaUrls.keys(), ...this.#pluginSchemaUrls.keys()])) {
       this.#onDidChangeEmitter.fire(vscode.Uri.parse(getPluginSchemaUri(configKey)));
     }
+  }
+
+  /** Provides the schema that dprint provides, which is gotten again each time the schema is provided. */
+  setConfigSchemaGetter(getConfigSchema: GetConfigSchema) {
+    this.setConfigSchemaInfos(undefined);
+    this.#getConfigSchema = getConfigSchema;
   }
 
   async provideTextDocumentContent(uri: vscode.Uri, _token: vscode.CancellationToken) {
@@ -67,6 +83,18 @@ export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvi
   }
 
   async #provideConfigSchema() {
+    if (this.#getConfigSchema != null) {
+      let configSchema: { [key: string]: any } | undefined;
+      try {
+        configSchema = await this.#getConfigSchema();
+      } catch (err) {
+        this.#logger.logError("Error getting the config schema. Defaulting to built in schema.", err);
+      }
+      configSchema ??= this.#getDefaultSchemaObject();
+      configSchema["$id"] = this.#jsonSchemaUri.toString();
+      return formatAsJson(configSchema);
+    }
+
     const configSchemaInfos = this.#configSchemaInfos;
     const configSchema = await this.#getRawConfigSchema(configSchemaInfos);
     configSchema["$id"] = this.#jsonSchemaUri.toString();

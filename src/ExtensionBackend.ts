@@ -3,6 +3,8 @@ import type { NotFormattedReason } from "./globalConfigCommand";
 
 export interface ExtensionBackend extends vscode.Disposable {
   reInitialize(): Promise<void>;
+  /** Gets if a change to the settings needs the backend to be initialized again. */
+  affectsInitialization(evt: vscode.ConfigurationChangeEvent): boolean;
   /** Called when a config file's contents change (not when one is created or deleted). */
   onConfigFileChanged(): Promise<void>;
   /**
@@ -22,5 +24,10 @@ export interface ExtensionBackend extends vscode.Disposable {
 
 /** The edits for formatting a document, which are empty when it's already formatted, or why it wasn't formatted. */
 export type FormatDocumentResult =
-  | { edits: vscode.TextEdit[]; notFormattedReason?: undefined }
-  | { edits?: undefined; notFormattedReason: NotFormattedReason };
+  | { edits: vscode.TextEdit[]; notFormattedReason?: undefined; notFormattedMessage?: undefined }
+  | {
+    edits?: undefined;
+    notFormattedReason: NotFormattedReason;
+    /** The message to show the user, which is the message for the reason when it's not provided. */
+    notFormattedMessage?: string;
+  };

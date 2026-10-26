@@ -35,6 +35,9 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
 
   return {
     reInitialize,
+    affectsInitialization(evt) {
+      return (legacyBackend ?? workspaceBackend).affectsInitialization(evt);
+    },
     onConfigFileChanged() {
       return legacyBackend?.onConfigFileChanged() ?? workspaceBackend.onConfigFileChanged();
     },

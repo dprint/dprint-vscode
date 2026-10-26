@@ -65,8 +65,9 @@ describe("EditorServiceConnection", () => {
       new FakeCancellationToken(),
     );
     const secondRequest = await process.readMessage();
-    process.send(MessageKind.FormatFileResponse, [secondRequest.id, 0, JSON.stringify({ reason: "unchanged" })]);
-    assert.deepStrictEqual(await notFormatted, { reason: "unchanged" });
+    const notFormattedData = { reason: "notMatched", message: "Not matched." };
+    process.send(MessageKind.FormatFileResponse, [secondRequest.id, 0, JSON.stringify(notFormattedData)]);
+    assert.deepStrictEqual(await notFormatted, notFormattedData);
   });
 
   it("cancels a format", async () => {

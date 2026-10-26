@@ -15,6 +15,17 @@ import { ActivatedDisposables, delay, ObjectDisposedError } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
+/**
+ * The settings that the backend is reinitialized for when they change. The other
+ * settings are read when they're used (ex. `dprint.showNoConfigNotification`).
+ */
+const REINITIALIZE_SETTINGS = [
+  "dprint.ensureStableFormat",
+  "dprint.path",
+  "dprint.useGlobalConfig",
+  "dprint.verbose",
+];
+
 export function activateLegacy(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
@@ -51,6 +62,9 @@ export function activateLegacy(
 
   return {
     reInitialize,
+    affectsInitialization(evt) {
+      return REINITIALIZE_SETTINGS.some(setting => evt.affectsConfiguration(setting));
+    },
     onConfigFileChanged: scheduleConfigFileRefresh,
     provideGlobalConfigFormattingEdits(document, range, options, token) {
       return workspaceService.provideGlobalConfigFormattingEdits(document, range, options, token);

@@ -11,17 +11,6 @@ import { Logger } from "./logger";
 /** The context key for if the commands to format using the global config file are shown. */
 const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
 
-/**
- * The settings that the backend is reinitialized for when they change. The other
- * settings are read when they're used (ex. `dprint.showNoConfigNotification`).
- */
-const REINITIALIZE_SETTINGS = [
-  "dprint.ensureStableFormat",
-  "dprint.path",
-  "dprint.useGlobalConfig",
-  "dprint.verbose",
-];
-
 class GlobalPluginState {
   constructor(
     public readonly outputChannel: vscode.OutputChannel,
@@ -96,7 +85,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // reinitialize when the vscode configuration changes
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
-    if (REINITIALIZE_SETTINGS.some(setting => evt.affectsConfiguration(setting))) {
+    if (backend.affectsInitialization(evt)) {
       await reInitializeBackend();
     }
   }));
@@ -184,7 +173,7 @@ export async function activate(context: vscode.ExtensionContext) {
       };
       const result = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
       if (result.edits == null) {
-        showNotFormattedMessage(result.notFormattedReason);
+        showNotFormattedMessage(result.notFormattedReason, result.notFormattedMessage);
         return;
       }
       // the edits don't apply to the document anymore when it changed while formatting
@@ -205,8 +194,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  function showNotFormattedMessage(reason: NotFormattedReason) {
-    const message = getNotFormattedMessage(reason);
+  function showNotFormattedMessage(reason: NotFormattedReason, message = getNotFormattedMessage(reason)) {
     if (reason !== "failed") {
       vscode.window.showInformationMessage(message);
       return;

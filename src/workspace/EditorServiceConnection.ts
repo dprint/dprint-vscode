@@ -4,6 +4,8 @@ import {
   BodyReader,
   type ConfigInfoData,
   type ConfigInfoResponseData,
+  type ConfigSchemaData,
+  type ConfigSchemaResponseData,
   type EditorSettings,
   encodeMessage,
   type FileInfoData,
@@ -75,6 +77,10 @@ export class EditorServiceConnection {
 
   configInfo(data: ConfigInfoData) {
     return this.#request<ConfigInfoResponseData>(MessageKind.ConfigInfo, [JSON.stringify(data)]);
+  }
+
+  configSchema(data: ConfigSchemaData) {
+    return this.#request<ConfigSchemaResponseData>(MessageKind.ConfigSchema, [JSON.stringify(data)]);
   }
 
   /**
@@ -250,7 +256,8 @@ export class EditorServiceConnection {
         break;
       }
       case MessageKind.FileInfoResponse:
-      case MessageKind.ConfigInfoResponse: {
+      case MessageKind.ConfigInfoResponse:
+      case MessageKind.ConfigSchemaResponse: {
         const id = body.readInt();
         this.#takePendingRequest(id)?.resolve(body.readSizedJson());
         break;
@@ -260,7 +267,7 @@ export class EditorServiceConnection {
         const responseKind = body.readInt();
         const data = body.readSizedJson<any>();
         this.#takePendingRequest(id)?.resolve(
-          responseKind === 1 ? { edits: data.edits } : { reason: data.reason },
+          responseKind === 1 ? { edits: data.edits } : { reason: data.reason, message: data.message },
         );
         break;
       }

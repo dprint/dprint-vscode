@@ -23,6 +23,8 @@ export enum MessageKind {
   ShowMessage = 13,
   ShowMessageRequest = 14,
   ShowMessageRequestResponse = 15,
+  ConfigSchema = 16,
+  ConfigSchemaResponse = 17,
 }
 
 /** The output of `dprint editor-service --info`. */
@@ -41,6 +43,7 @@ export interface EditorSettings {
   workspaceFolders?: string[];
   allowGlobalConfig?: boolean;
   showNoConfigNotification?: boolean;
+  verbose?: boolean;
 }
 
 export interface FileInfoData {
@@ -53,6 +56,7 @@ export interface FileInfoResponseData {
   configFile: ConfigFileInfo | null;
   canFormat: boolean;
   reason?: NotFormattedReason;
+  message?: string;
 }
 
 export interface ConfigFileInfo {
@@ -68,6 +72,15 @@ export interface ConfigInfoData {
 export interface ConfigInfoResponseData {
   configFile: ConfigFileInfo | null;
   plugins: PluginInfo[];
+}
+
+export interface ConfigSchemaData {
+  filePaths: string[];
+  allowGlobalConfig?: boolean;
+}
+
+export interface ConfigSchemaResponseData {
+  schema: { [key: string]: any };
 }
 
 export interface PluginInfo {
@@ -87,6 +100,7 @@ export type NotFormattedReason =
   | "globalConfigNotAllowed"
   | "notMatched"
   | "noPlugin"
+  | "noPlugins"
   | "unchanged"
   | (string & {});
 
@@ -94,6 +108,7 @@ export interface FormatFileOptions {
   overrideConfig?: Record<string, unknown>;
   notebookPath?: string;
   allowGlobalConfig?: boolean;
+  ensureStableFormat?: boolean;
 }
 
 /** Replaces the text between two UTF-16 offsets of the text that was formatted. */
@@ -104,8 +119,13 @@ export interface FormatEdit {
 }
 
 export type FormatFileResult =
-  | { edits: FormatEdit[]; reason?: undefined }
-  | { edits?: undefined; reason: NotFormattedReason };
+  | { edits: FormatEdit[]; reason?: undefined; message?: undefined }
+  | {
+    edits?: undefined;
+    reason: NotFormattedReason;
+    /** The message to show the user about why the file wasn't formatted (ex. for a command the user ran). */
+    message?: string;
+  };
 
 export type MessageType = "info" | "warning" | "error";
 

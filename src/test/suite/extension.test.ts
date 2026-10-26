@@ -190,7 +190,8 @@ suite("Extension Test Suite", function() {
     const textFileUri = vscode.Uri.file(path.join(noConfigDir, "global.txt"));
     fs.writeFileSync(textFileUri.fsPath, "some   text", "utf8");
     const textDoc = await context.openAndShowDocument(textFileUri);
-    await formatAndAssertMessage(/No plugin in the configuration file in use handles its file name or extension/);
+    // the messages differ a little between dprint versions
+    await formatAndAssertMessage(/no plugin in the configuration file in use handles/i);
 
     // there's no global config file
     // (the extension reads this in the extension host, which is this process)
@@ -221,7 +222,7 @@ suite("Extension Test Suite", function() {
     const excludedFileUri = vscode.Uri.file(path.join(noConfigDir, "global.excluded.json"));
     fs.writeFileSync(excludedFileUri.fsPath, `{\n"test":     5\n}`, "utf8");
     const excludedDoc = await context.openAndShowDocument(excludedFileUri);
-    await formatAndAssertMessage(/"includes" and "excludes" of the configuration file in use don't match it/);
+    await formatAndAssertMessage(/"includes" and "excludes" .*don't match it/);
     assert.equal(excludedDoc.getText(), `{\n"test":     5\n}`);
   });
 
