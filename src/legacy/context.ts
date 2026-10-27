@@ -11,8 +11,11 @@ import {
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { ActivatedDisposables, delay, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
+import { EditorInfoConfigSchemaSource } from "./EditorInfoConfigSchemaSource";
+import { ObjectDisposedError } from "./ObjectDisposedError";
+import { HttpsTextDownloader, RacyCacheTextDownloader } from "./TextDownloader";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 /**
@@ -53,6 +56,7 @@ export function activateLegacy(
   });
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
+  const schemaTextDownloader = new RacyCacheTextDownloader(new HttpsTextDownloader());
 
   // update the formatting registration when the default formatter settings or languages change
   resourceDisposables.push(vscode.workspace.onDidChangeConfiguration(() => scheduleFormattingRegistrationUpdate()));
@@ -80,7 +84,7 @@ export function activateLegacy(
   async function reInitialize() {
     try {
       folderInfos = await workspaceService.initializeFolders();
-      configSchemaProvider.setConfigSchemaInfos(folderInfos.map(info => info.editorInfo));
+      updateConfigSchema();
       await scheduleFormattingRegistrationUpdate();
       // don't wait for this because it may need to start dprint for a config outside the workspace
       scheduleUserDataFilePathsUpdate();
@@ -103,7 +107,7 @@ export function activateLegacy(
   async function refreshAfterConfigFileChange() {
     try {
       folderInfos = await workspaceService.refreshFolders();
-      configSchemaProvider.setConfigSchemaInfos(folderInfos.map(info => info.editorInfo));
+      updateConfigSchema();
       await scheduleFormattingRegistrationUpdate();
       scheduleUserDataFilePathsUpdate();
       logger.logDebug("Refreshed the plugin information.");
@@ -112,6 +116,13 @@ export function activateLegacy(
         logger.logError("Error refreshing:", err);
       }
     }
+  }
+
+  /** Provides the config schema that's built from the editor info of the folders. */
+  function updateConfigSchema() {
+    configSchemaProvider.setSource(
+      new EditorInfoConfigSchemaSource(folderInfos.map(info => info.editorInfo), logger, schemaTextDownloader),
+    );
   }
 
   // Updates run one at a time because getting the languages is async and

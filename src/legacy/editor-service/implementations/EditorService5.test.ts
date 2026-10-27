@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 import type * as vscode from "vscode";
-import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { LegacyDprintExecutable } from "../../LegacyDprintExecutable";
 import { EditorService5 } from "./EditorService5";
 
 describe("EditorService5", () => {
@@ -181,7 +181,7 @@ describe("EditorService5", () => {
   it("rejects a request when the executable does not exist", async () => {
     const missingExecutable = {
       spawnEditorService: () => spawn(path.join(__dirname, "does-not-exist"), [], { stdio: ["pipe", "pipe", "pipe"] }),
-    } as unknown as DprintExecutable;
+    } as unknown as LegacyDprintExecutable;
     service = new EditorService5(logger, missingExecutable);
 
     await assert.rejects(service.canFormat("/file.ts"));
@@ -279,7 +279,7 @@ class FakeExecutable {
   }
 
   asExecutable() {
-    return this as unknown as DprintExecutable;
+    return this as unknown as LegacyDprintExecutable;
   }
 
   spawnEditorService() {

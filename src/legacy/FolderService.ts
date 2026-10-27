@@ -2,17 +2,17 @@ import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
 import { type Environment, RealEnvironment } from "../environment";
-import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
 import { expandToLines } from "../textRange";
-import { ObjectDisposedError } from "../utils";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { type FormatFile, getCannotFormatReason } from "./formatFile";
+import { type ConfigDiscovery, type EditorInfo, LegacyDprintExecutable } from "./LegacyDprintExecutable";
 import { getMinimalEdits } from "./minimalEdits";
 import { trimFormattedCellText } from "./notebookCellText";
+import { ObjectDisposedError } from "./ObjectDisposedError";
 import { getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
@@ -43,7 +43,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #editorService: EditorService | undefined;
   #editorInfo: EditorInfo | undefined;
-  #dprintExecutable: DprintExecutable | undefined;
+  #dprintExecutable: LegacyDprintExecutable | undefined;
 
   constructor(opts: FolderServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
@@ -305,7 +305,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
-    return DprintExecutable.create({
+    return LegacyDprintExecutable.create({
       approvedPaths: this.#approvedPaths,
       pathInfo: config.pathInfo,
       cwd: this.#cwd,

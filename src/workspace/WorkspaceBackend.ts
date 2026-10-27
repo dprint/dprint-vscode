@@ -222,12 +222,10 @@ export class WorkspaceBackend implements vscode.Disposable {
       // sub directory so that it doesn't hold a resource lock on the sub directory,
       // which would prevent the user from deleting it.
       cwd: folderUri,
-      configUri: undefined,
       // search from the config file's directory so that a project in a sub directory
       // uses the dprint installed in its own node_modules folder
       npmSearchDir: dirUri,
-      // these are sent to the editor service, so they don't need a process each
-      ensureStableFormat: false,
+      // this is sent to the editor service, so it doesn't need a process each
       verbose: false,
       logger: this.#logger,
       environment: this.#environment,
@@ -394,7 +392,7 @@ class WorkspaceState {
       return;
     }
     // this also tells vscode to get the schema again
-    this.#options.configSchemaProvider.setConfigSchemaGetter(() => this.#getConfigSchema());
+    this.#options.configSchemaProvider.setSource({ getConfigSchema: () => this.#getConfigSchema() });
     // don't wait for this because it may need to start dprint for a config outside the workspace
     this.#scheduleUserDataFilePathsUpdate();
     if (this.#configs.length === 0) {
@@ -541,11 +539,9 @@ class WorkspaceState {
       approvedPaths: this.#options.approvedPaths,
       pathInfo: config.pathInfo,
       cwd,
-      configUri: undefined,
       // don't run executables from arbitrary node_modules folders outside the workspace
       resolveNpmExecutable: false,
-      // these are sent to the editor service, so they don't need a process each
-      ensureStableFormat: false,
+      // this is sent to the editor service, so it doesn't need a process each
       verbose: false,
       logger: this.#logger,
       environment: this.#environment,

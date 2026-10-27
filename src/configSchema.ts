@@ -1,30 +1,3 @@
-import { defaultPluginConfigSchema } from "./pluginConfigSchema";
-import type { RacyCacheTextDownloader } from "./utils/TextDownloader";
-
-/**
- * Downloads and parses the config schema.
- *
- * Fails when the downloaded text is not a JSON object, in which case the text
- * is removed from the cache so that it's downloaded again the next time.
- */
-export async function downloadConfigSchema(
-  downloader: RacyCacheTextDownloader,
-  url: string,
-): Promise<{ [key: string]: any }> {
-  const text = await downloader.get(url);
-  try {
-    const schema: unknown = JSON.parse(text);
-    if (schema == null || typeof schema !== "object" || Array.isArray(schema)) {
-      throw new Error(`Expected the config schema to be an object, but found: ${text.substring(0, 100)}`);
-    }
-    return schema;
-  } catch (err) {
-    // ex. the page of a captive portal, which would otherwise be used for the rest of the session
-    downloader.forget(url);
-    throw err;
-  }
-}
-
 /**
  * Gets the schema to use for a config file when the CLI's schema is not available.
  *
@@ -138,3 +111,54 @@ export function getDefaultConfigSchema(id: string) {
     allowTrailingCommas: true,
   };
 }
+
+const pluginConfigOverrideSchema = {
+  type: "object",
+  required: ["files"],
+  minProperties: 2,
+  properties: {
+    files: {
+      description: "File patterns this override applies to.",
+      anyOf: [{
+        type: "string",
+      }, {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "string",
+        },
+      }],
+    },
+  },
+};
+
+/** Schema for the properties the CLI accepts in every plugin's configuration. */
+export const defaultPluginConfigSchema = {
+  description: "Plugin configuration.",
+  type: "object",
+  properties: {
+    locked: {
+      description: "Whether this plugin configuration is locked against overrides from extending configurations.",
+      type: "boolean",
+    },
+    associations: {
+      description:
+        "File patterns to associate with this plugin, in addition to the file extensions and file names it matches by default. Use a negated glob (ex. \"!**/*.js\") to stop matching a default extension or file name.",
+      anyOf: [{
+        type: "string",
+      }, {
+        type: "array",
+        items: {
+          type: "string",
+        },
+      }],
+    },
+    overrides: {
+      description: "Plugin configuration overrides for specific file patterns.",
+      anyOf: [pluginConfigOverrideSchema, {
+        type: "array",
+        items: pluginConfigOverrideSchema,
+      }],
+    },
+  },
+};

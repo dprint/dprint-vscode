@@ -6,24 +6,22 @@ import { discoverWorkspaceConfigFiles } from "../configFile";
 import {
   filterCacheDirConfigFiles,
   findClosestFolder,
-  findGlobalConfigFile,
   findWorkspaceFolderAncestorConfigFile,
   isPathWithin,
-  type LooseFolderConfig,
-  resolveLooseFolderConfig,
 } from "../configPaths";
 import { DPRINT_CONFIG_FILE_NAME_GLOB, FILE_SCHEME, NOTEBOOK_CELL_SCHEME, UNTITLED_SCHEME } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
-import type { ConfigDiscovery, EditorInfo } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import type { NotFormattedReason } from "../globalConfigCommand";
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import { Logger } from "../logger";
 import { getNoConfigMessage } from "../noConfigMessage";
-import { ObjectDisposedError } from "../utils";
+import { findGlobalConfigFile, type LooseFolderConfig, resolveLooseFolderConfig } from "./configPaths";
 import { initializeFolders, refreshOrRestartFolders } from "./folderRefresh";
 import { FolderService } from "./FolderService";
 import type { FormatFile } from "./formatFile";
+import type { ConfigDiscovery, EditorInfo } from "./LegacyDprintExecutable";
+import { ObjectDisposedError } from "./ObjectDisposedError";
 
 export type FolderInfos = ReadonlyArray<Readonly<FolderInfo>>;
 

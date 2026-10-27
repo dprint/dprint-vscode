@@ -4,7 +4,7 @@ import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
 import type { ExtensionBackend } from "./ExtensionBackend";
 import { activateLegacy } from "./legacy/context";
 import type { Logger } from "./logger";
-import { ActivatedDisposables, HttpsTextDownloader } from "./utils";
+import { ActivatedDisposables } from "./utils";
 import { WorkspaceBackend } from "./workspace/WorkspaceBackend";
 
 /**
@@ -15,7 +15,7 @@ import { WorkspaceBackend } from "./workspace/WorkspaceBackend";
  */
 export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPaths): ExtensionBackend {
   const disposables = new ActivatedDisposables(logger);
-  const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
+  const configSchemaProvider = new ConfigJsonSchemaProvider(logger);
   disposables.push(configSchemaProvider);
   disposables.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),

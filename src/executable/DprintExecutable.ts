@@ -8,7 +8,6 @@ import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
-import { getCliEnv } from "./cliEnv";
 import {
   type DprintCommand,
   expandWindowsEnvVars,
@@ -19,39 +18,16 @@ import {
 } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
-export interface EditorInfo {
-  schemaVersion: number;
-  cliVersion: string;
-  configSchemaUrl: string;
-  plugins: PluginInfo[];
-}
-
-export interface PluginInfo {
-  name: string;
-  version: string;
-  configKey: string;
-  fileExtensions: string[];
-  fileNames: string[];
-  configSchemaUrl: string | undefined;
-  helpUrl: string;
-}
-
-/** A config discovery mode supported by the cli. */
-export type ConfigDiscovery = "ignore-descendants";
-
 export interface DprintExecutableOptions {
   approvedPaths: ApprovedConfigPaths;
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
-  configUri: vscode.Uri | undefined;
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
   /** Directory to start searching node_modules for a dprint executable from. Defaults to the cwd. */
   npmSearchDir?: vscode.Uri;
-  /** The cli's config discovery mode. Defaults to the cli's default. */
-  configDiscovery?: ConfigDiscovery;
-  /** Whether to format again until the output is stable. Defaults to false. */
-  ensureStableFormat?: boolean;
+  /** The environment variables to launch the cli with. Defaults to this process' environment. */
+  env?: NodeJS.ProcessEnv;
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -60,17 +36,13 @@ export interface DprintExecutableOptions {
 export class DprintExecutable {
   readonly #command: DprintCommand;
   readonly #cwd: vscode.Uri;
-  readonly #configUri: vscode.Uri | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
-  readonly #logger: Logger;
 
   private constructor(command: DprintCommand, options: DprintExecutableOptions) {
-    this.#logger = options.logger;
     this.#command = command;
     this.#cwd = options.cwd;
-    this.#configUri = options.configUri;
-    this.#env = getCliEnv(process.env, options);
+    this.#env = options.env;
     this.#verbose = options.verbose;
   }
 
@@ -103,50 +75,7 @@ export class DprintExecutable {
     const isCwdRelative = this.#command.kind === "setting" && /[\\/]/.test(this.cmdPath)
       && !path.isAbsolute(this.cmdPath);
     const cwd = isCwdRelative ? this.#cwd.fsPath : null;
-    return JSON.stringify([this.cmdPath, cwd, this.#env?.DPRINT_EDITOR_STABLE_FORMAT ?? null, this.#verbose]);
-  }
-
-  get initializationFolderUri() {
-    if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
-    }
-    return this.#cwd;
-  }
-
-  async checkInstalled() {
-    try {
-      await this.#execShell(["-v"], undefined, undefined);
-      return true;
-    } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.cmdPath}.`, err);
-      return false;
-    }
-  }
-
-  async getEditorInfo() {
-    const stdout = await this.#execShell(
-      ["editor-info", ...this.#getConfigArgs()],
-      undefined,
-      undefined,
-    );
-    const editorInfo = parseEditorInfo();
-
-    if (
-      !(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number"
-      || isNaN(editorInfo.schemaVersion)
-    ) {
-      throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
-    }
-
-    return editorInfo;
-
-    function parseEditorInfo() {
-      try {
-        return JSON.parse(stdout) as EditorInfo;
-      } catch (err) {
-        throw new Error(`Error parsing editor info. Output was: ${stdout}\n\nError: ${err}`);
-      }
-    }
+    return JSON.stringify([this.cmdPath, cwd, this.#env ?? null, this.#verbose]);
   }
 
   /**
@@ -154,7 +83,7 @@ export class DprintExecutable {
    * fails for a version of dprint that doesn't have it.
    */
   async getEditorServiceInfo(): Promise<unknown> {
-    const stdout = await this.#execShell(["editor-service", "--info"], undefined, undefined);
+    const stdout = await this.execShell(["editor-service", "--info"], undefined, undefined);
     try {
       return JSON.parse(stdout);
     } catch (err) {
@@ -174,6 +103,11 @@ export class DprintExecutable {
     if (this.#verbose) {
       args.push("--verbose");
     }
+    return this.spawn(args);
+  }
+
+  /** Starts the cli with the arguments and pipes for its stdio. */
+  spawn(args: string[]) {
     const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
     return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
@@ -183,23 +117,8 @@ export class DprintExecutable {
     });
   }
 
-  spawnEditorService() {
-    const currentProcessId = process.pid;
-    const args = ["editor-service", "--parent-pid", currentProcessId.toString(), ...this.#getConfigArgs()];
-    if (this.#verbose) {
-      args.push("--verbose");
-    }
-
-    const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
-    return spawn(launchInfo.command, launchInfo.args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: this.#cwd.fsPath,
-      env: this.#env,
-      shell: launchInfo.shell,
-    });
-  }
-
-  #execShell(
+  /** Runs the cli with the arguments and gets its stdout without the last newline. */
+  execShell(
     args: string[],
     stdin: string | undefined,
     token: vscode.CancellationToken | undefined,
@@ -233,14 +152,6 @@ export class DprintExecutable {
         cancellationDisposable?.dispose();
       }
     });
-  }
-
-  #getConfigArgs() {
-    if (this.#configUri) {
-      return ["--config", this.#configUri.fsPath];
-    } else {
-      return [];
-    }
   }
 }
 

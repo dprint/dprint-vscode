@@ -1,12 +1,12 @@
-import type { DprintExecutable } from "../../executable/DprintExecutable";
 import type { Logger } from "../../logger";
+import type { LegacyDprintExecutable } from "../LegacyDprintExecutable";
 import type { EditorService } from "./EditorService";
 import { EditorService4, EditorService5 } from "./implementations";
 
 export function createEditorService(
   schemaVersion: number,
   logger: Logger,
-  dprintExecutable: DprintExecutable,
+  dprintExecutable: LegacyDprintExecutable,
 ): EditorService {
   switch (schemaVersion) {
     case 4:

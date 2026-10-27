@@ -88,7 +88,7 @@ export function getNotFormattedMessage(reason: NotFormattedReason) {
 /**
  * Gets the directory of the file the document is formatted as, which is where the search for
  * its config file starts, or undefined when it's not a document the extension can format. This
- * needs to be kept in sync with how the backend resolves the file (see `WorkspaceService`).
+ * needs to be kept in sync with how the backends resolve the file (see `WorkspaceBackend`).
  */
 function getFormatDirPath(document: GlobalConfigCommandDocument, env: GlobalConfigCommandEnvironment) {
   switch (document.scheme) {

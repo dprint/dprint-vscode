@@ -1,162 +1,77 @@
 import * as vscode from "vscode";
-import { downloadConfigSchema, getDefaultConfigSchema } from "./configSchema";
+import { getDefaultConfigSchema } from "./configSchema";
 import type { Logger } from "./logger";
-import {
-  getPluginConfigSchema,
-  getPluginSchemaUri,
-  getPluginSchemaUriConfigKey,
-  getPluginSchemaUrls,
-} from "./pluginConfigSchema";
-import { RacyCacheTextDownloader, type TextDownloader } from "./utils";
 
-/** What the schema is provided from for each configuration file in use. */
-export interface ConfigSchemaInfo {
-  /** The url of the schema of the configuration file. */
-  configSchemaUrl: string;
-  plugins: ReadonlyArray<{ configKey: string; configSchemaUrl: string | undefined }>;
+/** Where the provider gets the schemas from. */
+export interface ConfigSchemaSource {
+  /**
+   * Gets the schema of the configuration files, which is the default schema when
+   * it's undefined or getting it fails.
+   */
+  getConfigSchema(): Promise<{ [key: string]: any } | undefined>;
+  /** The other uris of the provider's scheme that the config schema references. */
+  readonly referencedSchemaUris?: ReadonlyArray<vscode.Uri>;
+  /** Gets the schema of one of the other uris, which logs when the uri is unknown. */
+  getReferencedSchema?(uri: vscode.Uri): Promise<object | undefined>;
 }
 
-/**
- * Gets the schema of the configuration files with the schemas of the plugins in it,
- * which is undefined when there are no configuration files.
- */
-export type GetConfigSchema = () => Promise<{ [key: string]: any } | undefined>;
-
-/** Provides the dprint configuration JSON schema and the schemas of the plugins it references to vscode. */
+/** Provides the dprint configuration JSON schema and the schemas it references to vscode. */
 export class ConfigJsonSchemaProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  #configSchemaInfos: ReadonlyArray<ConfigSchemaInfo> | undefined;
-  /** Gets the whole schema from dprint instead of building it from the infos. */
-  #getConfigSchema: GetConfigSchema | undefined;
-  /** The url of each plugin's schema by the plugin's config key. */
-  #pluginSchemaUrls: ReadonlyMap<string, string> = new Map();
-  #jsonSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
+  #source: ConfigSchemaSource | undefined;
   #logger: Logger;
   #onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
-  #cachedTextDownloader: RacyCacheTextDownloader;
 
   get onDidChange() {
     return this.#onDidChangeEmitter.event;
   }
 
-  constructor(logger: Logger, textDownloader: TextDownloader) {
+  constructor(logger: Logger) {
     this.#logger = logger;
-    this.#cachedTextDownloader = new RacyCacheTextDownloader(textDownloader);
   }
 
   static scheme = "dprint";
+  static configSchemaUri = vscode.Uri.parse("dprint://schemas/config.json");
 
   dispose() {
     this.#onDidChangeEmitter.dispose();
   }
 
-  /** Provides the schema that's built from the urls of the schemas of the config files and their plugins. */
-  setConfigSchemaInfos(infos: ReadonlyArray<ConfigSchemaInfo> | undefined) {
-    const previousPluginSchemaUrls = this.#pluginSchemaUrls;
-    this.#getConfigSchema = undefined;
-    this.#configSchemaInfos = infos;
-    this.#pluginSchemaUrls = getPluginSchemaUrls(infos?.map(info => info.plugins) ?? []);
+  /** Provides the schemas from the source, which is asked again each time vscode gets them. */
+  setSource(source: ConfigSchemaSource | undefined) {
+    const uris = [
+      ConfigJsonSchemaProvider.configSchemaUri,
+      ...this.#source?.referencedSchemaUris ?? [],
+      ...source?.referencedSchemaUris ?? [],
+    ];
+    this.#source = source;
     // always refresh to reduce complexity (it's cheap to refresh)
-    this.#onDidChangeEmitter.fire(this.#jsonSchemaUri);
-    for (const configKey of new Set([...previousPluginSchemaUrls.keys(), ...this.#pluginSchemaUrls.keys()])) {
-      this.#onDidChangeEmitter.fire(vscode.Uri.parse(getPluginSchemaUri(configKey)));
+    for (const uri of new Set(uris.map(uri => uri.toString()))) {
+      this.#onDidChangeEmitter.fire(vscode.Uri.parse(uri));
     }
-  }
-
-  /** Provides the schema that dprint provides, which is gotten again each time the schema is provided. */
-  setConfigSchemaGetter(getConfigSchema: GetConfigSchema) {
-    this.setConfigSchemaInfos(undefined);
-    this.#getConfigSchema = getConfigSchema;
   }
 
   async provideTextDocumentContent(uri: vscode.Uri, _token: vscode.CancellationToken) {
-    if (uri.toString() === this.#jsonSchemaUri.toString()) {
+    if (uri.toString() === ConfigJsonSchemaProvider.configSchemaUri.toString()) {
       return this.#provideConfigSchema();
     }
-    const pluginConfigKey = uri.authority === this.#jsonSchemaUri.authority
-      ? getPluginSchemaUriConfigKey(uri.path)
-      : undefined;
-    if (pluginConfigKey != null) {
-      return this.#providePluginSchema(pluginConfigKey);
+    if (this.#source?.getReferencedSchema == null) {
+      this.#logger.logWarn("Unknown JSON schema uri:", uri.toString());
+      return undefined;
     }
-    this.#logger.logWarn("Unknown JSON schema uri:", uri.toString());
-    return undefined;
+    const schema = await this.#source.getReferencedSchema(uri);
+    return schema == null ? undefined : formatAsJson(schema);
   }
 
   async #provideConfigSchema() {
-    if (this.#getConfigSchema != null) {
-      let configSchema: { [key: string]: any } | undefined;
-      try {
-        configSchema = await this.#getConfigSchema();
-      } catch (err) {
-        this.#logger.logError("Error getting the config schema. Defaulting to built in schema.", err);
-      }
-      configSchema ??= this.#getDefaultSchemaObject();
-      configSchema["$id"] = this.#jsonSchemaUri.toString();
-      return formatAsJson(configSchema);
+    let configSchema: { [key: string]: any } | undefined;
+    try {
+      configSchema = await this.#source?.getConfigSchema();
+    } catch (err) {
+      this.#logger.logError("Error getting the config schema. Defaulting to built in schema.", err);
     }
-
-    const configSchemaInfos = this.#configSchemaInfos;
-    const configSchema = await this.#getRawConfigSchema(configSchemaInfos);
-    configSchema["$id"] = this.#jsonSchemaUri.toString();
-
-    if (configSchemaInfos != null) {
-      configSchema.properties = configSchema.properties ?? {};
-      // compromise: between workspace folders, the same plugin might appear
-      // with a different version. We compromise by selecting the first plugin
-      // found to be the one used, but perhaps an improvement would be to use
-      // the latest plugin version found. This would be a bit more complex to
-      // figure out though.
-      for (const configKey of this.#pluginSchemaUrls.keys()) {
-        if (configSchema.properties[configKey] == null) {
-          // vscode only downloads schemas from the domains the user trusts, so
-          // reference a uri of this provider, which downloads the plugin's schema
-          configSchema.properties[configKey] = getPluginConfigSchema(
-            getPluginSchemaUri(configKey),
-            configSchema.additionalProperties,
-          );
-        }
-      }
-    }
-
+    configSchema ??= getDefaultConfigSchema(ConfigJsonSchemaProvider.configSchemaUri.toString());
+    configSchema["$id"] = ConfigJsonSchemaProvider.configSchemaUri.toString();
     return formatAsJson(configSchema);
-  }
-
-  async #providePluginSchema(configKey: string) {
-    const schemaUrl = this.#pluginSchemaUrls.get(configKey);
-    if (schemaUrl == null) {
-      this.#logger.logWarn("No JSON schema for plugin:", configKey);
-      return undefined;
-    }
-
-    try {
-      this.#logger.logDebug("Fetching plugin JSON schema:", schemaUrl);
-      return formatAsJson(await downloadConfigSchema(this.#cachedTextDownloader, schemaUrl));
-    } catch (err) {
-      this.#logger.logError("Error downloading plugin config schema.", err);
-      // vscode then says on the config file that the schema couldn't be loaded
-      throw err;
-    }
-  }
-
-  async #getRawConfigSchema(configSchemaInfos: ReadonlyArray<ConfigSchemaInfo> | undefined) {
-    // compromise: settle for the first one though they'll likely always be the same
-    const configSchemaUrl = configSchemaInfos?.[0]?.configSchemaUrl;
-    if (configSchemaUrl == null) {
-      // provide a default schema while it hasn't loaded
-      return this.#getDefaultSchemaObject();
-    }
-
-    try {
-      this.#logger.logDebug("Fetching JSON schema:", configSchemaUrl);
-      return await downloadConfigSchema(this.#cachedTextDownloader, configSchemaUrl);
-    } catch (err) {
-      this.#logger.logError("Error downloading config schema. Defaulting to built in schema.", err);
-      return this.#getDefaultSchemaObject();
-    }
-  }
-
-  #getDefaultSchemaObject(): { [key: string]: any } {
-    return getDefaultConfigSchema(this.#jsonSchemaUri.toString());
   }
 }
 
