@@ -98,6 +98,19 @@ describe("EditorServiceConnection", () => {
     await assert.rejects(configInfo, /Error resolving the config\./);
   });
 
+  it("rejects a request with a malformed response", async () => {
+    const { connection, processes } = createConnection();
+
+    const configInfo = connection.configInfo({ filePath: "/dprint.json" });
+    const process = processes[0];
+    await process.readMessage(); // initialize
+    const request = await process.readMessage();
+    process.send(MessageKind.ConfigInfoResponse, [request.id, "{"]);
+    await assert.rejects(configInfo, /stopped while the request was in progress/);
+    assert.strictEqual(process.killCount, 1);
+    assert.strictEqual(connection.pendingRequestCount, 0);
+  });
+
   it("shows the messages from the process and responds with the chosen action", async () => {
     const shownMessages: ShowMessageData[] = [];
     const { connection, processes } = createConnection({
@@ -125,6 +138,33 @@ describe("EditorServiceConnection", () => {
     const activeResponse = await process.readMessage();
     assert.strictEqual(activeResponse.kind, MessageKind.SuccessResponse);
     assert.strictEqual(new BodyReader(activeResponse.body).readInt(), activeId);
+  });
+
+  it("doesn't respond to a show message request of a process that exited", async () => {
+    let chooseAction: ((action: MessageAction | undefined) => void) | undefined;
+    const { connection, processes } = createConnection({
+      showMessageRequest: () => new Promise(resolve => chooseAction = resolve),
+    });
+
+    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    await processes[0].readMessage(); // initialize
+    await processes[0].readMessage(); // file info
+    processes[0].send(MessageKind.ShowMessageRequest, [JSON.stringify({
+      kind: "info",
+      message: "Choose.",
+      actions: [{ title: "First" }],
+    })]);
+    await nextTick();
+    processes[0].emit("exit", 1, null);
+    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    await processes[1].readMessage(); // initialize
+    await processes[1].readMessage(); // file info
+    chooseAction!({ title: "First" });
+    await nextTick();
+
+    // the next message the new process receives is the next request
+    connection.configInfo({ filePath: "/dprint.json" }).catch(() => {/* ignore */});
+    assert.strictEqual((await processes[1].readMessage()).kind, MessageKind.ConfigInfo);
   });
 
   it("rejects the pending requests when the process exits and starts it again on the next request", async () => {

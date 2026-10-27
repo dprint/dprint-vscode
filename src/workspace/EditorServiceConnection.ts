@@ -244,6 +244,8 @@ export class EditorServiceConnection {
     this.#onExit(process, new Error("The editor service was stopped while the request was in progress."));
   }
 
+  // The body is read before taking the pending request so that a malformed body,
+  // which stops the process, rejects that request along with the others.
   #handleMessage(message: RawMessage) {
     const body = new BodyReader(message.body);
     switch (message.kind) {
@@ -252,14 +254,16 @@ export class EditorServiceConnection {
         break;
       case MessageKind.ErrorResponse: {
         const id = body.readInt();
-        this.#takePendingRequest(id)?.reject(new Error(body.readSizedString()));
+        const err = new Error(body.readSizedString());
+        this.#takePendingRequest(id)?.reject(err);
         break;
       }
       case MessageKind.FileInfoResponse:
       case MessageKind.ConfigInfoResponse:
       case MessageKind.ConfigSchemaResponse: {
         const id = body.readInt();
-        this.#takePendingRequest(id)?.resolve(body.readSizedJson());
+        const data = body.readSizedJson();
+        this.#takePendingRequest(id)?.resolve(data);
         break;
       }
       case MessageKind.FormatFileResponse: {
@@ -292,11 +296,16 @@ export class EditorServiceConnection {
   }
 
   async #respondToShowMessageRequest(id: number, data: ShowMessageRequestData) {
+    const process = this.#process;
     let action: MessageAction | undefined;
     try {
       action = await this.#options.showMessageRequest(data);
     } catch (err) {
       this.#options.logger.logError("Error showing a message:", err);
+    }
+    // a process started after the request's process exited may use the same message id
+    if (this.#process !== process) {
+      return;
     }
     this.#write(
       encodeMessage(this.#nextMessageId(), MessageKind.ShowMessageRequestResponse, [

@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { expandToLines } from "./textRange";
+import { expandToLines, getRangeEdits } from "./textRange";
 
 describe("expandToLines", () => {
   const text = "a\n  bb\nccc\n";
@@ -31,5 +31,25 @@ describe("expandToLines", () => {
 
   it("includes carriage returns in the line break", () => {
     assert.deepStrictEqual(expandToLines("a\r\nbb\r\nc", { start: 4, end: 4 }), { start: 3, end: 7 });
+  });
+});
+
+describe("getRangeEdits", () => {
+  const text = "a\n\n\nb\n";
+
+  it("keeps the edits within the range", () => {
+    const edits = [{ start: 1, end: 2, newText: "" }];
+    assert.deepStrictEqual(getRangeEdits(text, edits, { start: 0, end: 3 }), edits);
+  });
+
+  it("replaces the range when an edit just outside it only changes the range's text", () => {
+    // removing the third line break instead of the second has the same result
+    const edits = [{ start: 3, end: 4, newText: "" }];
+    assert.deepStrictEqual(getRangeEdits(text, edits, { start: 0, end: 3 }), [{ start: 0, end: 3, newText: "a\n" }]);
+  });
+
+  it("is undefined when the text outside the range changed", () => {
+    const edits = [{ start: 4, end: 5, newText: "c" }];
+    assert.strictEqual(getRangeEdits(text, edits, { start: 0, end: 3 }), undefined);
   });
 });

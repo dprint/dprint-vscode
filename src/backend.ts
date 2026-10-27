@@ -32,6 +32,9 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
   let legacyBackend: ExtensionBackend | undefined;
   // the initializations run one at a time because each one may switch the backend
   let initialization = Promise.resolve();
+  /** The initialization that's waiting on the current one, which the later requests use too. */
+  let queuedInitialization: Promise<void> | undefined;
+  let disposed = false;
 
   return {
     reInitialize,
@@ -45,6 +48,7 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
       return (legacyBackend ?? workspaceBackend).provideGlobalConfigFormattingEdits(document, range, options, token);
     },
     dispose() {
+      disposed = true;
       legacyBackend?.dispose();
       legacyBackend = undefined;
       disposables.dispose();
@@ -52,18 +56,29 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
   };
 
   function reInitialize() {
-    const result = initialization.then(initialize);
+    // the queued initialization hasn't started, so it covers this request too
+    if (queuedInitialization != null) {
+      return queuedInitialization;
+    }
+    const result = initialization.then(() => {
+      queuedInitialization = undefined;
+      return initialize();
+    });
+    queuedInitialization = result;
     initialization = result.catch(() => {/* ignore */});
     return result;
   }
 
   async function initialize() {
+    if (disposed) {
+      return;
+    }
     const isSupported = await workspaceBackend.initialize(() => {
       // stop the legacy backend before the formatter is registered again
       legacyBackend?.dispose();
       legacyBackend = undefined;
     });
-    if (!isSupported) {
+    if (!isSupported && !disposed) {
       legacyBackend ??= activateLegacy(logger, approvedPaths, configSchemaProvider);
       await legacyBackend.reInitialize();
     }

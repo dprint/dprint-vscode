@@ -109,6 +109,7 @@ export interface FormatFileOptions {
   notebookPath?: string;
   allowGlobalConfig?: boolean;
   ensureStableFormat?: boolean;
+  showNoConfigNotification?: boolean;
 }
 
 /** Replaces the text between two UTF-16 offsets of the text that was formatted. */

@@ -26,7 +26,7 @@ import type { NotFormattedReason as ExtensionNotFormattedReason } from "../globa
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { expandToLines } from "../textRange";
+import { expandToLines, getRangeEdits } from "../textRange";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { EditorServiceConnection } from "./EditorServiceConnection";
@@ -59,6 +59,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #logger: Logger;
   readonly #environment: Environment;
   #state: WorkspaceState | undefined;
+  /** The state being initialized, which replaces the current one once it's ready. */
+  #pendingState: WorkspaceState | undefined;
   #disposed = false;
 
   constructor(options: WorkspaceBackendOptions) {
@@ -71,13 +73,20 @@ export class WorkspaceBackend implements vscode.Disposable {
    * Starts formatting the workspace, which is false when one of the dprint executables
    * in use doesn't support schema version 6. Nothing is registered in that case.
    *
-   * @param onSupported - Called once it's known that the executables support it,
-   * before the formatter is registered.
+   * The current state keeps formatting until the new one is ready to replace it, so
+   * that formatting (ex. on save) isn't skipped while initializing.
+   *
+   * @param onSupported - Called once the executables support it and the new state
+   * is ready, right before the formatter is registered.
    */
   async initialize(onSupported: () => void): Promise<boolean> {
-    this.#clearState();
     this.#logger.setDebug(getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose);
-    const state = new WorkspaceState(this.#options, this.#environment);
+    const state = new WorkspaceState(this.#options, this.#environment, () => {
+      this.#state?.dispose();
+      this.#state = state;
+      onSupported();
+    });
+    this.#pendingState = state;
     try {
       const configFiles = await this.#findConfigFiles();
       const configServices = await Promise.all(
@@ -92,14 +101,13 @@ export class WorkspaceBackend implements vscode.Disposable {
       if (unsupported != null && "error" in unsupported) {
         this.#logger.logInfo(`Using schema version 5 of the editor service. ${unsupported.error}`);
         state.dispose();
+        this.#clearState();
         return false;
       }
       if (this.#disposed) {
         state.dispose();
         return false;
       }
-      onSupported();
-      this.#state = state;
       state.setConfigs(configFiles.map((configFile, i) => ({
         dirUri: configFile.dirUri,
         configFilePath: configFile.configFilePath,
@@ -118,6 +126,10 @@ export class WorkspaceBackend implements vscode.Disposable {
         state.dispose();
       }
       throw err;
+    } finally {
+      if (this.#pendingState === state) {
+        this.#pendingState = undefined;
+      }
     }
   }
 
@@ -142,11 +154,18 @@ export class WorkspaceBackend implements vscode.Disposable {
     if (this.#state == null) {
       return Promise.resolve({ notFormattedReason: "failed" });
     }
-    return this.#state.formatDocument(document, range, { allowGlobalConfig: true }, token);
+    // the command says why the file wasn't formatted itself
+    return this.#state.formatDocument(
+      document,
+      range,
+      { allowGlobalConfig: true, showNoConfigNotification: false },
+      token,
+    );
   }
 
   dispose() {
     this.#disposed = true;
+    this.#pendingState?.dispose();
     this.#clearState();
   }
 
@@ -261,18 +280,25 @@ class WorkspaceState {
   readonly #registrationDisposables: ActivatedDisposables;
   readonly #services = new Map<string, Promise<ServiceResolution>>();
   readonly #refreshQueue: CoalescingQueue;
+  readonly #onActivate: () => void;
+  readonly #watchedDirPaths = new Set<string>();
   #defaultService: Promise<ServiceResolution> | undefined;
   #configs: Config[] = [];
   #registrationKey: string | undefined;
   #registrationUpdate = Promise.resolve();
   #userDataFilePaths: string[] = [];
   #userDataFilePathsUpdate = Promise.resolve();
+  /** Whether the plugins of the config files were found, which is when the formatter can be registered. */
+  #hasRefreshed = false;
+  #isActivated = false;
   #disposed = false;
 
-  constructor(options: WorkspaceBackendOptions, environment: Environment) {
+  /** @param onActivate - Called once the state is ready, right before it registers the formatter. */
+  constructor(options: WorkspaceBackendOptions, environment: Environment, onActivate: () => void) {
     this.#options = options;
     this.#logger = options.logger;
     this.#environment = environment;
+    this.#onActivate = onActivate;
     this.#disposables = new ActivatedDisposables(options.logger);
     this.#registrationDisposables = new ActivatedDisposables(options.logger);
     // coalesced because saving a config file often causes multiple change events
@@ -360,9 +386,15 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
+    this.#hasRefreshed = true;
+    await this.#scheduleRegistrationUpdate();
+    // in case updating the registration failed
+    this.#activate();
+    if (this.#disposed) {
+      return;
+    }
     // this also tells vscode to get the schema again
     this.#options.configSchemaProvider.setConfigSchemaGetter(() => this.#getConfigSchema());
-    await this.#scheduleRegistrationUpdate();
     // don't wait for this because it may need to start dprint for a config outside the workspace
     this.#scheduleUserDataFilePathsUpdate();
     if (this.#configs.length === 0) {
@@ -374,7 +406,7 @@ class WorkspaceState {
   async formatDocument(
     document: vscode.TextDocument,
     range: vscode.Range | undefined,
-    options: { allowGlobalConfig?: boolean },
+    options: { allowGlobalConfig?: boolean; showNoConfigNotification?: boolean },
     token: vscode.CancellationToken,
   ): Promise<FormatDocumentResult> {
     const candidates = this.#getFormatFileCandidates(document);
@@ -385,7 +417,10 @@ class WorkspaceState {
     if (service == null || token.isCancellationRequested) {
       return service == null ? { notFormattedReason: "failed" } : { edits: [] };
     }
-    const allowGlobalConfig = options.allowGlobalConfig ?? getDprintConfig(document.uri).useGlobalConfig;
+    // the settings of the file that it's formatted as, which is in the workspace folder
+    // for an untitled document and a notebook cell unlike the document's uri
+    const config = getDprintConfig(vscode.Uri.file(path.join(candidates.dirPath, candidates.fileNames[0])));
+    const allowGlobalConfig = options.allowGlobalConfig ?? config.useGlobalConfig;
     try {
       const filePath = await this.#getFormatFilePath(service, candidates, allowGlobalConfig);
       const text = document.getText();
@@ -399,7 +434,8 @@ class WorkspaceState {
         {
           notebookPath: candidates.notebookPath,
           allowGlobalConfig,
-          ensureStableFormat: getDprintConfig(document.uri).ensureStableFormat,
+          ensureStableFormat: config.ensureStableFormat,
+          showNoConfigNotification: options.showNoConfigNotification ?? config.showNoConfigNotification,
         },
         token,
       );
@@ -411,13 +447,14 @@ class WorkspaceState {
         return getFormatDocumentResult(result.reason, result.message, candidates.notebookPath != null);
       }
       // plugins may format the whole file instead of only the range
-      if (range != null && result.edits.some(edit => edit.start < offsetRange.start || edit.end > offsetRange.end)) {
+      const edits = range == null ? result.edits : getRangeEdits(text, result.edits, offsetRange);
+      if (edits == null) {
         this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
         return { edits: [] };
       }
       this.#logger.logDebug("Response - Formatted:", filePath);
       return {
-        edits: result.edits.map(edit =>
+        edits: edits.map(edit =>
           vscode.TextEdit.replace(
             new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
             edit.newText,
@@ -436,6 +473,11 @@ class WorkspaceState {
     if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
       return;
     }
+    // workspace folders in the same directory use the same config file
+    if (this.#watchedDirPaths.has(dirPath)) {
+      return;
+    }
+    this.#watchedDirPaths.add(dirPath);
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_CONFIG_FILE_NAME_GLOB),
     );
@@ -519,7 +561,10 @@ class WorkspaceState {
     const filePathsByService = new Map<Service, string[]>();
     for (const config of this.#configs) {
       const filePaths = filePathsByService.get(config.service) ?? [];
-      filePaths.push(config.configFilePath);
+      // workspace folders may use the same config file in an ancestor directory
+      if (!filePaths.includes(config.configFilePath)) {
+        filePaths.push(config.configFilePath);
+      }
       filePathsByService.set(config.service, filePaths);
     }
     const schemas = await Promise.all(
@@ -624,6 +669,15 @@ class WorkspaceState {
     return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
   }
 
+  /** Has this state replace the current one, which is only done once. */
+  #activate() {
+    if (this.#isActivated || this.#disposed) {
+      return;
+    }
+    this.#isActivated = true;
+    this.#onActivate();
+  }
+
   #updateSettings() {
     for (const service of this.#services.values()) {
       service.then(async service => {
@@ -649,6 +703,9 @@ class WorkspaceState {
   }
 
   async #updateRegistration() {
+    if (!this.#hasRefreshed) {
+      return;
+    }
     const configsWithPlugins = this.#configs.filter(config => config.plugins.length > 0);
     const folderUris = configsWithPlugins.map(config => config.dirUri);
     const notebookFolderUris = configsWithPlugins
@@ -667,6 +724,8 @@ class WorkspaceState {
     if (registrationKey === this.#registrationKey) {
       return;
     }
+    // this unregisters the formatter of the state it replaces, so it's synchronous with registering this one
+    this.#activate();
     this.#registrationKey = registrationKey;
     this.#registrationDisposables.dispose();
 
@@ -719,6 +778,10 @@ class WorkspaceState {
   #scheduleUserDataFilePathsUpdate() {
     this.#userDataFilePathsUpdate = this.#userDataFilePathsUpdate
       .then(async () => {
+        // the refresh updates these once the config files are known
+        if (!this.#hasRefreshed) {
+          return;
+        }
         const userDataFilePaths = await this.#getFormattableUserDataFilePaths();
         if (!this.#disposed && JSON.stringify(userDataFilePaths) !== JSON.stringify(this.#userDataFilePaths)) {
           this.#userDataFilePaths = userDataFilePaths;
