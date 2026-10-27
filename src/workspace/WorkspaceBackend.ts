@@ -10,6 +10,7 @@ import {
   findWorkspaceFolderAncestorConfigFile,
   isPathWithin,
 } from "../configPaths";
+import { combineConfigSchemas } from "../configSchema";
 import {
   DPRINT_CONFIG_FILE_NAME_GLOB,
   FILE_SCHEME,
@@ -22,7 +23,6 @@ import {
 import { type Environment, RealEnvironment } from "../environment";
 import { DprintExecutable } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
-import type { NotFormattedReason as ExtensionNotFormattedReason } from "../globalConfigCommand";
 import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
@@ -30,15 +30,21 @@ import { expandToLines, getRangeEdits } from "../textRange";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { EditorServiceConnection } from "./EditorServiceConnection";
+import { type FormatFileCandidates, getFormatFilePath } from "./formatFilePath";
+import { getFormatDocumentResult, getProviderEdits } from "./formatResults";
 import {
   type EditorServiceInfo,
   type EditorSettings,
+  type FormatFileResult,
   type MessageType,
-  type NotFormattedReason,
   parseEditorServiceInfo,
   type PluginInfo,
   SCHEMA_VERSION,
 } from "./messages";
+import { getUnsupportedError, isUnsupportedService, type UnsupportedService } from "./serviceSupport";
+
+/** How long a state that was replaced waits for its formats in progress before shutting down. */
+const RETIRED_FORMAT_TIMEOUT = 10_000;
 
 export interface WorkspaceBackendOptions {
   approvedPaths: ApprovedConfigPaths;
@@ -61,6 +67,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   #state: WorkspaceState | undefined;
   /** The state being initialized, which replaces the current one once it's ready. */
   #pendingState: WorkspaceState | undefined;
+  /** What's kept across the states for the session of the extension. */
+  readonly #session: WorkspaceSession = { hasNotifiedNoConfig: false };
   #disposed = false;
 
   constructor(options: WorkspaceBackendOptions) {
@@ -81,32 +89,40 @@ export class WorkspaceBackend implements vscode.Disposable {
    */
   async initialize(onSupported: () => void): Promise<boolean> {
     this.#logger.setDebug(getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose);
-    const state = new WorkspaceState(this.#options, this.#environment, () => {
-      this.#state?.dispose();
+    const state = new WorkspaceState(this.#options, this.#environment, this.#session, () => {
+      // the formats in progress finish with the state they started with
+      this.#state?.retire();
       this.#state = state;
       onSupported();
     });
     this.#pendingState = state;
     try {
       const configFiles = await this.#findConfigFiles();
-      const configServices = await Promise.all(
-        configFiles.map(configFile =>
-          state.getService(() => this.#createExecutable(configFile.dirUri, configFile.folderUri))
+      const [configServices, defaultService] = await Promise.all([
+        Promise.all(
+          configFiles.map(configFile =>
+            state.getService(() => this.#createExecutable(configFile.dirUri, configFile.folderUri))
+          ),
         ),
-      );
-      // the files without a config file in the workspace are formatted with this one, which is only
-      // required to support the schema version when there's nothing else to format with
-      const services = configFiles.length === 0 ? [await state.getDefaultService()] : configServices;
-      const unsupported = services.find(service => "error" in service);
-      if (unsupported != null && "error" in unsupported) {
-        this.#logger.logInfo(`Using schema version 5 of the editor service. ${unsupported.error}`);
+        // the files without a config file in the workspace are formatted with this one
+        state.getDefaultService(),
+      ]);
+      const unsupportedError = getUnsupportedError(configServices, defaultService);
+      if (unsupportedError != null) {
+        this.#logger.logInfo(`Using schema version 5 of the editor service. ${unsupportedError}`);
         state.dispose();
-        this.#clearState();
+        this.#state?.retire();
+        this.#state = undefined;
         return false;
       }
       if (this.#disposed) {
         state.dispose();
         return false;
+      }
+      if (isUnsupportedService(defaultService)) {
+        this.#logger.logWarn(
+          `Can't format files without a configuration file in the workspace. ${defaultService.error}`,
+        );
       }
       state.setConfigs(configFiles.map((configFile, i) => ({
         dirUri: configFile.dirUri,
@@ -141,8 +157,9 @@ export class WorkspaceBackend implements vscode.Disposable {
     return evt.affectsConfiguration("dprint.path");
   }
 
-  onConfigFileChanged() {
-    return this.#state?.scheduleRefresh() ?? Promise.resolve();
+  async onConfigFileChanged() {
+    // the state being initialized may have gotten the plugins before the change
+    await Promise.all([this.#state?.scheduleRefresh(), this.#pendingState?.scheduleRefresh()]);
   }
 
   provideGlobalConfigFormattingEdits(
@@ -152,6 +169,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     token: vscode.CancellationToken,
   ): Promise<FormatDocumentResult> {
     if (this.#state == null) {
+      this.#logger.logWarn("Can't format with the global configuration file until dprint is initialized.");
       return Promise.resolve({ notFormattedReason: "failed" });
     }
     // the command says why the file wasn't formatted itself
@@ -166,10 +184,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   dispose() {
     this.#disposed = true;
     this.#pendingState?.dispose();
-    this.#clearState();
-  }
-
-  #clearState() {
     this.#state?.dispose();
     this.#state = undefined;
   }
@@ -258,15 +272,15 @@ interface Service {
   executable: DprintExecutable;
 }
 
-type ServiceResolution = Service | { error: string };
+type ServiceResolution = Service | UnsupportedService;
 
-/** The files dprint may format a document as. */
-interface FormatFileCandidates {
-  dirPath: string;
-  /** The file names in order of preference. This is never empty. */
-  fileNames: string[];
-  /** The notebook file's path when the document is a notebook cell. */
-  notebookPath?: string;
+/** What the states share for the session of the extension. */
+interface WorkspaceSession {
+  /**
+   * Whether a format asked an editor service to notify the user about a file without a
+   * config file, which is only done once per session even when dprint is started again.
+   */
+  hasNotifiedNoConfig: boolean;
 }
 
 /** What's started for one initialization of the workspace. */
@@ -279,9 +293,14 @@ class WorkspaceState {
   readonly #services = new Map<string, Promise<ServiceResolution>>();
   readonly #refreshQueue: CoalescingQueue;
   readonly #onActivate: () => void;
+  readonly #session: WorkspaceSession;
   readonly #watchedDirPaths = new Set<string>();
+  /** The formats in progress, which a state that was replaced waits on before shutting down. */
+  readonly #formats = new Set<Promise<unknown>>();
   #defaultService: Promise<ServiceResolution> | undefined;
   #configs: Config[] = [];
+  /** Whether the config files were set, which is when the plugins can be refreshed. */
+  #hasConfigs = false;
   #registrationKey: string | undefined;
   #registrationUpdate = Promise.resolve();
   #userDataFilePaths: string[] = [];
@@ -292,10 +311,16 @@ class WorkspaceState {
   #disposed = false;
 
   /** @param onActivate - Called once the state is ready, right before it registers the formatter. */
-  constructor(options: WorkspaceBackendOptions, environment: Environment, onActivate: () => void) {
+  constructor(
+    options: WorkspaceBackendOptions,
+    environment: Environment,
+    session: WorkspaceSession,
+    onActivate: () => void,
+  ) {
     this.#options = options;
     this.#logger = options.logger;
     this.#environment = environment;
+    this.#session = session;
     this.#onActivate = onActivate;
     this.#disposables = new ActivatedDisposables(options.logger);
     this.#registrationDisposables = new ActivatedDisposables(options.logger);
@@ -311,6 +336,10 @@ class WorkspaceState {
       if (evt.affectsConfiguration("dprint.showNoConfigNotification") || evt.affectsConfiguration("dprint.verbose")) {
         this.#updateSettings();
       }
+      // the global config file may format the user data files
+      if (evt.affectsConfiguration("dprint.useGlobalConfig")) {
+        this.#scheduleUserDataFilePathsUpdate();
+      }
     }));
     this.#disposables.push(vscode.extensions.onDidChange(() => this.#scheduleRegistrationUpdate()));
     // update the user data files (ex. the user settings.json) to format when the visible editors change
@@ -318,21 +347,40 @@ class WorkspaceState {
   }
 
   dispose() {
-    this.#disposed = true;
-    this.#registrationDisposables.dispose();
-    this.#disposables.dispose();
-    for (const service of this.#services.values()) {
+    for (const service of this.#stop()) {
       service.then(service => {
-        if (!("error" in service)) {
+        if (!isUnsupportedService(service)) {
           service.connection.dispose();
         }
       });
     }
-    this.#services.clear();
+  }
+
+  /**
+   * Stops using the state now that another one replaced it. Its editor services are only
+   * shut down once the formats in progress finish, so that a format (ex. on save) during
+   * the initialization still gets its edits, and once the user answered their messages.
+   */
+  retire() {
+    if (this.#disposed) {
+      return;
+    }
+    const formats = [...this.#formats].map(format => format.catch(() => {/* ignore */}));
+    const services = this.#stop();
+    Promise.race([Promise.all(formats), delay(RETIRED_FORMAT_TIMEOUT)]).then(() => {
+      for (const service of services) {
+        service.then(service => {
+          if (!isUnsupportedService(service)) {
+            service.connection.disposeWhenIdle();
+          }
+        });
+      }
+    });
   }
 
   setConfigs(configs: Config[]) {
     this.#configs = configs;
+    this.#hasConfigs = true;
   }
 
   /**
@@ -340,12 +388,15 @@ class WorkspaceState {
    * that are launched the same way.
    */
   async getService(createExecutable: () => Promise<DprintExecutable>): Promise<ServiceResolution> {
+    if (this.#disposed) {
+      return { error: "The editor service was stopped.", isUnavailable: true };
+    }
     let executable: DprintExecutable;
     try {
       // this fails when a command in the "dprint.path" setting fails
       executable = await createExecutable();
     } catch (err) {
-      return { error: `Error resolving the dprint executable: ${err}` };
+      return { error: `Error resolving the dprint executable: ${err}`, isUnavailable: true };
     }
     const key = executable.processKey;
     let service = this.#services.get(key);
@@ -364,10 +415,17 @@ class WorkspaceState {
 
   /** Refreshes the plugins of the config files after a config file's contents changed. */
   scheduleRefresh() {
+    // the initialization refreshes them once it set the config files
+    if (!this.#hasConfigs || this.#disposed) {
+      return Promise.resolve();
+    }
     return this.#refreshQueue.schedule();
   }
 
   async refresh() {
+    if (this.#disposed) {
+      return;
+    }
     await Promise.all(this.#configs.map(async config => {
       try {
         const info = await config.service.connection.configInfo({ filePath: config.configFilePath });
@@ -401,68 +459,16 @@ class WorkspaceState {
   }
 
   /** Formats the document, or only the range when provided, and says why it wasn't formatted when that's the case. */
-  async formatDocument(
+  formatDocument(
     document: vscode.TextDocument,
     range: vscode.Range | undefined,
-    options: { allowGlobalConfig?: boolean; showNoConfigNotification?: boolean },
+    options: FormatDocumentOptions,
     token: vscode.CancellationToken,
   ): Promise<FormatDocumentResult> {
-    const candidates = this.#getFormatFileCandidates(document);
-    if (candidates == null) {
-      return { notFormattedReason: "noFilePath" };
-    }
-    const service = await this.#getServiceForFile(path.join(candidates.dirPath, candidates.fileNames[0]));
-    if (service == null || token.isCancellationRequested) {
-      return service == null ? { notFormattedReason: "failed" } : { edits: [] };
-    }
-    // the settings of the file that it's formatted as, which is in the workspace folder
-    // for an untitled document and a notebook cell unlike the document's uri
-    const config = getDprintConfig(vscode.Uri.file(path.join(candidates.dirPath, candidates.fileNames[0])));
-    const allowGlobalConfig = options.allowGlobalConfig ?? config.useGlobalConfig;
-    try {
-      const filePath = await this.#getFormatFilePath(service, candidates, allowGlobalConfig);
-      const text = document.getText();
-      const offsetRange = range == null
-        ? { start: 0, end: text.length }
-        : expandToLines(text, { start: document.offsetAt(range.start), end: document.offsetAt(range.end) });
-      const result = await service.connection.formatFile(
-        filePath,
-        text,
-        offsetRange,
-        {
-          notebookPath: candidates.notebookPath,
-          allowGlobalConfig,
-          ensureStableFormat: config.ensureStableFormat,
-          showNoConfigNotification: options.showNoConfigNotification ?? config.showNoConfigNotification,
-        },
-        token,
-      );
-      if (result == null) {
-        return { edits: [] }; // cancelled
-      }
-      if (result.edits == null) {
-        this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, filePath);
-        return getFormatDocumentResult(result.reason, result.message, candidates.notebookPath != null);
-      }
-      // plugins may format the whole file instead of only the range
-      const edits = range == null ? result.edits : getRangeEdits(text, result.edits, offsetRange);
-      if (edits == null) {
-        this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
-        return { edits: [] };
-      }
-      this.#logger.logDebug("Response - Formatted:", filePath);
-      return {
-        edits: edits.map(edit =>
-          vscode.TextEdit.replace(
-            new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
-            edit.newText,
-          )
-        ),
-      };
-    } catch (err) {
-      this.#logger.logError("Error formatting text.", err);
-      return { notFormattedReason: "failed" };
-    }
+    const format = this.#formatDocument(document, range, options, token);
+    this.#formats.add(format);
+    format.finally(() => this.#formats.delete(format)).catch(() => {/* ignore */});
+    return format;
   }
 
   watchAncestorConfigFile(configFilePath: string) {
@@ -492,15 +498,110 @@ class WorkspaceState {
     this.#disposables.push(watcher);
   }
 
+  async #formatDocument(
+    document: vscode.TextDocument,
+    range: vscode.Range | undefined,
+    options: FormatDocumentOptions,
+    token: vscode.CancellationToken,
+  ): Promise<FormatDocumentResult> {
+    const candidates = this.#getFormatFileCandidates(document);
+    if (candidates == null) {
+      return { notFormattedReason: "noFilePath" };
+    }
+    const service = await this.#getServiceForFile(path.join(candidates.dirPath, candidates.fileNames[0]));
+    if (service == null || token.isCancellationRequested) {
+      return service == null ? { notFormattedReason: "failed" } : { edits: [] };
+    }
+    // the settings of the file that it's formatted as, which is in the workspace folder
+    // for an untitled document and a notebook cell unlike the document's uri
+    const config = getDprintConfig(vscode.Uri.file(path.join(candidates.dirPath, candidates.fileNames[0])));
+    const allowGlobalConfig = options.allowGlobalConfig ?? config.useGlobalConfig;
+    try {
+      const filePath = await getFormatFilePath(
+        candidates,
+        allowGlobalConfig,
+        data => service.connection.fileInfo(data),
+      );
+      const text = document.getText();
+      const offsetRange = range == null
+        ? { start: 0, end: text.length }
+        : expandToLines(text, { start: document.offsetAt(range.start), end: document.offsetAt(range.end) });
+      const showNoConfigNotification = (options.showNoConfigNotification ?? config.showNoConfigNotification)
+        && !this.#session.hasNotifiedNoConfig;
+      const result = await service.connection.formatFile(
+        filePath,
+        text,
+        offsetRange,
+        {
+          notebookPath: candidates.notebookPath,
+          allowGlobalConfig,
+          // otherwise the cli uses the DPRINT_EDITOR_STABLE_FORMAT environment variable like with the legacy backend
+          ensureStableFormat: config.ensureStableFormat ? true : undefined,
+          showNoConfigNotification,
+        },
+        token,
+      );
+      if (result == null) {
+        return { edits: [] }; // cancelled
+      }
+      if (result.edits == null) {
+        this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, filePath);
+        this.#onNotFormatted(result, showNoConfigNotification);
+        return getFormatDocumentResult(result.reason, result.message, candidates.notebookPath != null);
+      }
+      // plugins may format the whole file instead of only the range
+      const edits = range == null ? result.edits : getRangeEdits(text, result.edits, offsetRange);
+      if (edits == null) {
+        this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
+        return { edits: [] };
+      }
+      this.#logger.logDebug("Response - Formatted:", filePath);
+      return {
+        edits: edits.map(edit =>
+          vscode.TextEdit.replace(
+            new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
+            edit.newText,
+          )
+        ),
+      };
+    } catch (err) {
+      this.#logger.logError("Error formatting text.", err);
+      return { notFormattedReason: "failed" };
+    }
+  }
+
+  #onNotFormatted(result: FormatFileResult & { edits?: undefined }, askedToNotifyNoConfig: boolean) {
+    switch (result.reason) {
+      case "noConfigFile":
+      case "globalConfigNotAllowed":
+        if (askedToNotifyNoConfig) {
+          this.#session.hasNotifiedNoConfig = true;
+        }
+        break;
+      case "configDiagnostics": {
+        // the editor service shows the user the errors
+        const diagnostics = (result.diagnostics ?? []).map(diagnostic =>
+          `[${diagnostic.pluginName ?? "dprint"}]: ${diagnostic.message} (${diagnostic.propertyName})`
+        );
+        this.#logger.logError(result.message ?? diagnostics.join("\n"));
+        break;
+      }
+    }
+  }
+
   async #createService(executable: DprintExecutable): Promise<ServiceResolution> {
     let info: ReturnType<typeof parseEditorServiceInfo>;
     try {
       info = parseEditorServiceInfo(await executable.getEditorServiceInfo());
     } catch (err) {
-      return { error: `Running \`${executable.cmdPath} editor-service --info\` failed: ${err}` };
+      return {
+        error: `Running \`${executable.cmdPath} editor-service --info\` failed: ${err}`,
+        // a version of dprint without the flag still runs
+        isUnavailable: !await canRun(executable),
+      };
     }
     if ("error" in info) {
-      return info;
+      return { error: info.error, isUnavailable: false };
     }
     const connection = new EditorServiceConnection({
       spawn: () => executable.spawnWorkspaceEditorService(SCHEMA_VERSION),
@@ -578,35 +679,11 @@ class WorkspaceState {
       return config.service;
     }
     const service = await this.getDefaultService();
-    if ("error" in service) {
+    if (isUnsupportedService(service)) {
       this.#logger.logWarn(`Can't format files without a configuration file in the workspace. ${service.error}`);
       return undefined;
     }
     return service;
-  }
-
-  /**
-   * Gets the file path to format the document as. A document that isn't on the file
-   * system is formatted as the first of its candidate file names that dprint formats.
-   */
-  async #getFormatFilePath(service: Service, candidates: FormatFileCandidates, allowGlobalConfig: boolean) {
-    const filePaths = candidates.fileNames.map(fileName => path.join(candidates.dirPath, fileName));
-    if (filePaths.length > 1) {
-      for (const filePath of filePaths) {
-        const info = await service.connection.fileInfo({
-          filePath,
-          notebookPath: candidates.notebookPath,
-          allowGlobalConfig,
-        });
-        if (info.canFormat) {
-          return filePath;
-        }
-        if (info.configFile == null) {
-          break; // the same for every candidate
-        }
-      }
-    }
-    return filePaths[0];
   }
 
   /**
@@ -665,6 +742,16 @@ class WorkspaceState {
     return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
   }
 
+  /** Stops the state's listeners and formatter, which provides its editor services to shut down. */
+  #stop() {
+    this.#disposed = true;
+    this.#registrationDisposables.dispose();
+    this.#disposables.dispose();
+    const services = [...this.#services.values()];
+    this.#services.clear();
+    return services;
+  }
+
   /** Has this state replace the current one, which is only done once. */
   #activate() {
     if (this.#isActivated || this.#disposed) {
@@ -677,7 +764,7 @@ class WorkspaceState {
   #updateSettings() {
     for (const service of this.#services.values()) {
       service.then(async service => {
-        if (!("error" in service)) {
+        if (!isUnsupportedService(service)) {
           try {
             await service.connection.updateSettings(getEditorSettings());
           } catch (err) {
@@ -820,6 +907,21 @@ class WorkspaceState {
   }
 }
 
+interface FormatDocumentOptions {
+  allowGlobalConfig?: boolean;
+  showNoConfigNotification?: boolean;
+}
+
+/** Gets if the executable runs, which is false when it's not installed. */
+async function canRun(executable: DprintExecutable) {
+  try {
+    await executable.execShell(["--version"], undefined, undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Gets the settings to send to the editor service. */
 function getEditorSettings(): EditorSettings {
   return {
@@ -829,62 +931,6 @@ function getEditorSettings(): EditorSettings {
     showNoConfigNotification: getDprintConfig(undefined).showNoConfigNotification,
     verbose: getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose,
   };
-}
-
-/**
- * Combines the schemas, which is the first schema with the plugin properties
- * and definitions of the others that it doesn't have.
- */
-function combineConfigSchemas(schemas: ReadonlyArray<{ [key: string]: any }>) {
-  const [schema, ...otherSchemas] = schemas;
-  if (schema == null) {
-    return undefined;
-  }
-  for (const otherSchema of otherSchemas) {
-    for (const key of ["properties", "definitions"]) {
-      schema[key] = { ...otherSchema[key], ...schema[key] };
-    }
-  }
-  return schema;
-}
-
-/** Gets the result for a file that dprint didn't format. */
-function getFormatDocumentResult(
-  reason: NotFormattedReason,
-  message: string | undefined,
-  isNotebookCell: boolean,
-): FormatDocumentResult {
-  let notFormattedReason: ExtensionNotFormattedReason;
-  switch (reason) {
-    case "unchanged":
-      return { edits: [] };
-    case "noConfigFile":
-    case "globalConfigNotAllowed":
-      notFormattedReason = "noConfigFile";
-      break;
-    case "noPlugin":
-      notFormattedReason = isNotebookCell ? "noCellPlugin" : "noPlugin";
-      break;
-    case "noPlugins":
-      notFormattedReason = "noPlugins";
-      break;
-    default:
-      // includes the reasons that are newer than the extension
-      notFormattedReason = "notMatched";
-      break;
-  }
-  return { notFormattedReason, notFormattedMessage: message };
-}
-
-/**
- * Gets what a formatting provider returns for the result, which is no edits
- * when formatting failed and undefined when dprint doesn't format the file.
- */
-function getProviderEdits(result: FormatDocumentResult) {
-  if (result.edits != null) {
-    return result.edits;
-  }
-  return result.notFormattedReason === "failed" ? [] : undefined;
 }
 
 function getShowMessageFunction(kind: MessageType) {

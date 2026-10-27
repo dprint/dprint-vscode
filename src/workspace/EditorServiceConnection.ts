@@ -48,7 +48,19 @@ export interface EditorServiceConnectionOptions {
   /** Shows a message with actions from the editor service to the user and resolves with the chosen one. */
   showMessageRequest(data: ShowMessageRequestData): Promise<MessageAction | undefined>;
   logger: ConnectionLogger;
+  /** How long to wait for the editor service to shut down before killing it. Defaults to one second. */
+  killTimeout?: number;
 }
+
+/** How long a replaced connection waits before it's shut down (see `disposeWhenIdle`). */
+export interface IdleTimeouts {
+  /** How long to wait for the requests in progress (ex. a format on save). */
+  requests: number;
+  /** How long to wait for the user to answer the messages the editor service is waiting on. */
+  messageRequests: number;
+}
+
+const DEFAULT_IDLE_TIMEOUTS: IdleTimeouts = { requests: 10_000, messageRequests: 10 * 60_000 };
 
 /**
  * Communicates with a process of schema version 6 of the editor service, which
@@ -58,8 +70,13 @@ export interface EditorServiceConnectionOptions {
 export class EditorServiceConnection {
   readonly #options: EditorServiceConnectionOptions;
   readonly #pendingRequests = new Map<number, PendingRequest>();
+  /** Called when a request or a message the user hasn't answered finishes. */
+  readonly #idleListeners = new Set<() => void>();
   #process: EditorServiceProcess | undefined;
   #lastMessageId = 0;
+  #unansweredMessageRequestCount = 0;
+  /** Whether it's waiting to shut down, which is when new requests fail. */
+  #closing = false;
   #disposed = false;
 
   constructor(options: EditorServiceConnectionOptions) {
@@ -110,6 +127,7 @@ export class EditorServiceConnection {
         this.#pendingRequests.delete(id);
         pendingRequest.resolve(undefined);
         this.#write(encodeMessage(this.#nextMessageId(), MessageKind.CancelFormat, [id]));
+        this.#notifyIdleListeners();
       }
     });
     return request.finally(() => disposable.dispose());
@@ -122,6 +140,27 @@ export class EditorServiceConnection {
     }
   }
 
+  /**
+   * Shuts down the editor service once its requests finish and the user answered the
+   * messages it's waiting on, which is for a connection that was replaced. That way a
+   * format in progress still gets its edits and choosing an action (ex. "Don't show
+   * again") reaches the process that asked. New requests fail in the meantime.
+   */
+  disposeWhenIdle(timeouts = DEFAULT_IDLE_TIMEOUTS) {
+    if (this.#closing || this.#disposed) {
+      return Promise.resolve();
+    }
+    this.#closing = true;
+    return Promise.all([
+      this.#waitFor(() => this.#pendingRequests.size === 0, timeouts.requests),
+      // an answer can't reach a process that exited
+      this.#waitFor(
+        () => this.#unansweredMessageRequestCount === 0 || this.#process == null,
+        timeouts.messageRequests,
+      ),
+    ]).then(() => this.dispose());
+  }
+
   /** Shuts down the editor service, which is killed when it doesn't exit soon enough. */
   dispose() {
     if (this.#disposed) {
@@ -132,7 +171,7 @@ export class EditorServiceConnection {
     if (process == null) {
       return;
     }
-    const killTimeout = setTimeout(() => this.#kill(process), 1_000);
+    const killTimeout = setTimeout(() => this.#kill(process), this.#options.killTimeout ?? 1_000);
     this.#sendRequest<void>(this.#nextMessageId(), MessageKind.ShutDownProcess, [])
       .catch(() => {/* ignore */})
       .finally(() => {
@@ -159,13 +198,14 @@ export class EditorServiceConnection {
         if (pendingRequest != null) {
           this.#pendingRequests.delete(id);
           pendingRequest.reject(err);
+          this.#notifyIdleListeners();
         }
       });
     });
   }
 
   #ensureProcess() {
-    if (this.#disposed) {
+    if (this.#disposed || this.#closing) {
       return undefined;
     }
     if (this.#process == null) {
@@ -232,6 +272,7 @@ export class EditorServiceConnection {
     for (const pendingRequest of pendingRequests) {
       pendingRequest.reject(err);
     }
+    this.#notifyIdleListeners();
   }
 
   #kill(process: EditorServiceProcess) {
@@ -271,7 +312,13 @@ export class EditorServiceConnection {
         const responseKind = body.readInt();
         const data = body.readSizedJson<any>();
         this.#takePendingRequest(id)?.resolve(
-          responseKind === 1 ? { edits: data.edits } : { reason: data.reason, message: data.message },
+          responseKind === 1
+            ? { edits: data.edits }
+            : {
+              reason: data.reason,
+              message: data.message,
+              ...(data.diagnostics != null ? { diagnostics: data.diagnostics } : {}),
+            },
         );
         break;
       }
@@ -298,27 +345,58 @@ export class EditorServiceConnection {
   async #respondToShowMessageRequest(id: number, data: ShowMessageRequestData) {
     const process = this.#process;
     let action: MessageAction | undefined;
+    this.#unansweredMessageRequestCount++;
     try {
       action = await this.#options.showMessageRequest(data);
     } catch (err) {
       this.#options.logger.logError("Error showing a message:", err);
+    } finally {
+      this.#unansweredMessageRequestCount--;
     }
     // a process started after the request's process exited may use the same message id
-    if (this.#process !== process) {
-      return;
+    if (this.#process === process) {
+      this.#write(
+        encodeMessage(this.#nextMessageId(), MessageKind.ShowMessageRequestResponse, [
+          id,
+          JSON.stringify({ action: action ?? null }),
+        ]),
+      );
     }
-    this.#write(
-      encodeMessage(this.#nextMessageId(), MessageKind.ShowMessageRequestResponse, [
-        id,
-        JSON.stringify({ action: action ?? null }),
-      ]),
-    );
+    this.#notifyIdleListeners();
   }
 
   #takePendingRequest(id: number) {
     const pendingRequest = this.#pendingRequests.get(id);
     this.#pendingRequests.delete(id);
+    this.#notifyIdleListeners();
     return pendingRequest;
+  }
+
+  /** Resolves once the condition is true, which is checked each time something finishes, or after the timeout. */
+  #waitFor(condition: () => boolean, timeout: number) {
+    if (condition()) {
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => {
+      const done = () => {
+        clearTimeout(timeoutId);
+        this.#idleListeners.delete(listener);
+        resolve();
+      };
+      const listener = () => {
+        if (condition()) {
+          done();
+        }
+      };
+      const timeoutId = setTimeout(done, timeout);
+      this.#idleListeners.add(listener);
+    });
+  }
+
+  #notifyIdleListeners() {
+    for (const listener of [...this.#idleListeners]) {
+      listener();
+    }
   }
 
   #write(buf: Buffer, onError?: (err: Error) => void) {

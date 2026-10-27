@@ -1,7 +1,6 @@
 import { which } from "@dsherret/which";
 import { exec, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -13,6 +12,7 @@ import {
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  getProcessKey,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -71,11 +71,7 @@ export class DprintExecutable {
    * executables that can share an editor service process.
    */
   get processKey() {
-    // a relative path in the setting may resolve from the cwd (ex. `bin/dprint` on posix)
-    const isCwdRelative = this.#command.kind === "setting" && /[\\/]/.test(this.cmdPath)
-      && !path.isAbsolute(this.cmdPath);
-    const cwd = isCwdRelative ? this.#cwd.fsPath : null;
-    return JSON.stringify([this.cmdPath, cwd, this.#env ?? null, this.#verbose]);
+    return getProcessKey(this.#command, { cwd: this.#cwd.fsPath, env: this.#env, verbose: this.#verbose });
   }
 
   /**

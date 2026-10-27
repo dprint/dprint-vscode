@@ -52,4 +52,32 @@ describe("getRangeEdits", () => {
     const edits = [{ start: 4, end: 5, newText: "c" }];
     assert.strictEqual(getRangeEdits(text, edits, { start: 0, end: 3 }), undefined);
   });
+
+  describe("with CRLF line breaks", () => {
+    const crlfText = "a\r\n\r\n\r\nb\r\n";
+
+    it("keeps the edits within the range", () => {
+      const edits = [{ start: 1, end: 3, newText: "" }];
+      assert.deepStrictEqual(getRangeEdits(crlfText, edits, { start: 0, end: 5 }), edits);
+    });
+
+    it("replaces the range when an edit just outside it only changes the range's text", () => {
+      // removing the third line break instead of the second has the same result
+      const edits = [{ start: 5, end: 7, newText: "" }];
+      assert.deepStrictEqual(getRangeEdits(crlfText, edits, { start: 0, end: 5 }), [
+        { start: 0, end: 5, newText: "a\r\n" },
+      ]);
+    });
+
+    it("is undefined when an edit splits a line break outside the range", () => {
+      // the range's line breaks stay, but the carriage return after it is removed
+      const edits = [{ start: 5, end: 6, newText: "" }];
+      assert.strictEqual(getRangeEdits(crlfText, edits, { start: 0, end: 5 }), undefined);
+    });
+
+    it("is undefined when the line breaks outside the range changed", () => {
+      const edits = [{ start: 8, end: 10, newText: "\n" }];
+      assert.strictEqual(getRangeEdits(crlfText, edits, { start: 0, end: 5 }), undefined);
+    });
+  });
 });

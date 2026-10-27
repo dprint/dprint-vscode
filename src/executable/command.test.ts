@@ -4,6 +4,7 @@ import {
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  getProcessKey,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -183,5 +184,33 @@ describe("getCommandDisplayText", () => {
       getCommandDisplayText({ kind: "setting", path: "$HOME/dprint", cwd: "/project" }),
       "$HOME/dprint",
     );
+  });
+});
+
+describe("getProcessKey", () => {
+  const options = { cwd: "/project", env: undefined, verbose: false };
+
+  it("is the same for a path in a different cwd", () => {
+    const command = { kind: "path" as const, path: "/usr/bin/dprint" };
+    assert.strictEqual(getProcessKey(command, options), getProcessKey(command, { ...options, cwd: "/other" }));
+  });
+
+  it("differs for a setting with a path relative to the cwd", () => {
+    const command = { kind: "setting" as const, path: "bin/dprint", cwd: undefined };
+    assert.notStrictEqual(getProcessKey(command, options), getProcessKey(command, { ...options, cwd: "/other" }));
+    // a command name is found on the PATH instead
+    const commandName = { kind: "setting" as const, path: "dprint", cwd: undefined };
+    assert.strictEqual(
+      getProcessKey(commandName, options),
+      getProcessKey(commandName, { ...options, cwd: "/other" }),
+    );
+  });
+
+  it("differs for the environment and verbosity", () => {
+    const command = { kind: "path" as const, path: "/usr/bin/dprint" };
+    const key = getProcessKey(command, options);
+    assert.notStrictEqual(key, getProcessKey(command, { ...options, env: { DPRINT_CACHE_DIR: "/cache" } }));
+    assert.notStrictEqual(key, getProcessKey(command, { ...options, verbose: true }));
+    assert.notStrictEqual(key, getProcessKey({ kind: "path", path: "/other/dprint" }, options));
   });
 });

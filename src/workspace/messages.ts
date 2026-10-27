@@ -102,6 +102,8 @@ export type NotFormattedReason =
   | "noPlugin"
   | "noPlugins"
   | "unchanged"
+  /** A plugin's configuration in the config file has errors, which the editor service shows the user. */
+  | "configDiagnostics"
   | (string & {});
 
 export interface FormatFileOptions {
@@ -126,7 +128,16 @@ export type FormatFileResult =
     reason: NotFormattedReason;
     /** The message to show the user about why the file wasn't formatted (ex. for a command the user ran). */
     message?: string;
+    /** The errors in the configuration of the plugins when the reason is `configDiagnostics`. */
+    diagnostics?: ConfigDiagnostic[];
   };
+
+/** An error in the configuration of a plugin. */
+export interface ConfigDiagnostic {
+  pluginName?: string;
+  propertyName: string;
+  message: string;
+}
 
 export type MessageType = "info" | "warning" | "error";
 

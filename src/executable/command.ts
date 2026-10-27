@@ -76,6 +76,21 @@ export function getCommandDisplayText(command: DprintCommand) {
 }
 
 /**
+ * Identifies the command and how it's launched, which is the same for the
+ * commands that can share an editor service process.
+ */
+export function getProcessKey(
+  command: DprintCommand,
+  options: { cwd: string; env: NodeJS.ProcessEnv | undefined; verbose: boolean },
+) {
+  const displayText = getCommandDisplayText(command);
+  // a relative path in the setting may resolve from the cwd (ex. `bin/dprint` on posix)
+  const isCwdRelative = command.kind === "setting" && /[\\/]/.test(displayText) && !path.isAbsolute(displayText);
+  const cwd = isCwdRelative ? options.cwd : null;
+  return JSON.stringify([displayText, cwd, options.env ?? null, options.verbose]);
+}
+
+/**
  * Gets how to launch a command so that its arguments are passed as-is.
  *
  * On Windows, a shell is only used to launch a batch file such as an npm `dprint.cmd`

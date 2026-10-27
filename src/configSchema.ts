@@ -1,4 +1,21 @@
 /**
+ * Combines the schemas, which is the first schema with the plugin properties
+ * and definitions of the others that it doesn't have.
+ */
+export function combineConfigSchemas(schemas: ReadonlyArray<{ [key: string]: any }>) {
+  const [schema, ...otherSchemas] = schemas;
+  if (schema == null) {
+    return undefined;
+  }
+  for (const otherSchema of otherSchemas) {
+    for (const key of ["properties", "definitions"]) {
+      schema[key] = { ...otherSchema[key], ...schema[key] };
+    }
+  }
+  return schema;
+}
+
+/**
  * Gets the schema to use for a config file when the CLI's schema is not available.
  *
  * This should have the properties of the schema embedded in the CLI.

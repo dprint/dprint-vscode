@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { defaultPluginConfigSchema, getDefaultConfigSchema } from "./configSchema";
+import { combineConfigSchemas, defaultPluginConfigSchema, getDefaultConfigSchema } from "./configSchema";
 
 describe("getDefaultConfigSchema", () => {
   const schema = getDefaultConfigSchema("dprint://schemas/config.json");
@@ -72,5 +72,24 @@ describe("defaultPluginConfigSchema", () => {
       overrideSchema,
       { type: "array", items: overrideSchema },
     ]);
+  });
+});
+
+describe("combineConfigSchemas", () => {
+  it("is undefined without a schema", () => {
+    assert.strictEqual(combineConfigSchemas([]), undefined);
+  });
+
+  it("adds the properties and definitions of the other schemas that the first one doesn't have", () => {
+    const schema = combineConfigSchemas([
+      { $id: "first", properties: { a: { type: "string" } }, definitions: { x: { type: "number" } } },
+      { $id: "second", properties: { a: { type: "boolean" }, b: { type: "object" } }, definitions: { y: {} } },
+      { $id: "third", properties: { c: { type: "object" } } },
+    ]);
+    assert.deepStrictEqual(schema, {
+      $id: "first",
+      properties: { a: { type: "string" }, b: { type: "object" }, c: { type: "object" } },
+      definitions: { x: { type: "number" }, y: {} },
+    });
   });
 });
