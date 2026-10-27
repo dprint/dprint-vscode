@@ -2,6 +2,8 @@ import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import {
   BodyReader,
+  type ConfigChangedData,
+  type ConfigDiagnosticsData,
   type ConfigInfoData,
   type ConfigInfoResponseData,
   type ConfigSchemaData,
@@ -10,12 +12,14 @@ import {
   encodeMessage,
   type FileInfoData,
   type FileInfoResponseData,
-  type FormatFileOptions,
+  type FormatFileData,
   type FormatFileResult,
   type InitializeData,
+  type LogData,
   type MessageAction,
   MessageDecoder,
   MessageKind,
+  type ProgressData,
   type RawMessage,
   type ShowMessageData,
   type ShowMessageRequestData,
@@ -29,7 +33,16 @@ export type EditorServiceProcess = ChildProcessByStdio<Writable, Readable, Reada
 export interface ConnectionLogger {
   log(message: string): void;
   logDebug(message: string, ...args: unknown[]): void;
+  logInfo(message: string, ...args: unknown[]): void;
+  logWarn(message: string, ...args: unknown[]): void;
   logError(message: string, ...args: unknown[]): void;
+}
+
+/** Progress that's shown to the user until it ends. */
+export interface ProgressHandle {
+  /** Updates the progress, which is from 0 to 100. */
+  report(percentage: number): void;
+  end(): void;
 }
 
 /** The parts of a cancellation token that are used, which is a subset so this can be unit tested. */
@@ -47,6 +60,12 @@ export interface EditorServiceConnectionOptions {
   showMessage(data: ShowMessageData): void;
   /** Shows a message with actions from the editor service to the user and resolves with the chosen one. */
   showMessageRequest(data: ShowMessageRequestData): Promise<MessageAction | undefined>;
+  /** Shows the progress of something the editor service is doing (ex. downloading a plugin). */
+  showProgress(title: string, percentage: number | undefined): ProgressHandle;
+  /** Shows the problems with a config file, which replace the ones shown before for it. */
+  onConfigDiagnostics(data: ConfigDiagnosticsData): void;
+  /** Called when what a config file formats may have changed in a way the editor can't see. */
+  onConfigChanged(data: ConfigChangedData): void;
   logger: ConnectionLogger;
   /** How long to wait for the editor service to shut down before killing it. Defaults to one second. */
   killTimeout?: number;
@@ -72,6 +91,8 @@ export class EditorServiceConnection {
   readonly #pendingRequests = new Map<number, PendingRequest>();
   /** Called when a request or a message the user hasn't answered finishes. */
   readonly #idleListeners = new Set<() => void>();
+  /** The progress being shown for the current process by the id it gave it. */
+  readonly #progress = new Map<number, ProgressHandle>();
   #process: EditorServiceProcess | undefined;
   #lastMessageId = 0;
   #unansweredMessageRequestCount = 0;
@@ -100,26 +121,17 @@ export class EditorServiceConnection {
     return this.#request<ConfigSchemaResponseData>(MessageKind.ConfigSchema, [JSON.stringify(data)]);
   }
 
-  /**
-   * Formats the text between the UTF-16 offsets, which resolves with undefined
-   * when the format was cancelled.
-   */
+  /** Formats the text of the document, which resolves with undefined when the format was cancelled. */
   formatFile(
-    filePath: string,
-    fileText: string,
-    range: { start: number; end: number },
-    options: FormatFileOptions,
+    data: FormatFileData,
+    text: string,
     token: ConnectionCancellationToken,
   ): Promise<FormatFileResult | undefined> {
     if (token.isCancellationRequested) {
       return Promise.resolve(undefined);
     }
     const id = this.#nextMessageId();
-    const request = this.#sendRequest<FormatFileResult>(
-      id,
-      MessageKind.FormatFile,
-      [filePath, range.start, range.end, JSON.stringify(options), fileText],
-    );
+    const request = this.#sendRequest<FormatFileResult>(id, MessageKind.FormatFile, [JSON.stringify(data), text]);
     const disposable = token.onCancellationRequested(() => {
       // the editor service doesn't respond to a cancelled format, so stop waiting on it here
       const pendingRequest = this.#pendingRequests.get(id);
@@ -167,6 +179,7 @@ export class EditorServiceConnection {
       return;
     }
     this.#disposed = true;
+    this.#endProgress();
     const process = this.#process;
     if (process == null) {
       return;
@@ -267,6 +280,7 @@ export class EditorServiceConnection {
       return;
     }
     this.#process = undefined;
+    this.#endProgress();
     const pendingRequests = [...this.#pendingRequests.values()];
     this.#pendingRequests.clear();
     for (const pendingRequest of pendingRequests) {
@@ -331,6 +345,18 @@ export class EditorServiceConnection {
       case MessageKind.ShowMessageRequest:
         this.#respondToShowMessageRequest(message.id, body.readSizedJson());
         break;
+      case MessageKind.Log:
+        this.#log(body.readSizedJson());
+        break;
+      case MessageKind.Progress:
+        this.#handleProgress(body.readSizedJson());
+        break;
+      case MessageKind.ConfigDiagnostics:
+        this.#options.onConfigDiagnostics(body.readSizedJson());
+        break;
+      case MessageKind.ConfigChanged:
+        this.#options.onConfigChanged(body.readSizedJson());
+        break;
       default:
         this.#write(
           encodeMessage(this.#nextMessageId(), MessageKind.ErrorResponse, [
@@ -363,6 +389,49 @@ export class EditorServiceConnection {
       );
     }
     this.#notifyIdleListeners();
+  }
+
+  #log(data: LogData) {
+    const logger = this.#options.logger;
+    switch (data.level) {
+      case "error":
+        logger.logError(data.message);
+        break;
+      case "warn":
+        logger.logWarn(data.message);
+        break;
+      case "debug":
+        logger.logDebug(data.message);
+        break;
+      default:
+        // includes the levels that are newer than the extension
+        logger.logInfo(data.message);
+        break;
+    }
+  }
+
+  #handleProgress(data: ProgressData) {
+    switch (data.kind) {
+      case "begin":
+        this.#progress.get(data.id)?.end();
+        this.#progress.set(data.id, this.#options.showProgress(data.title, data.percentage));
+        break;
+      case "report":
+        this.#progress.get(data.id)?.report(data.percentage);
+        break;
+      case "end":
+        this.#progress.get(data.id)?.end();
+        this.#progress.delete(data.id);
+        break;
+    }
+  }
+
+  /** Ends the progress of the current process, which doesn't send the end of it once it exits. */
+  #endProgress() {
+    for (const progress of this.#progress.values()) {
+      progress.end();
+    }
+    this.#progress.clear();
   }
 
   #takePendingRequest(id: number) {

@@ -28,6 +28,9 @@ export function getFormatDocumentResult(
       // formatting failed, which the editor service shows the user
       notFormattedReason = "failed";
       break;
+    case "changedOutsideRange":
+      notFormattedReason = "changedOutsideRange";
+      break;
     default:
       // includes the reasons that are newer than the extension
       notFormattedReason = "notMatched";
@@ -37,12 +40,14 @@ export function getFormatDocumentResult(
 }
 
 /**
- * Gets what a formatting provider returns for the result, which is no edits
- * when formatting failed and undefined when dprint doesn't format the file.
+ * Gets what a formatting provider returns for the result, which is no edits when
+ * dprint formats the file but didn't this time and undefined when it doesn't.
  */
 export function getProviderEdits(result: FormatDocumentResult) {
   if (result.edits != null) {
     return result.edits;
   }
-  return result.notFormattedReason === "failed" ? [] : undefined;
+  return result.notFormattedReason === "failed" || result.notFormattedReason === "changedOutsideRange"
+    ? []
+    : undefined;
 }

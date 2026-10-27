@@ -16,6 +16,7 @@ describe("getFormatDocumentResult", () => {
         ["noPlugin", "noPlugin"],
         ["noPlugins", "noPlugins"],
         ["configDiagnostics", "failed"],
+        ["changedOutsideRange", "changedOutsideRange"],
       ]
     ) {
       assert.deepStrictEqual(getFormatDocumentResult(reason, "Message.", false), {
@@ -44,6 +45,7 @@ describe("getProviderEdits", () => {
   it("is the edits, no edits when formatting failed, and otherwise undefined", () => {
     assert.deepStrictEqual(getProviderEdits({ edits: [] }), []);
     assert.deepStrictEqual(getProviderEdits({ notFormattedReason: "failed" }), []);
+    assert.deepStrictEqual(getProviderEdits({ notFormattedReason: "changedOutsideRange" }), []);
     assert.strictEqual(getProviderEdits({ notFormattedReason: "notMatched" }), undefined);
   });
 });

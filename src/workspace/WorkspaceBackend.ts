@@ -23,16 +23,17 @@ import {
 import { type Environment, RealEnvironment } from "../environment";
 import { DprintExecutable } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
-import { getNotebookCellFileNames, getUntitledFileNames, type LanguageContribution } from "../languageFileNames";
+import { getLanguageFiles, type LanguageContribution } from "../languageFileNames";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { expandToLines, getRangeEdits } from "../textRange";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { EditorServiceConnection } from "./EditorServiceConnection";
-import { type FormatFileCandidates, getFormatFilePath } from "./formatFilePath";
+import { getConfigDiagnosticMessage, getConfigDiagnosticRange } from "./configDiagnostics";
+import { EditorServiceConnection, type ProgressHandle } from "./EditorServiceConnection";
 import { getFormatDocumentResult, getProviderEdits } from "./formatResults";
 import {
+  type ConfigDiagnosticsData,
+  type DocumentLanguage,
   type EditorServiceInfo,
   type EditorSettings,
   type FormatFileResult,
@@ -283,6 +284,21 @@ interface WorkspaceSession {
   hasNotifiedNoConfig: boolean;
 }
 
+/** What dprint formats a document as. */
+interface FormatTarget {
+  /** The uri that's sent to dprint, which is a file uri for a user data file (ex. the user settings.json). */
+  uri: string;
+  /**
+   * A path in the directory that the document is formatted in, which decides the editor service
+   * and settings to use. It's in the workspace folder for an untitled document and the notebook's
+   * directory for a notebook cell.
+   */
+  filePath: string;
+  /** The language of a document that isn't a file, which dprint names the file it's formatted as after. */
+  language?: DocumentLanguage;
+  notebookUri?: string;
+}
+
 /** What's started for one initialization of the workspace. */
 class WorkspaceState {
   readonly #options: WorkspaceBackendOptions;
@@ -295,6 +311,8 @@ class WorkspaceState {
   readonly #onActivate: () => void;
   readonly #session: WorkspaceSession;
   readonly #watchedDirPaths = new Set<string>();
+  /** The problems with the config files, which are cleared once the state stops. */
+  readonly #diagnostics: vscode.DiagnosticCollection;
   /** The formats in progress, which a state that was replaced waits on before shutting down. */
   readonly #formats = new Set<Promise<unknown>>();
   #defaultService: Promise<ServiceResolution> | undefined;
@@ -324,6 +342,8 @@ class WorkspaceState {
     this.#onActivate = onActivate;
     this.#disposables = new ActivatedDisposables(options.logger);
     this.#registrationDisposables = new ActivatedDisposables(options.logger);
+    this.#diagnostics = vscode.languages.createDiagnosticCollection("dprint");
+    this.#disposables.push(this.#diagnostics);
     // coalesced because saving a config file often causes multiple change events
     this.#refreshQueue = new CoalescingQueue({ action: () => this.refresh(), wait: () => delay(100) });
 
@@ -428,7 +448,9 @@ class WorkspaceState {
     }
     await Promise.all(this.#configs.map(async config => {
       try {
-        const info = await config.service.connection.configInfo({ filePath: config.configFilePath });
+        const info = await config.service.connection.configInfo({
+          uri: vscode.Uri.file(config.configFilePath).toString(),
+        });
         config.plugins = info.plugins;
         if (info.plugins.length === 0) {
           this.#logger.logWarn("No plugins found in the configuration file:", config.configFilePath);
@@ -504,60 +526,49 @@ class WorkspaceState {
     options: FormatDocumentOptions,
     token: vscode.CancellationToken,
   ): Promise<FormatDocumentResult> {
-    const candidates = this.#getFormatFileCandidates(document);
-    if (candidates == null) {
+    const target = this.#getFormatTarget(document);
+    if (target == null) {
       return { notFormattedReason: "noFilePath" };
     }
-    const service = await this.#getServiceForFile(path.join(candidates.dirPath, candidates.fileNames[0]));
+    const service = await this.#getServiceForFile(target.filePath);
     if (service == null || token.isCancellationRequested) {
       return service == null ? { notFormattedReason: "failed" } : { edits: [] };
     }
-    // the settings of the file that it's formatted as, which is in the workspace folder
-    // for an untitled document and a notebook cell unlike the document's uri
-    const config = getDprintConfig(vscode.Uri.file(path.join(candidates.dirPath, candidates.fileNames[0])));
+    // the settings of the directory it's formatted in, which is the workspace folder
+    // for an untitled document and the notebook's directory for a notebook cell
+    const config = getDprintConfig(vscode.Uri.file(target.filePath));
     const allowGlobalConfig = options.allowGlobalConfig ?? config.useGlobalConfig;
     try {
-      const filePath = await getFormatFilePath(
-        candidates,
-        allowGlobalConfig,
-        data => service.connection.fileInfo(data),
-      );
-      const text = document.getText();
-      const offsetRange = range == null
-        ? { start: 0, end: text.length }
-        : expandToLines(text, { start: document.offsetAt(range.start), end: document.offsetAt(range.end) });
       const showNoConfigNotification = (options.showNoConfigNotification ?? config.showNoConfigNotification)
         && !this.#session.hasNotifiedNoConfig;
       const result = await service.connection.formatFile(
-        filePath,
-        text,
-        offsetRange,
         {
-          notebookPath: candidates.notebookPath,
+          uri: target.uri,
+          language: target.language,
+          notebookUri: target.notebookUri,
+          // dprint expands the range to whole lines
+          range: range == null
+            ? undefined
+            : { start: document.offsetAt(range.start), end: document.offsetAt(range.end) },
           allowGlobalConfig,
           // otherwise the cli uses the DPRINT_EDITOR_STABLE_FORMAT environment variable like with the legacy backend
           ensureStableFormat: config.ensureStableFormat ? true : undefined,
           showNoConfigNotification,
         },
+        document.getText(),
         token,
       );
       if (result == null) {
         return { edits: [] }; // cancelled
       }
       if (result.edits == null) {
-        this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, filePath);
+        this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
         this.#onNotFormatted(result, showNoConfigNotification);
-        return getFormatDocumentResult(result.reason, result.message, candidates.notebookPath != null);
+        return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
       }
-      // plugins may format the whole file instead of only the range
-      const edits = range == null ? result.edits : getRangeEdits(text, result.edits, offsetRange);
-      if (edits == null) {
-        this.#logger.logDebug("Response - Ignored range format with changes outside the range:", filePath);
-        return { edits: [] };
-      }
-      this.#logger.logDebug("Response - Formatted:", filePath);
+      this.#logger.logDebug("Response - Formatted:", target.uri);
       return {
-        edits: edits.map(edit =>
+        edits: result.edits.map(edit =>
           vscode.TextEdit.replace(
             new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)),
             edit.newText,
@@ -578,14 +589,10 @@ class WorkspaceState {
           this.#session.hasNotifiedNoConfig = true;
         }
         break;
-      case "configDiagnostics": {
+      case "configDiagnostics":
         // the editor service shows the user the errors
-        const diagnostics = (result.diagnostics ?? []).map(diagnostic =>
-          `[${diagnostic.pluginName ?? "dprint"}]: ${diagnostic.message} (${diagnostic.propertyName})`
-        );
-        this.#logger.logError(result.message ?? diagnostics.join("\n"));
+        this.#logger.logError(result.message ?? (result.diagnostics ?? []).map(getConfigDiagnosticMessage).join("\n"));
         break;
-      }
     }
   }
 
@@ -618,6 +625,12 @@ class WorkspaceState {
           ...data.actions.map(action => action.title),
         );
         return data.actions.find(action => action.title === selection);
+      },
+      showProgress,
+      onConfigDiagnostics: data => this.#setConfigDiagnostics(data),
+      onConfigChanged: data => {
+        this.#logger.logDebug("Configuration changed:", data.uri);
+        this.scheduleRefresh();
       },
       logger: this.#logger,
     });
@@ -655,18 +668,19 @@ class WorkspaceState {
    * are multiple executables.
    */
   async #getConfigSchema() {
-    const filePathsByService = new Map<Service, string[]>();
+    const urisByService = new Map<Service, string[]>();
     for (const config of this.#configs) {
-      const filePaths = filePathsByService.get(config.service) ?? [];
+      const uris = urisByService.get(config.service) ?? [];
+      const uri = vscode.Uri.file(config.configFilePath).toString();
       // workspace folders may use the same config file in an ancestor directory
-      if (!filePaths.includes(config.configFilePath)) {
-        filePaths.push(config.configFilePath);
+      if (!uris.includes(uri)) {
+        uris.push(uri);
       }
-      filePathsByService.set(config.service, filePaths);
+      urisByService.set(config.service, uris);
     }
     const schemas = await Promise.all(
-      [...filePathsByService].map(([service, filePaths]) =>
-        service.connection.configSchema({ filePaths }).then(response => response.schema)
+      [...urisByService].map(([service, uris]) =>
+        service.connection.configSchema({ uris }).then(response => response.schema)
       ),
     );
     return combineConfigSchemas(schemas);
@@ -687,34 +701,35 @@ class WorkspaceState {
   }
 
   /**
-   * Gets the candidate files dprint should format the document as. An untitled document
-   * isn't on the file system, so it's formatted as a file in the first workspace
-   * folder (or the home directory) named based on its language.
+   * Gets what dprint formats the document as. A document that isn't a file is formatted as a
+   * file that dprint names after its language. That's in the first workspace folder (or the
+   * home directory) for an untitled document, which is where dprint formats it too.
    */
-  #getFormatFileCandidates(document: vscode.TextDocument): FormatFileCandidates | undefined {
+  #getFormatTarget(document: vscode.TextDocument): FormatTarget | undefined {
     if (document.uri.scheme === NOTEBOOK_CELL_SCHEME) {
-      return this.#getNotebookCellFormatFileCandidates(document);
+      return this.#getNotebookCellFormatTarget(document);
     }
-    if (document.uri.scheme !== UNTITLED_SCHEME) {
-      return { dirPath: path.dirname(document.fileName), fileNames: [path.basename(document.fileName)] };
+    if (document.uri.scheme === UNTITLED_SCHEME) {
+      const dirPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.#environment.homeDir();
+      if (dirPath == null) {
+        this.#logger.logInfo("Could not determine a directory to format the untitled document in.");
+        return undefined;
+      }
+      return {
+        uri: document.uri.toString(),
+        filePath: path.join(dirPath, "Untitled"),
+        language: getDocumentLanguage(document.languageId),
+      };
     }
-    const dirPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.#environment.homeDir();
-    const fileNames = getUntitledFileNames(getLanguageContributions(), document.languageId);
-    if (dirPath == null || fileNames.length === 0) {
-      this.#logger.logInfo(
-        "Could not determine a file path to format the untitled document with language:",
-        document.languageId,
-      );
-      return undefined;
-    }
-    return { dirPath, fileNames };
+    // a user data file (ex. the user settings.json) is formatted as the file it is on disk
+    return { uri: vscode.Uri.file(document.fileName).toString(), filePath: document.fileName };
   }
 
   /**
    * A notebook cell is formatted as a file in the notebook's directory named based
    * on its language, which is how the jupyter plugin formats a notebook's code cells.
    */
-  #getNotebookCellFormatFileCandidates(document: vscode.TextDocument): FormatFileCandidates | undefined {
+  #getNotebookCellFormatTarget(document: vscode.TextDocument): FormatTarget | undefined {
     const notebook = vscode.workspace.notebookDocuments.find(notebook =>
       notebook.getCells().some(cell => cell.document === document)
     );
@@ -730,16 +745,33 @@ class WorkspaceState {
       );
       return undefined;
     }
-    const fileNames = getNotebookCellFileNames(getLanguageContributions(), document.languageId);
-    if (fileNames.length === 0) {
-      this.#logger.logInfo(
-        "Could not determine a file path to format the notebook cell with language:",
-        document.languageId,
-      );
-      return undefined;
+    return {
+      uri: document.uri.toString(),
+      filePath: path.join(path.dirname(notebook.uri.fsPath), "code_block"),
+      language: getDocumentLanguage(document.languageId),
+      notebookUri: notebook.uri.toString(),
+    };
+  }
+
+  /** Shows the problems with a config file, which replace the ones shown before for it. */
+  #setConfigDiagnostics(data: ConfigDiagnosticsData) {
+    // a state that was replaced may still get these until its editor services shut down
+    if (this.#disposed) {
+      return;
     }
-    const notebookPath = notebook.uri.fsPath;
-    return { dirPath: path.dirname(notebookPath), fileNames, notebookPath };
+    this.#diagnostics.set(
+      vscode.Uri.parse(data.uri),
+      data.diagnostics.map(configDiagnostic => {
+        const range = getConfigDiagnosticRange(configDiagnostic);
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character),
+          getConfigDiagnosticMessage(configDiagnostic),
+          vscode.DiagnosticSeverity.Error,
+        );
+        diagnostic.source = "dprint";
+        return diagnostic;
+      }),
+    );
   }
 
   /** Stops the state's listeners and formatter, which provides its editor services to shut down. */
@@ -894,7 +926,7 @@ class WorkspaceState {
     const canFormat = await Promise.all(uris.map(async uri => {
       try {
         const info = await service.connection.fileInfo({
-          filePath: uri.fsPath,
+          uri: vscode.Uri.file(uri.fsPath).toString(),
           allowGlobalConfig: getDprintConfig(uri).useGlobalConfig,
         });
         return info.canFormat;
@@ -925,7 +957,7 @@ async function canRun(executable: DprintExecutable) {
 /** Gets the settings to send to the editor service. */
 function getEditorSettings(): EditorSettings {
   return {
-    workspaceFolders: vscode.workspace.workspaceFolders?.map(folder => folder.uri.fsPath) ?? [],
+    workspaceFolders: vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()) ?? [],
     // the setting is resource scoped, so it's sent with each request instead
     allowGlobalConfig: false,
     showNoConfigNotification: getDprintConfig(undefined).showNoConfigNotification,
@@ -952,7 +984,37 @@ async function getDefaultFormatterLanguageIds() {
   }).sort();
 }
 
+/** Gets the language of a document that isn't a file, which dprint names the file it's formatted as after. */
+function getDocumentLanguage(languageId: string): DocumentLanguage {
+  return { id: languageId, ...getLanguageFiles(getLanguageContributions(), languageId) };
+}
+
 /** Gets the languages contributed by the installed extensions. */
 function getLanguageContributions(): LanguageContribution[] {
   return vscode.extensions.all.flatMap(extension => extension.packageJSON?.contributes?.languages ?? []);
+}
+
+/**
+ * Shows the progress of something dprint is doing (ex. downloading a plugin) in the
+ * status bar, which doesn't interrupt the user like a notification would.
+ */
+function showProgress(title: string, percentage: number | undefined): ProgressHandle {
+  let lastPercentage = percentage;
+  let report: ((percentage: number) => void) | undefined;
+  let end!: () => void;
+  const ended = new Promise<void>(resolve => end = resolve);
+  vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `dprint: ${title}` }, progress => {
+    report = percentage => progress.report({ message: `${Math.round(percentage)}%` });
+    if (lastPercentage != null) {
+      report(lastPercentage);
+    }
+    return ended;
+  });
+  return {
+    report(percentage) {
+      lastPercentage = percentage;
+      report?.(percentage);
+    },
+    end,
+  };
 }

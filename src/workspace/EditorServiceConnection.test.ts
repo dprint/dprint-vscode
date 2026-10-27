@@ -6,6 +6,8 @@ import { describe, it } from "node:test";
 import { EditorServiceConnection, type EditorServiceProcess } from "./EditorServiceConnection";
 import {
   BodyReader,
+  type ConfigChangedData,
+  type ConfigDiagnosticsData,
   encodeMessage,
   type MessageAction,
   MessageDecoder,
@@ -19,14 +21,14 @@ describe("EditorServiceConnection", () => {
   it("initializes the process before sending a request", async () => {
     const { connection, processes } = createConnection();
 
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     const process = processes[0];
     const initialize = await process.readMessage();
     assert.strictEqual(initialize.kind, MessageKind.Initialize);
     assert.deepStrictEqual(new BodyReader(initialize.body).readSizedJson(), INITIALIZE_DATA);
     const request = await process.readMessage();
     assert.strictEqual(request.kind, MessageKind.FileInfo);
-    assert.deepStrictEqual(new BodyReader(request.body).readSizedJson(), { filePath: "/file.ts" });
+    assert.deepStrictEqual(new BodyReader(request.body).readSizedJson(), { uri: "file:///file.ts" });
 
     process.send(MessageKind.SuccessResponse, [initialize.id]);
     const response = { configFile: null, canFormat: false, reason: "noConfigFile" };
@@ -35,35 +37,26 @@ describe("EditorServiceConnection", () => {
     assert.strictEqual(connection.pendingRequestCount, 0);
   });
 
-  it("formats with the range and options", async () => {
+  it("formats with the data and text", async () => {
     const { connection, processes } = createConnection();
 
-    const format = connection.formatFile(
-      "/file.ts",
-      "text",
-      { start: 1, end: 3 },
-      { allowGlobalConfig: true },
-      new FakeCancellationToken(),
-    );
+    const data = {
+      uri: "untitled:Untitled-1",
+      language: { id: "typescript", fileExtensions: [".ts"], fileNames: [] },
+      range: { start: 1, end: 3 },
+      allowGlobalConfig: true,
+    };
+    const format = connection.formatFile(data, "text", new FakeCancellationToken());
     const process = processes[0];
     await process.readMessage(); // initialize
     const request = await process.readMessage();
     const body = new BodyReader(request.body);
-    assert.deepStrictEqual(
-      [body.readSizedString(), body.readInt(), body.readInt(), body.readSizedJson(), body.readSizedString()],
-      ["/file.ts", 1, 3, { allowGlobalConfig: true }, "text"],
-    );
+    assert.deepStrictEqual([body.readSizedJson(), body.readSizedString()], [data, "text"]);
     const edits = [{ start: 4, end: 4, newText: "_formatted" }];
     process.send(MessageKind.FormatFileResponse, [request.id, 1, JSON.stringify({ edits })]);
     assert.deepStrictEqual(await format, { edits });
 
-    const notFormatted = connection.formatFile(
-      "/file.ts",
-      "text",
-      { start: 0, end: 4 },
-      {},
-      new FakeCancellationToken(),
-    );
+    const notFormatted = connection.formatFile({ uri: "file:///file.ts" }, "text", new FakeCancellationToken());
     const secondRequest = await process.readMessage();
     const notFormattedData = { reason: "notMatched", message: "Not matched." };
     process.send(MessageKind.FormatFileResponse, [secondRequest.id, 0, JSON.stringify(notFormattedData)]);
@@ -74,7 +67,7 @@ describe("EditorServiceConnection", () => {
     const { connection, processes } = createConnection();
     const token = new FakeCancellationToken();
 
-    const format = connection.formatFile("/file.ts", "text", { start: 0, end: 4 }, {}, token);
+    const format = connection.formatFile({ uri: "file:///file.ts" }, "text", token);
     const process = processes[0];
     process.send(MessageKind.SuccessResponse, [(await process.readMessage()).id]); // initialize
     const request = await process.readMessage();
@@ -90,14 +83,19 @@ describe("EditorServiceConnection", () => {
   it("provides the diagnostics of a file that wasn't formatted", async () => {
     const { connection, processes } = createConnection();
 
-    const format = connection.formatFile("/file.ts", "text", { start: 0, end: 4 }, {}, new FakeCancellationToken());
+    const format = connection.formatFile({ uri: "file:///file.ts" }, "text", new FakeCancellationToken());
     const process = processes[0];
     await process.readMessage(); // initialize
     const request = await process.readMessage();
     const data = {
       reason: "configDiagnostics",
       message: "The configuration has errors.",
-      diagnostics: [{ pluginName: "test-plugin", propertyName: "lineWidth", message: "Expected a number." }],
+      diagnostics: [{
+        pluginName: "test-plugin",
+        propertyName: "lineWidth",
+        message: "Expected a number.",
+        range: { start: { line: 1, character: 2 }, end: { line: 1, character: 13 } },
+      }],
     };
     process.send(MessageKind.FormatFileResponse, [request.id, 0, JSON.stringify(data)]);
     assert.deepStrictEqual(await format, data);
@@ -107,7 +105,7 @@ describe("EditorServiceConnection", () => {
     const { connection, processes } = createConnection();
     const token = new FakeCancellationToken();
 
-    const format = connection.formatFile("/file.ts", "text", { start: 0, end: 4 }, {}, token);
+    const format = connection.formatFile({ uri: "file:///file.ts" }, "text", token);
     const process = processes[0];
     process.send(MessageKind.SuccessResponse, [(await process.readMessage()).id]); // initialize
     const request = await process.readMessage();
@@ -117,7 +115,7 @@ describe("EditorServiceConnection", () => {
     process.send(MessageKind.FormatFileResponse, [request.id, 1, JSON.stringify({ edits: [] })]);
 
     // the next request gets its own response
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     const fileInfoRequest = await process.readMessage();
     const response = { configFile: null, canFormat: false };
     process.send(MessageKind.FileInfoResponse, [fileInfoRequest.id, JSON.stringify(response)]);
@@ -129,11 +127,11 @@ describe("EditorServiceConnection", () => {
   it("ignores the output of a process that was replaced", async () => {
     const { connection, processes } = createConnection();
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     await processes[0].readMessage(); // initialize
     await processes[0].readMessage(); // file info
     processes[0].emit("exit", 1, null);
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     await processes[1].readMessage(); // initialize
     const request = await processes[1].readMessage();
     // the replaced process responding to the new request's id
@@ -147,13 +145,13 @@ describe("EditorServiceConnection", () => {
   it("rejects the pending requests when the process fails to start", async () => {
     const { connection, processes } = createConnection();
 
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     processes[0].emit("error", new Error("spawn dprint ENOENT"));
     await assert.rejects(fileInfo, /failed to start\. Error: spawn dprint ENOENT/);
     assert.strictEqual(connection.pendingRequestCount, 0);
 
     // it's started again on the next request
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     assert.strictEqual(processes.length, 2);
   });
 
@@ -163,14 +161,14 @@ describe("EditorServiceConnection", () => {
     const process = startProcess(connection, processes);
     await respondToStart(process);
     process.stdin.destroy();
-    await assert.rejects(connection.configInfo({ filePath: "/dprint.json" }), /destroyed/);
+    await assert.rejects(connection.configInfo({ uri: "file:///dprint.json" }), /destroyed/);
     assert.strictEqual(connection.pendingRequestCount, 0);
   });
 
   it("rejects a request with an error response", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ filePath: "/dprint.json" });
+    const configInfo = connection.configInfo({ uri: "file:///dprint.json" });
     const process = processes[0];
     await process.readMessage(); // initialize
     const request = await process.readMessage();
@@ -181,7 +179,7 @@ describe("EditorServiceConnection", () => {
   it("rejects a request with a malformed response", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ filePath: "/dprint.json" });
+    const configInfo = connection.configInfo({ uri: "file:///dprint.json" });
     const process = processes[0];
     await process.readMessage(); // initialize
     const request = await process.readMessage();
@@ -198,7 +196,7 @@ describe("EditorServiceConnection", () => {
       showMessageRequest: async data => data.actions[1],
     });
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     const process = processes[0];
     await process.readMessage(); // initialize
     await process.readMessage(); // file info
@@ -220,13 +218,75 @@ describe("EditorServiceConnection", () => {
     assert.strictEqual(new BodyReader(activeResponse.body).readInt(), activeId);
   });
 
+  it("logs the log messages at their level", async () => {
+    const { connection, processes, logs } = createConnection();
+
+    const process = startProcess(connection, processes);
+    await respondToStart(process);
+    for (const level of ["error", "warn", "info", "debug", "newLevel"]) {
+      process.send(MessageKind.Log, [JSON.stringify({ level, message: `A ${level} message.` })]);
+    }
+    await nextTick();
+    assert.deepStrictEqual(logs, [
+      ["error", "A error message."],
+      ["warn", "A warn message."],
+      ["info", "A info message."],
+      ["debug", "A debug message."],
+      // a level that's newer than the extension
+      ["info", "A newLevel message."],
+    ]);
+  });
+
+  it("shows the progress until it ends or the process exits", async () => {
+    const { connection, processes, progress } = createConnection();
+
+    const process = startProcess(connection, processes);
+    await respondToStart(process);
+    process.send(MessageKind.Progress, [JSON.stringify({ id: 1, kind: "begin", title: "Downloading a.wasm" })]);
+    process.send(MessageKind.Progress, [JSON.stringify({ id: 2, kind: "begin", title: "Compiling b", percentage: 0 })]);
+    process.send(MessageKind.Progress, [JSON.stringify({ id: 1, kind: "report", percentage: 50 })]);
+    process.send(MessageKind.Progress, [JSON.stringify({ id: 1, kind: "end" })]);
+    // for a progress that's not shown
+    process.send(MessageKind.Progress, [JSON.stringify({ id: 3, kind: "report", percentage: 10 })]);
+    await nextTick();
+    assert.deepStrictEqual(progress, [
+      { title: "Downloading a.wasm", reports: [undefined, 50], ended: true },
+      { title: "Compiling b", reports: [0], ended: false },
+    ]);
+
+    // the process that exited can't end it
+    process.emit("exit", 1, null);
+    assert.strictEqual(progress[1].ended, true);
+  });
+
+  it("provides the config diagnostics and config changes", async () => {
+    const configDiagnostics: ConfigDiagnosticsData[] = [];
+    const configChanges: ConfigChangedData[] = [];
+    const { connection, processes } = createConnection({
+      onConfigDiagnostics: data => configDiagnostics.push(data),
+      onConfigChanged: data => configChanges.push(data),
+    });
+
+    const process = startProcess(connection, processes);
+    await respondToStart(process);
+    const diagnosticsData = {
+      uri: "file:///dprint.json",
+      diagnostics: [{ message: "Unknown property in configuration.", propertyName: "other" }],
+    };
+    process.send(MessageKind.ConfigDiagnostics, [JSON.stringify(diagnosticsData)]);
+    process.send(MessageKind.ConfigChanged, [JSON.stringify({ uri: "file:///dprint.json" })]);
+    await nextTick();
+    assert.deepStrictEqual(configDiagnostics, [diagnosticsData]);
+    assert.deepStrictEqual(configChanges, [{ uri: "file:///dprint.json" }]);
+  });
+
   it("doesn't respond to a show message request of a process that exited", async () => {
     let chooseAction: ((action: MessageAction | undefined) => void) | undefined;
     const { connection, processes } = createConnection({
       showMessageRequest: () => new Promise(resolve => chooseAction = resolve),
     });
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     await processes[0].readMessage(); // initialize
     await processes[0].readMessage(); // file info
     processes[0].send(MessageKind.ShowMessageRequest, [JSON.stringify({
@@ -236,28 +296,28 @@ describe("EditorServiceConnection", () => {
     })]);
     await nextTick();
     processes[0].emit("exit", 1, null);
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     await processes[1].readMessage(); // initialize
     await processes[1].readMessage(); // file info
     chooseAction!({ title: "First" });
     await nextTick();
 
     // the next message the new process receives is the next request
-    connection.configInfo({ filePath: "/dprint.json" }).catch(() => {/* ignore */});
+    connection.configInfo({ uri: "file:///dprint.json" }).catch(() => {/* ignore */});
     assert.strictEqual((await processes[1].readMessage()).kind, MessageKind.ConfigInfo);
   });
 
   it("rejects the pending requests when the process exits and starts it again on the next request", async () => {
     const { connection, processes } = createConnection();
 
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     await processes[0].readMessage(); // initialize
     await processes[0].readMessage(); // file info
     processes[0].emit("exit", 1, null);
     await assert.rejects(fileInfo, /exited while the request was in progress/);
     assert.strictEqual(connection.pendingRequestCount, 0);
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     assert.strictEqual(processes.length, 2);
     // the new process is initialized too
     assert.strictEqual((await processes[1].readMessage()).kind, MessageKind.Initialize);
@@ -280,14 +340,14 @@ describe("EditorServiceConnection", () => {
   it("shuts down a replaced process once its requests finish", async () => {
     const { connection, processes } = createConnection();
 
-    const fileInfo = connection.fileInfo({ filePath: "/file.ts" });
+    const fileInfo = connection.fileInfo({ uri: "file:///file.ts" });
     const process = processes[0];
     process.send(MessageKind.SuccessResponse, [(await process.readMessage()).id]); // initialize
     const request = await process.readMessage();
     let isDisposed = false;
     const disposed = connection.disposeWhenIdle().then(() => isDisposed = true);
     // a replaced connection doesn't handle new requests
-    await assert.rejects(connection.configInfo({ filePath: "/dprint.json" }), /not running/);
+    await assert.rejects(connection.configInfo({ uri: "file:///dprint.json" }), /not running/);
     await nextTick();
     assert.strictEqual(isDisposed, false);
 
@@ -335,7 +395,7 @@ describe("EditorServiceConnection", () => {
       showMessageRequest: () => new Promise(() => {/* never answered */}),
     });
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     const process = processes[0];
     process.send(MessageKind.SuccessResponse, [(await process.readMessage()).id]); // initialize
     await process.readMessage(); // file info, which is never answered
@@ -355,7 +415,7 @@ describe("EditorServiceConnection", () => {
   it("shuts down the process when disposed", async () => {
     const { connection, processes } = createConnection();
 
-    connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+    connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
     const process = processes[0];
     await process.readMessage(); // initialize
     await process.readMessage(); // file info
@@ -366,7 +426,7 @@ describe("EditorServiceConnection", () => {
     await nextTick();
     assert.strictEqual(process.killCount, 1);
     // the process isn't started again
-    await assert.rejects(connection.fileInfo({ filePath: "/file.ts" }), /not running/);
+    await assert.rejects(connection.fileInfo({ uri: "file:///file.ts" }), /not running/);
     assert.strictEqual(processes.length, 1);
   });
 });
@@ -375,7 +435,7 @@ const INITIALIZE_DATA = { clientInfo: { name: "test" }, settings: { workspaceFol
 
 /** Starts the process with a request that's answered by `respondToStart`. */
 function startProcess(connection: EditorServiceConnection, processes: FakeProcess[]) {
-  connection.fileInfo({ filePath: "/file.ts" }).catch(() => {/* ignore */});
+  connection.fileInfo({ uri: "file:///file.ts" }).catch(() => {/* ignore */});
   return processes[processes.length - 1];
 }
 
@@ -390,8 +450,12 @@ async function respondToStart(process: FakeProcess) {
 function createConnection(options: {
   showMessage?: (data: ShowMessageData) => void;
   showMessageRequest?: (data: ShowMessageRequestData) => Promise<MessageAction | undefined>;
+  onConfigDiagnostics?: (data: ConfigDiagnosticsData) => void;
+  onConfigChanged?: (data: ConfigChangedData) => void;
 } = {}) {
   const processes: FakeProcess[] = [];
+  const logs: [string, string][] = [];
+  const progress: { title: string; reports: (number | undefined)[]; ended: boolean }[] = [];
   const connection = new EditorServiceConnection({
     spawn: () => {
       const process = new FakeProcess();
@@ -401,9 +465,25 @@ function createConnection(options: {
     getInitializeData: () => INITIALIZE_DATA,
     showMessage: options.showMessage ?? (() => {}),
     showMessageRequest: options.showMessageRequest ?? (async () => undefined),
-    logger: { log() {}, logDebug() {}, logError() {} },
+    showProgress(title, percentage) {
+      const item = { title, reports: [percentage], ended: false };
+      progress.push(item);
+      return {
+        report: percentage => item.reports.push(percentage),
+        end: () => item.ended = true,
+      };
+    },
+    onConfigDiagnostics: options.onConfigDiagnostics ?? (() => {}),
+    onConfigChanged: options.onConfigChanged ?? (() => {}),
+    logger: {
+      log() {},
+      logDebug: message => logs.push(["debug", message]),
+      logInfo: message => logs.push(["info", message]),
+      logWarn: message => logs.push(["warn", message]),
+      logError: message => logs.push(["error", message]),
+    },
   });
-  return { connection, processes };
+  return { connection, processes, logs, progress };
 }
 
 /** A process of the editor service that the test sends the messages of. */

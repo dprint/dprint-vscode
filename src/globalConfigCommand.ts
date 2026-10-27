@@ -42,6 +42,8 @@ export type NotFormattedReason =
    * is formatted as based on its language. The extension doesn't format a cell in that case.
    */
   | "noCellPlugin"
+  /** Formatting the range changed the document outside of it (ex. the plugin formats the whole document). */
+  | "changedOutsideRange"
   /** Starting dprint or formatting failed, which is logged. */
   | "failed";
 
@@ -80,6 +82,9 @@ export function getNotFormattedMessage(reason: NotFormattedReason) {
     case "noCellPlugin":
       return "dprint did not format this notebook cell. A cell is only formatted when the plugins in the "
         + "configuration file in use handle both the notebook file (ex. the jupyter plugin) and the cell's language.";
+    case "changedOutsideRange":
+      return "dprint did not format the selection because formatting it changed the document outside of it "
+        + "(ex. the plugin formats the whole document).";
     case "failed":
       return "dprint failed to format this document. See the dprint output for details.";
   }

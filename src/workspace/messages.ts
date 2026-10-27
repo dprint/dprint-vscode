@@ -25,6 +25,10 @@ export enum MessageKind {
   ShowMessageRequestResponse = 15,
   ConfigSchema = 16,
   ConfigSchemaResponse = 17,
+  Log = 18,
+  Progress = 19,
+  ConfigDiagnostics = 20,
+  ConfigChanged = 21,
 }
 
 /** The output of `dprint editor-service --info`. */
@@ -40,15 +44,26 @@ export interface InitializeData {
 }
 
 export interface EditorSettings {
+  /** The uris of the workspace folders. */
   workspaceFolders?: string[];
   allowGlobalConfig?: boolean;
   showNoConfigNotification?: boolean;
   verbose?: boolean;
 }
 
+/** The language of a document that isn't a file, which dprint names the file it formats the document as after. */
+export interface DocumentLanguage {
+  id: string;
+  /** The file extensions of the language with the leading period (ex. ".ts"). */
+  fileExtensions?: string[];
+  /** The file names of the language (ex. "Dockerfile"). */
+  fileNames?: string[];
+}
+
 export interface FileInfoData {
-  filePath: string;
-  notebookPath?: string;
+  uri: string;
+  language?: DocumentLanguage;
+  notebookUri?: string;
   allowGlobalConfig?: boolean;
 }
 
@@ -60,12 +75,12 @@ export interface FileInfoResponseData {
 }
 
 export interface ConfigFileInfo {
-  path: string;
+  uri: string;
   isGlobal: boolean;
 }
 
 export interface ConfigInfoData {
-  filePath: string;
+  uri: string;
   allowGlobalConfig?: boolean;
 }
 
@@ -75,7 +90,7 @@ export interface ConfigInfoResponseData {
 }
 
 export interface ConfigSchemaData {
-  filePaths: string[];
+  uris: string[];
   allowGlobalConfig?: boolean;
 }
 
@@ -104,11 +119,17 @@ export type NotFormattedReason =
   | "unchanged"
   /** A plugin's configuration in the config file has errors, which the editor service shows the user. */
   | "configDiagnostics"
+  /** Formatting the range changed the text outside of it (ex. the plugin formats the whole file). */
+  | "changedOutsideRange"
   | (string & {});
 
-export interface FormatFileOptions {
+export interface FormatFileData {
+  uri: string;
+  language?: DocumentLanguage;
+  notebookUri?: string;
+  /** The UTF-16 offsets to format, which dprint expands to whole lines. The whole text is formatted when not provided. */
+  range?: { start: number; end: number };
   overrideConfig?: Record<string, unknown>;
-  notebookPath?: string;
   allowGlobalConfig?: boolean;
   ensureStableFormat?: boolean;
   showNoConfigNotification?: boolean;
@@ -132,12 +153,47 @@ export type FormatFileResult =
     diagnostics?: ConfigDiagnostic[];
   };
 
-/** An error in the configuration of a plugin. */
+/** A problem with a config file. */
 export interface ConfigDiagnostic {
+  message: string;
   pluginName?: string;
-  propertyName: string;
+  propertyName?: string;
+  /** Where the problem is in the config file, when that's known. */
+  range?: TextRange;
+}
+
+/** A range of zero-based lines and UTF-16 characters like in the language server protocol. */
+export interface TextRange {
+  start: TextPosition;
+  end: TextPosition;
+}
+
+export interface TextPosition {
+  line: number;
+  character: number;
+}
+
+export interface ConfigDiagnosticsData {
+  /** The config file. */
+  uri: string;
+  /** These replace the ones that were sent before for the config file. */
+  diagnostics: ConfigDiagnostic[];
+}
+
+export interface ConfigChangedData {
+  /** The config file. */
+  uri: string;
+}
+
+export interface LogData {
+  level: "error" | "warn" | "info" | "debug" | (string & {});
   message: string;
 }
+
+export type ProgressData =
+  | { id: number; kind: "begin"; title: string; percentage?: number }
+  | { id: number; kind: "report"; percentage: number }
+  | { id: number; kind: "end" };
 
 export type MessageType = "info" | "warning" | "error";
 
