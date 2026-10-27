@@ -119,8 +119,6 @@ export type NotFormattedReason =
   | "unchanged"
   /** A plugin's configuration in the config file has errors, which the editor service shows the user. */
   | "configDiagnostics"
-  /** Formatting the range changed the text outside of it (ex. the plugin formats the whole file). */
-  | "changedOutsideRange"
   | (string & {});
 
 export interface FormatFileData {

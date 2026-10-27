@@ -135,6 +135,5 @@ describe("getNotFormattedMessage", () => {
   it("has a different message for each of the other reasons", () => {
     assert.match(getNotFormattedMessage("noFilePath"), /could not determine a file path/);
     assert.match(getNotFormattedMessage("failed"), /See the dprint output/);
-    assert.match(getNotFormattedMessage("changedOutsideRange"), /outside of it/);
   });
 });
