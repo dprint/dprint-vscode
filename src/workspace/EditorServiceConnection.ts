@@ -1,6 +1,7 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import {
+  type AskToAllowProcessPluginsData,
   BodyReader,
   type ConfigChangedData,
   type ConfigDiagnosticsData,
@@ -12,6 +13,7 @@ import {
   encodeMessage,
   type FileInfoData,
   type FileInfoResponseData,
+  FormatFailedError,
   type FormatFileData,
   type FormatFileResult,
   type InitializeData,
@@ -121,7 +123,28 @@ export class EditorServiceConnection {
     return this.#request<ConfigSchemaResponseData>(MessageKind.ConfigSchema, [JSON.stringify(data)]);
   }
 
-  /** Formats the text of the document, which resolves with undefined when the format was cancelled. */
+  /**
+   * Asks the user whether to allow running the process plugins of the config file of a document,
+   * which resolves once they answered.
+   */
+  askToAllowProcessPlugins(data: AskToAllowProcessPluginsData) {
+    return this.#request<void>(MessageKind.AskToAllowProcessPlugins, [JSON.stringify(data)]);
+  }
+
+  /**
+   * Has a running editor service forget the config files and stop the plugins, as if it started again,
+   * while keeping what the user chose for the session.
+   */
+  async reset() {
+    if (this.#process != null) {
+      await this.#request<void>(MessageKind.Reset, []);
+    }
+  }
+
+  /**
+   * Formats the text of the document, which resolves with undefined when the format was cancelled and
+   * rejects with a `FormatFailedError` when formatting failed.
+   */
   formatFile(
     data: FormatFileData,
     text: string,
@@ -133,12 +156,12 @@ export class EditorServiceConnection {
     const id = this.#nextMessageId();
     const request = this.#sendRequest<FormatFileResult>(id, MessageKind.FormatFile, [JSON.stringify(data), text]);
     const disposable = token.onCancellationRequested(() => {
-      // the editor service doesn't respond to a cancelled format, so stop waiting on it here
+      // the editor service doesn't respond to a cancelled request, so stop waiting on it here
       const pendingRequest = this.#pendingRequests.get(id);
       if (pendingRequest != null) {
         this.#pendingRequests.delete(id);
         pendingRequest.resolve(undefined);
-        this.#write(encodeMessage(this.#nextMessageId(), MessageKind.CancelFormat, [id]));
+        this.#write(encodeMessage(this.#nextMessageId(), MessageKind.CancelRequest, [id]));
         this.#notifyIdleListeners();
       }
     });
@@ -325,15 +348,25 @@ export class EditorServiceConnection {
         const id = body.readInt();
         const responseKind = body.readInt();
         const data = body.readSizedJson<any>();
-        this.#takePendingRequest(id)?.resolve(
-          responseKind === 1
-            ? { edits: data.edits }
-            : {
+        const pendingRequest = this.#takePendingRequest(id);
+        switch (responseKind) {
+          case 0:
+            pendingRequest?.resolve({
               reason: data.reason,
               message: data.message,
               ...(data.diagnostics != null ? { diagnostics: data.diagnostics } : {}),
-            },
-        );
+            });
+            break;
+          case 1:
+            pendingRequest?.resolve({ edits: data.edits });
+            break;
+          default:
+            // includes the kinds that are newer than the extension
+            pendingRequest?.reject(
+              new FormatFailedError(data.reason ?? "pluginError", data.message ?? "Formatting failed."),
+            );
+            break;
+        }
         break;
       }
       case MessageKind.Active:

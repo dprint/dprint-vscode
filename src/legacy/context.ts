@@ -73,6 +73,12 @@ export function activateLegacy(
     provideGlobalConfigFormattingEdits(document, range, options, token) {
       return workspaceService.provideGlobalConfigFormattingEdits(document, range, options, token);
     },
+    // the extension finds the config file of the document itself
+    canFormatWithGlobalConfig: () => Promise.resolve(undefined),
+    allowProcessPlugins() {
+      vscode.window.showInformationMessage("The installed version of dprint doesn't ask to allow process plugins.");
+      return Promise.resolve();
+    },
     dispose() {
       disposed = true;
       initializationDisposables.dispose();

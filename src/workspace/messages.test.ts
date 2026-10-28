@@ -5,7 +5,7 @@ import { BodyReader, encodeMessage, MessageDecoder, MessageKind, parseEditorServ
 
 describe("encodeMessage", () => {
   it("encodes the header, the parts and the success bytes", () => {
-    const buf = encodeMessage(3, MessageKind.CancelFormat, [7, "é"]);
+    const buf = encodeMessage(3, MessageKind.CancelRequest, [7, "é"]);
     assert.strictEqual(
       buf.toString("hex"),
       "00000003" // id

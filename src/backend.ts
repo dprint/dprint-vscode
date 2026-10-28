@@ -31,13 +31,13 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
   });
   disposables.push(workspaceBackend);
   const switcher = new BackendSwitcher<ExtensionBackend>({
-    initializeWorkspace: onSupported => workspaceBackend.initialize(onSupported),
+    initializeWorkspace: (onSupported, options) => workspaceBackend.initialize(onSupported, options),
     createLegacyBackend: () => activateLegacy(logger, approvedPaths, configSchemaProvider),
   });
 
   return {
-    reInitialize() {
-      return switcher.reInitialize();
+    reInitialize(options) {
+      return switcher.reInitialize(options);
     },
     affectsInitialization(evt) {
       return (switcher.legacyBackend ?? workspaceBackend).affectsInitialization(evt);
@@ -52,6 +52,12 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
         options,
         token,
       );
+    },
+    canFormatWithGlobalConfig(document) {
+      return (switcher.legacyBackend ?? workspaceBackend).canFormatWithGlobalConfig(document);
+    },
+    allowProcessPlugins() {
+      return (switcher.legacyBackend ?? workspaceBackend).allowProcessPlugins();
     },
     dispose() {
       switcher.dispose();

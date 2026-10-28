@@ -2,8 +2,13 @@
 
 /** The parts of a backend that are used, which is a subset so this can be unit tested. */
 export interface SwitchableBackend {
-  reInitialize(): Promise<void>;
+  reInitialize(options?: ReInitializeOptions): Promise<void>;
   dispose(): void;
+}
+
+export interface ReInitializeOptions {
+  /** Whether dprint should start its plugins again (ex. for the restart command). */
+  reset?: boolean;
 }
 
 export interface BackendSwitcherOptions<TLegacyBackend extends SwitchableBackend> {
@@ -14,7 +19,7 @@ export interface BackendSwitcherOptions<TLegacyBackend extends SwitchableBackend
    * @param onSupported - Called once it's supported and ready, right before it
    * registers the formatter.
    */
-  initializeWorkspace(onSupported: () => void): Promise<boolean>;
+  initializeWorkspace(onSupported: () => void, options: ReInitializeOptions): Promise<boolean>;
   /** Creates the legacy backend, which uses schema version 5. */
   createLegacyBackend(): TLegacyBackend;
 }
@@ -30,6 +35,8 @@ export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {
   #initialization = Promise.resolve();
   /** The initialization that's waiting on the current one, which the later requests use too. */
   #queuedInitialization: Promise<void> | undefined;
+  /** The options of the queued initialization, which has what any of its requests asked for. */
+  #queuedOptions: ReInitializeOptions = {};
   #disposed = false;
 
   constructor(options: BackendSwitcherOptions<TLegacyBackend>) {
@@ -41,14 +48,17 @@ export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {
     return this.#legacyBackend;
   }
 
-  reInitialize() {
+  reInitialize(options: ReInitializeOptions = {}) {
+    this.#queuedOptions = { reset: this.#queuedOptions.reset || options.reset };
     // the queued initialization hasn't started, so it covers this request too
     if (this.#queuedInitialization != null) {
       return this.#queuedInitialization;
     }
     const result = this.#initialization.then(() => {
+      const options = this.#queuedOptions;
       this.#queuedInitialization = undefined;
-      return this.#initialize();
+      this.#queuedOptions = {};
+      return this.#initialize(options);
     });
     this.#queuedInitialization = result;
     this.#initialization = result.catch(() => {/* ignore */});
@@ -61,7 +71,7 @@ export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {
     this.#legacyBackend = undefined;
   }
 
-  async #initialize() {
+  async #initialize(options: ReInitializeOptions) {
     if (this.#disposed) {
       return;
     }
@@ -69,10 +79,10 @@ export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {
       // stop the legacy backend before the formatter is registered again
       this.#legacyBackend?.dispose();
       this.#legacyBackend = undefined;
-    });
+    }, options);
     if (!isSupported && !this.#disposed) {
       this.#legacyBackend ??= this.#options.createLegacyBackend();
-      await this.#legacyBackend.reInitialize();
+      await this.#legacyBackend.reInitialize(options);
     }
   }
 }

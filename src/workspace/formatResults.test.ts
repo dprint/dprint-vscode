@@ -39,6 +39,20 @@ describe("getFormatDocumentResult", () => {
     });
   });
 
+  it("has dprint's message when the config file failed to resolve", () => {
+    assert.deepStrictEqual(getFormatDocumentResult("configError", "Syntax error.", false), {
+      notFormattedReason: "failed",
+      notFormattedMessage: "Syntax error.",
+    });
+  });
+
+  it("has dprint's message when the process plugins weren't allowed", () => {
+    assert.deepStrictEqual(getFormatDocumentResult("processPluginsNotAllowed", "Not allowed.", false), {
+      notFormattedReason: "notMatched",
+      notFormattedMessage: "Not allowed.",
+    });
+  });
+
   it("is not matched for a reason that's newer than the extension", () => {
     assert.deepStrictEqual(getFormatDocumentResult("someNewReason", "New.", false), {
       notFormattedReason: "notMatched",

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { activateBackend } from "./backend";
+import type { ReInitializeOptions } from "./BackendSwitcher";
 import { AncestorConfigFileCache } from "./configPaths";
 import { DPRINT_CONFIG_FILEPATH_GLOB, NOTEBOOK_CELL_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
@@ -36,8 +37,17 @@ export async function activate(context: vscode.ExtensionContext) {
   const backend = globalState.extensionBackend;
   const logger = globalState.logger;
 
-  // reinitialize on workspace folder changes
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
+  // dprint starts its plugins again, which is for when one stopped responding or changed
+  context.subscriptions.push(
+    vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ reset: true })),
+  );
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.allowProcessPlugins", async () => {
+    try {
+      await backend.allowProcessPlugins();
+    } catch (err) {
+      logger.logError("Error asking to allow the process plugins:", err);
+    }
+  }));
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dprint.formatWithGlobalConfig",
@@ -64,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }));
   updateCanFormatWithGlobalConfig();
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => reInitializeBackend()));
   // untitled documents are formatted as a file in the first workspace folder
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(updateCanFormatWithGlobalConfig));
 
@@ -78,8 +88,8 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.logError("Error handling configuration file change:", err);
     }
   }));
-  context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
-  context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(() => reInitializeBackend()));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(() => reInitializeBackend()));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(onConfigFilesMaybeChanged));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(onConfigFilesMaybeChanged));
 
@@ -104,9 +114,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  async function reInitializeBackend() {
+  async function reInitializeBackend(options?: ReInitializeOptions) {
     try {
-      await backend.reInitialize();
+      await backend.reInitialize(options);
       return true;
     } catch (err) {
       logger.logError("Error initializing:", err);
@@ -134,9 +144,14 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   /** Gets if the command would format the document using the global config file. */
-  function canFormatDocumentWithGlobalConfig(document: vscode.TextDocument | undefined) {
+  async function canFormatDocumentWithGlobalConfig(document: vscode.TextDocument | undefined) {
     if (document == null) {
       return false;
+    }
+    // dprint knows which config file it formats the document with
+    const canFormat = await backend.canFormatWithGlobalConfig(document);
+    if (canFormat != null) {
+      return canFormat;
     }
     const notebook = document.uri.scheme === NOTEBOOK_CELL_SCHEME
       ? vscode.workspace.notebookDocuments.find(notebook => notebook.getCells().some(c => c.document === document))

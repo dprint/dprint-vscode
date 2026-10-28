@@ -15,7 +15,7 @@ export enum MessageKind {
   UpdateSettings = 5,
   FormatFile = 6,
   FormatFileResponse = 7,
-  CancelFormat = 8,
+  CancelRequest = 8,
   FileInfo = 9,
   FileInfoResponse = 10,
   ConfigInfo = 11,
@@ -29,6 +29,8 @@ export enum MessageKind {
   Progress = 19,
   ConfigDiagnostics = 20,
   ConfigChanged = 21,
+  Reset = 22,
+  AskToAllowProcessPlugins = 23,
 }
 
 /** The output of `dprint editor-service --info`. */
@@ -43,12 +45,22 @@ export interface InitializeData {
   settings?: EditorSettings;
 }
 
-export interface EditorSettings {
-  /** The uris of the workspace folders. */
-  workspaceFolders?: string[];
-  allowGlobalConfig?: boolean;
-  showNoConfigNotification?: boolean;
+export interface EditorSettings extends DocumentSettings {
+  workspaceFolders?: WorkspaceFolderSettings[];
   verbose?: boolean;
+}
+
+/** The settings of the documents, which may be different for the documents of a workspace folder. */
+export interface DocumentSettings {
+  allowGlobalConfig?: boolean;
+  /** Defaults to the `DPRINT_EDITOR_STABLE_FORMAT` environment variable. */
+  ensureStableFormat?: boolean;
+  showNoConfigNotification?: boolean;
+}
+
+/** A workspace folder and the settings of its documents, which are the editor's settings when not provided. */
+export interface WorkspaceFolderSettings extends DocumentSettings {
+  uri: string;
 }
 
 /** The language of a document that isn't a file, which dprint names the file it formats the document as after. */
@@ -70,6 +82,8 @@ export interface FileInfoData {
 export interface FileInfoResponseData {
   configFile: ConfigFileInfo | null;
   canFormat: boolean;
+  /** The plugins that format the file in the order they do. */
+  plugins?: { name: string; version: string }[];
   reason?: NotFormattedReason;
   message?: string;
 }
@@ -87,6 +101,20 @@ export interface ConfigInfoData {
 export interface ConfigInfoResponseData {
   configFile: ConfigFileInfo | null;
   plugins: PluginInfo[];
+  includes?: string[];
+  excludes?: string[];
+  /** The file extension an extensionless file is formatted as by its shebang. */
+  shebangs?: Record<string, string>;
+  /** The dprint executable installed in a `node_modules` folder for the config file. */
+  localExecutable?: { path: string; version: string };
+  /** Why the config file doesn't format anything (ex. its process plugins aren't allowed). */
+  reason?: NotFormattedReason;
+  message?: string;
+}
+
+export interface AskToAllowProcessPluginsData {
+  uri: string;
+  allowGlobalConfig?: boolean;
 }
 
 export interface ConfigSchemaData {
@@ -104,6 +132,9 @@ export interface PluginInfo {
   configKey: string;
   fileExtensions: string[];
   fileNames: string[];
+  /** The patterns of the other files it formats, which are matched like dprint matches them. */
+  associations?: string[];
+  supportsRangeFormatting?: boolean;
   configSchemaUrl: string | undefined;
   helpUrl: string;
   updateUrl: string | undefined;
@@ -121,17 +152,25 @@ export type NotFormattedReason =
   | "configDiagnostics"
   /** A plugin that formats the file doesn't support formatting a range. */
   | "rangeFormattingNotSupported"
+  /** The config file failed to resolve, which the editor service shows the user. */
+  | "configError"
+  /** The user didn't allow running the process plugins of the config file. */
+  | "processPluginsNotAllowed"
   | (string & {});
 
 export interface FormatFileData {
   uri: string;
   language?: DocumentLanguage;
   notebookUri?: string;
-  /** The UTF-16 offsets to format, which dprint expands to whole lines. The whole text is formatted when not provided. */
-  range?: { start: number; end: number };
+  /**
+   * The ranges of UTF-16 offsets to format, which dprint gives to a plugin that formats a range as they
+   * are and otherwise expands to whole lines. The whole text is formatted when not provided.
+   */
+  ranges?: { start: number; end: number }[];
   overrideConfig?: Record<string, unknown>;
+  /** Allows the global config file regardless of the setting (ex. for a command). */
   allowGlobalConfig?: boolean;
-  ensureStableFormat?: boolean;
+  /** Overrides the setting (ex. for a command that says why the file wasn't formatted itself). */
   showNoConfigNotification?: boolean;
 }
 
@@ -152,6 +191,22 @@ export type FormatFileResult =
     /** The errors in the configuration of the plugins when the reason is `configDiagnostics`. */
     diagnostics?: ConfigDiagnostic[];
   };
+
+/**
+ * Why formatting failed. `formatError` is when a plugin couldn't format the file (usually a syntax
+ * error) and `pluginError` is when a plugin failed (ex. it panicked or couldn't be set up).
+ */
+export type FormatFailedReason = "formatError" | "pluginError" | (string & {});
+
+/** The error of a format that failed, which is the failure's message. */
+export class FormatFailedError extends Error {
+  readonly reason: FormatFailedReason;
+
+  constructor(reason: FormatFailedReason, message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
 
 /** A problem with a config file. */
 export interface ConfigDiagnostic {

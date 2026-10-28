@@ -37,6 +37,10 @@
       {
         "command": "dprint.formatSelectionWithGlobalConfig",
         "title": "Dprint: Format Selection (global config)"
+      },
+      {
+        "command": "dprint.allowProcessPlugins",
+        "title": "Dprint: Allow Process Plugins"
       }
     ],
     "menus": {
@@ -48,6 +52,10 @@
         {
           "command": "dprint.formatSelectionWithGlobalConfig",
           "when": "dprint.canFormatWithGlobalConfig && editorHasSelection"
+        },
+        {
+          "command": "dprint.allowProcessPlugins",
+          "when": "dprint.hasProcessPluginsNotAllowed"
         }
       ]
     },

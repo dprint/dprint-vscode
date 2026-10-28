@@ -9,6 +9,7 @@ import {
   type ConfigChangedData,
   type ConfigDiagnosticsData,
   encodeMessage,
+  FormatFailedError,
   type MessageAction,
   MessageDecoder,
   MessageKind,
@@ -43,7 +44,7 @@ describe("EditorServiceConnection", () => {
     const data = {
       uri: "untitled:Untitled-1",
       language: { id: "typescript", fileExtensions: [".ts"], fileNames: [] },
-      range: { start: 1, end: 3 },
+      ranges: [{ start: 1, end: 3 }],
       allowGlobalConfig: true,
     };
     const format = connection.formatFile(data, "text", new FakeCancellationToken());
@@ -74,10 +75,55 @@ describe("EditorServiceConnection", () => {
     token.cancel();
     assert.strictEqual(await format, undefined);
     const cancel = await process.readMessage();
-    assert.strictEqual(cancel.kind, MessageKind.CancelFormat);
+    assert.strictEqual(cancel.kind, MessageKind.CancelRequest);
     assert.strictEqual(new BodyReader(cancel.body).readInt(), request.id);
     assert.strictEqual(token.listenerCount, 0);
     assert.strictEqual(connection.pendingRequestCount, 0);
+  });
+
+  it("rejects a format that failed with why", async () => {
+    const { connection, processes } = createConnection();
+
+    const format = connection.formatFile({ uri: "file:///file.ts" }, "text", new FakeCancellationToken());
+    const process = processes[0];
+    await process.readMessage(); // initialize
+    const request = await process.readMessage();
+    process.send(MessageKind.FormatFileResponse, [
+      request.id,
+      2,
+      JSON.stringify({ reason: "formatError", message: "Syntax error." }),
+    ]);
+    await assert.rejects(format, (err: unknown) => {
+      assert.ok(err instanceof FormatFailedError);
+      assert.strictEqual(err.reason, "formatError");
+      assert.strictEqual(err.message, "Syntax error.");
+      return true;
+    });
+  });
+
+  it("resets a running editor service and asks to allow process plugins", async () => {
+    const { connection, processes } = createConnection();
+
+    // there's nothing to reset before it's started
+    await connection.reset();
+    assert.strictEqual(processes.length, 0);
+
+    const data = { uri: "file:///dprint.json" };
+    const ask = connection.askToAllowProcessPlugins(data);
+    const process = processes[0];
+    await process.readMessage(); // initialize
+    const askRequest = await process.readMessage();
+    assert.strictEqual(askRequest.kind, MessageKind.AskToAllowProcessPlugins);
+    assert.deepStrictEqual(new BodyReader(askRequest.body).readSizedJson(), data);
+    process.send(MessageKind.SuccessResponse, [askRequest.id]);
+    await ask;
+
+    const reset = connection.reset();
+    const resetRequest = await process.readMessage();
+    assert.strictEqual(resetRequest.kind, MessageKind.Reset);
+    process.send(MessageKind.SuccessResponse, [resetRequest.id]);
+    await reset;
+    assert.strictEqual(processes.length, 1);
   });
 
   it("provides the diagnostics of a file that wasn't formatted", async () => {
@@ -431,7 +477,7 @@ describe("EditorServiceConnection", () => {
   });
 });
 
-const INITIALIZE_DATA = { clientInfo: { name: "test" }, settings: { workspaceFolders: ["/project"] } };
+const INITIALIZE_DATA = { clientInfo: { name: "test" }, settings: { workspaceFolders: [{ uri: "file:///project" }] } };
 
 /** Starts the process with a request that's answered by `respondToStart`. */
 function startProcess(connection: EditorServiceConnection, processes: FakeProcess[]) {

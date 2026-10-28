@@ -25,8 +25,13 @@ export function getFormatDocumentResult(
       notFormattedReason = "noPlugins";
       break;
     case "configDiagnostics":
+    case "configError":
       // formatting failed, which the editor service shows the user
       notFormattedReason = "failed";
+      break;
+    case "processPluginsNotAllowed":
+      // the editor service's message says why and how to allow them
+      notFormattedReason = "notMatched";
       break;
     case "rangeFormattingNotSupported":
       // the editor service's message says why
