@@ -30,7 +30,7 @@ export enum MessageKind {
   ConfigDiagnostics = 20,
   ConfigChanged = 21,
   Reset = 22,
-  AskToAllowProcessPlugins = 23,
+  InstallPlugins = 23,
 }
 
 /** The output of `dprint editor-service --info`. */
@@ -105,6 +105,8 @@ export interface ConfigInfoResponseData {
   excludes?: string[];
   /** The file extension an extensionless file is formatted as by its shebang. */
   shebangs?: Record<string, string>;
+  /** The plugins that are downloaded to be used (ex. a url, but not a plugin in `node_modules`). */
+  remotePlugins?: RemotePlugin[];
   /** The dprint executable installed in a `node_modules` folder for the config file. */
   localExecutable?: { path: string; version: string };
   /** Why the config file doesn't format anything (ex. its process plugins aren't allowed). */
@@ -112,7 +114,7 @@ export interface ConfigInfoResponseData {
   message?: string;
 }
 
-export interface AskToAllowProcessPluginsData {
+export interface InstallPluginsData {
   uri: string;
   allowGlobalConfig?: boolean;
 }
@@ -124,6 +126,13 @@ export interface ConfigSchemaData {
 
 export interface ConfigSchemaResponseData {
   schema: { [key: string]: any };
+}
+
+export interface RemotePlugin {
+  /** The url or npm specifier of the plugin as it is in the config file. */
+  source: string;
+  kind: "wasm" | "process" | (string & {});
+  installed: boolean;
 }
 
 export interface PluginInfo {
@@ -156,6 +165,8 @@ export type NotFormattedReason =
   | "configError"
   /** The user didn't allow running the process plugins of the config file. */
   | "processPluginsNotAllowed"
+  /** A plugin of the config file needs to be downloaded, which the editor asks for. */
+  | "pluginsNotInstalled"
   | (string & {});
 
 export interface FormatFileData {

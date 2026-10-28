@@ -54,8 +54,11 @@ import { getUnsupportedError, isOldDprintError, isUnsupportedService, type Unsup
 
 /** How long a state that was replaced waits for its formats in progress before its editor services shut down. */
 const RETIRED_FORMAT_TIMEOUT = 10_000;
-/** The context key for if a config file's process plugins weren't allowed, which shows the command to allow them. */
-const HAS_PROCESS_PLUGINS_NOT_ALLOWED_CONTEXT_KEY = "dprint.hasProcessPluginsNotAllowed";
+/**
+ * The context key for if a config file's plugins aren't installed or its process plugins weren't allowed,
+ * which shows the command to install them.
+ */
+const HAS_PLUGINS_TO_INSTALL_CONTEXT_KEY = "dprint.hasPluginsToInstall";
 
 export interface WorkspaceBackendOptions {
   approvedPaths: ApprovedConfigPaths;
@@ -91,7 +94,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   /** The config files each editor service sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<EditorServiceConnection, Set<string>>();
   /** What's kept across the states for the session of the extension. */
-  readonly #session: WorkspaceSession = { hasNotifiedNoConfig: false };
+  readonly #session: WorkspaceSession = {
+    hasNotifiedNoConfig: false,
+    requestedInstalls: new Set(),
+    installs: new Map(),
+  };
   #disposed = false;
 
   constructor(options: WorkspaceBackendOptions) {
@@ -246,9 +253,9 @@ export class WorkspaceBackend implements vscode.Disposable {
     return this.#state?.canFormatWithGlobalConfig(document) ?? Promise.resolve(undefined);
   }
 
-  /** Asks the user whether to allow the process plugins of the config files that weren't allowed. */
-  allowProcessPlugins() {
-    return this.#state?.allowProcessPlugins() ?? Promise.resolve();
+  /** Installs the plugins of the config files that aren't installed or whose process plugins weren't allowed. */
+  installPlugins() {
+    return this.#state?.installPlugins() ?? Promise.resolve();
   }
 
   dispose() {
@@ -493,6 +500,14 @@ interface WorkspaceSession {
    * config file, which is only done once per session even when there are several.
    */
   hasNotifiedNoConfig: boolean;
+  /**
+   * The plugins of the config files the extension asked to install without the user running the
+   * command, which is only done once per session because installing a process plugin asks the user
+   * to allow it.
+   */
+  requestedInstalls: Set<string>;
+  /** The installs in progress by the config file, which the formats of its documents wait on. */
+  installs: Map<string, Promise<void>>;
 }
 
 /** What dprint formats a document as. */
@@ -681,8 +696,8 @@ class WorkspaceState {
     }
     await vscode.commands.executeCommand(
       "setContext",
-      HAS_PROCESS_PLUGINS_NOT_ALLOWED_CONTEXT_KEY,
-      this.#configs.some(config => config.info?.reason === "processPluginsNotAllowed"),
+      HAS_PLUGINS_TO_INSTALL_CONTEXT_KEY,
+      this.#configs.some(config => hasPluginsToInstall(config.info)),
     );
     // this also tells vscode to get the schema again
     this.#options.configSchemaProvider.setSource({ getConfigSchema: () => this.#getConfigSchema() });
@@ -732,14 +747,14 @@ class WorkspaceState {
     return info.configFile?.isGlobal === true;
   }
 
-  /** Asks the user whether to allow the process plugins of the config files that weren't allowed. */
-  async allowProcessPlugins() {
-    const configs = this.#configs.filter(config => config.info?.reason === "processPluginsNotAllowed");
+  /** Installs the plugins of the config files that aren't installed or whose process plugins weren't allowed. */
+  async installPlugins() {
+    const configs = this.#configs.filter(config => hasPluginsToInstall(config.info));
     if (configs.length === 0) {
-      vscode.window.showInformationMessage("The process plugins of the configuration files are allowed.");
+      vscode.window.showInformationMessage("The plugins of the configuration files are installed.");
       return;
     }
-    // ask about the config file of the active document first
+    // install the ones of the config file of the active document first
     const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
     const activeConfig = activePath == null
       ? undefined
@@ -752,11 +767,9 @@ class WorkspaceState {
       }
       asked.add(config.configFilePath);
       try {
-        await config.service.connection.askToAllowProcessPlugins({
-          uri: vscode.Uri.file(config.configFilePath).toString(),
-        });
+        await config.service.connection.installPlugins({ uri: vscode.Uri.file(config.configFilePath).toString() });
       } catch (err) {
-        this.#logger.logError("Error asking to allow the process plugins:", err);
+        this.#logger.logError("Error installing the plugins:", err);
       }
     }
   }
@@ -815,7 +828,52 @@ class WorkspaceState {
     } catch (err) {
       config.info = undefined;
       this.#logger.logError(`Error initializing in ${config.dirUri.fsPath}:`, err);
+      return;
     }
+    // The extension is only used in workspaces the user trusts, so it installs the Wasm plugins
+    // (they're sandboxed) when it finds a config file. A process plugin is installed when a file is
+    // formatted instead because that asks the user to allow it.
+    const uninstalledPlugins = getUninstalledPlugins(config.info);
+    if (uninstalledPlugins.length > 0 && uninstalledPlugins.every(plugin => plugin.kind === "wasm")) {
+      this.#requestInstall(
+        config.service,
+        vscode.Uri.file(config.configFilePath).toString(),
+        config.configFilePath,
+        config.info,
+      );
+    }
+  }
+
+  /**
+   * Installs the plugins of the config file of the document without the user running the command,
+   * which is only done once per session for the same plugins because installing a process plugin
+   * asks the user to allow it. The editor service says when the config file formats files once
+   * they're installed, which has its plugins refreshed.
+   *
+   * @returns The install in progress, which is undefined when it was already done this session.
+   */
+  #requestInstall(
+    service: Service,
+    uri: string,
+    configKey: string,
+    info: ConfigInfoResponseData | undefined,
+  ): Promise<void> | undefined {
+    const installs = this.#session.installs;
+    const inProgress = installs.get(configKey);
+    if (inProgress != null) {
+      return inProgress;
+    }
+    const key = JSON.stringify([configKey, getUninstalledPlugins(info).map(plugin => plugin.source)]);
+    if (this.#session.requestedInstalls.has(key)) {
+      return undefined;
+    }
+    this.#session.requestedInstalls.add(key);
+    this.#logger.logInfo("Installing the plugins of:", configKey);
+    const install = service.connection.installPlugins({ uri })
+      .catch(err => this.#logger.logError("Error installing the plugins:", err))
+      .finally(() => installs.delete(configKey));
+    installs.set(configKey, install);
+    return install;
   }
 
   async #formatDocument(
@@ -823,6 +881,7 @@ class WorkspaceState {
     ranges: readonly vscode.Range[] | undefined,
     options: FormatDocumentOptions,
     token: vscode.CancellationToken,
+    isAfterInstall = false,
   ): Promise<FormatDocumentResult> {
     const target = this.#getFormatTarget(document);
     if (target == null) {
@@ -858,6 +917,14 @@ class WorkspaceState {
       if (result.edits == null) {
         this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
         this.#onNotFormatted(result, showNoConfigNotification !== false);
+        if (result.reason === "pluginsNotInstalled" && !isAfterInstall) {
+          // formatting is when the user is asked to allow a process plugin, and the document is
+          // formatted once they're installed unless the format is cancelled in the meantime
+          const install = this.#requestInstall(service, target.uri, config?.configFilePath ?? target.uri, config?.info);
+          if (install != null && await waitUnlessCancelled(install, token)) {
+            return this.#formatDocument(document, ranges, options, token, true);
+          }
+        }
         return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
       }
       this.#logger.logDebug("Response - Formatted:", target.uri);
@@ -1259,6 +1326,28 @@ interface FormatDocumentOptions {
   /** Allows the global config file regardless of the setting (ex. for a command). */
   allowGlobalConfig?: boolean;
   showNoConfigNotification?: boolean;
+}
+
+/** Waits for the promise, which resolves to false when the token is cancelled first. */
+async function waitUnlessCancelled(promise: Promise<unknown>, token: vscode.CancellationToken) {
+  let disposable: vscode.Disposable | undefined;
+  const cancelled = new Promise<false>(resolve => {
+    disposable = token.onCancellationRequested(() => resolve(false));
+  });
+  try {
+    return await Promise.race([promise.then(() => !token.isCancellationRequested), cancelled]);
+  } finally {
+    disposable?.dispose();
+  }
+}
+
+/** Gets if the plugins of the config file need to be installed or its process plugins allowed. */
+function hasPluginsToInstall(info: ConfigInfoResponseData | undefined) {
+  return info?.reason === "pluginsNotInstalled" || info?.reason === "processPluginsNotAllowed";
+}
+
+function getUninstalledPlugins(info: ConfigInfoResponseData | undefined) {
+  return (info?.remotePlugins ?? []).filter(plugin => !plugin.installed);
 }
 
 /** Gets the settings to send to the editor service, which has the settings of each workspace folder. */

@@ -30,7 +30,8 @@ export function getFormatDocumentResult(
       notFormattedReason = "failed";
       break;
     case "processPluginsNotAllowed":
-      // the editor service's message says why and how to allow them
+    case "pluginsNotInstalled":
+      // the editor service's message says why
       notFormattedReason = "notMatched";
       break;
     case "rangeFormattingNotSupported":

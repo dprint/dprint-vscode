@@ -26,8 +26,11 @@ export interface ExtensionBackend extends vscode.Disposable {
    * commands for it apply. This is undefined when the backend doesn't know.
    */
   canFormatWithGlobalConfig(document: vscode.TextDocument): Promise<boolean | undefined>;
-  /** Asks the user whether to allow the process plugins of the config files that weren't allowed. */
-  allowProcessPlugins(): Promise<void>;
+  /**
+   * Installs the plugins of the config files that aren't installed, which asks the user to allow
+   * the process plugins that weren't.
+   */
+  installPlugins(): Promise<void>;
 }
 
 /** The edits for formatting a document, which are empty when it's already formatted, or why it wasn't formatted. */

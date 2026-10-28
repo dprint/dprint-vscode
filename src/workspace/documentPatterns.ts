@@ -16,8 +16,10 @@ export const ALL_FILES_PATTERN = "**/*";
  * an extensionless file is formatted by), and none when it has no plugins.
  */
 export function getConfigFilePatterns(info: Pick<ConfigInfoResponseData, "plugins" | "shebangs" | "reason">): string[] {
-  // dprint formats these files once the user allows the process plugins or fixes the config file
-  if (info.reason === "processPluginsNotAllowed" || info.reason === "configError") {
+  // dprint formats these files once the plugins are installed and allowed or the config file is fixed
+  if (
+    info.reason === "processPluginsNotAllowed" || info.reason === "pluginsNotInstalled" || info.reason === "configError"
+  ) {
     return [ALL_FILES_PATTERN];
   }
   if (info.plugins.length === 0) {

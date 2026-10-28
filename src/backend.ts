@@ -56,8 +56,8 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
     canFormatWithGlobalConfig(document) {
       return (switcher.legacyBackend ?? workspaceBackend).canFormatWithGlobalConfig(document);
     },
-    allowProcessPlugins() {
-      return (switcher.legacyBackend ?? workspaceBackend).allowProcessPlugins();
+    installPlugins() {
+      return (switcher.legacyBackend ?? workspaceBackend).installPlugins();
     },
     dispose() {
       switcher.dispose();

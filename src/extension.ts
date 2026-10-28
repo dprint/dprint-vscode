@@ -41,11 +41,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ reset: true })),
   );
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.allowProcessPlugins", async () => {
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.installPlugins", async () => {
     try {
-      await backend.allowProcessPlugins();
+      await backend.installPlugins();
     } catch (err) {
-      logger.logError("Error asking to allow the process plugins:", err);
+      logger.logError("Error installing the plugins:", err);
     }
   }));
   context.subscriptions.push(

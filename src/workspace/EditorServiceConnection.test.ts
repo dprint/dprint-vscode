@@ -101,7 +101,7 @@ describe("EditorServiceConnection", () => {
     });
   });
 
-  it("resets a running editor service and asks to allow process plugins", async () => {
+  it("resets a running editor service and installs plugins", async () => {
     const { connection, processes } = createConnection();
 
     // there's nothing to reset before it's started
@@ -109,11 +109,11 @@ describe("EditorServiceConnection", () => {
     assert.strictEqual(processes.length, 0);
 
     const data = { uri: "file:///dprint.json" };
-    const ask = connection.askToAllowProcessPlugins(data);
+    const ask = connection.installPlugins(data);
     const process = processes[0];
     await process.readMessage(); // initialize
     const askRequest = await process.readMessage();
-    assert.strictEqual(askRequest.kind, MessageKind.AskToAllowProcessPlugins);
+    assert.strictEqual(askRequest.kind, MessageKind.InstallPlugins);
     assert.deepStrictEqual(new BodyReader(askRequest.body).readSizedJson(), data);
     process.send(MessageKind.SuccessResponse, [askRequest.id]);
     await ask;

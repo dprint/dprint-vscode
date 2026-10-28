@@ -1,7 +1,6 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import {
-  type AskToAllowProcessPluginsData,
   BodyReader,
   type ConfigChangedData,
   type ConfigDiagnosticsData,
@@ -17,6 +16,7 @@ import {
   type FormatFileData,
   type FormatFileResult,
   type InitializeData,
+  type InstallPluginsData,
   type LogData,
   type MessageAction,
   MessageDecoder,
@@ -124,11 +124,11 @@ export class EditorServiceConnection {
   }
 
   /**
-   * Asks the user whether to allow running the process plugins of the config file of a document,
-   * which resolves once they answered.
+   * Downloads and sets up the plugins of the config file of a document that aren't installed, which
+   * first asks the user to allow the process plugins that weren't, so it may take a while to resolve.
    */
-  askToAllowProcessPlugins(data: AskToAllowProcessPluginsData) {
-    return this.#request<void>(MessageKind.AskToAllowProcessPlugins, [JSON.stringify(data)]);
+  installPlugins(data: InstallPluginsData) {
+    return this.#request<void>(MessageKind.InstallPlugins, [JSON.stringify(data)]);
   }
 
   /**
