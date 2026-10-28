@@ -30,7 +30,7 @@ describe("getConfigFilePatterns", () => {
   });
 
   it("matches every file when dprint will format them once the user does something", () => {
-    for (const reason of ["processPluginsNotAllowed", "pluginsNotInstalled", "configError"]) {
+    for (const reason of ["processPluginsNotAllowed", "downloadRequired", "configError"]) {
       assert.deepStrictEqual(getConfigFilePatterns({ plugins: [], reason }), [ALL_FILES_PATTERN]);
     }
   });

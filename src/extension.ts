@@ -39,7 +39,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // dprint starts its plugins again, which is for when one stopped responding or changed
   context.subscriptions.push(
-    vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ reset: true })),
+    vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ restart: true })),
   );
   context.subscriptions.push(vscode.commands.registerCommand("dprint.installPlugins", async () => {
     try {

@@ -133,6 +133,8 @@ export interface RemotePlugin {
   source: string;
   kind: "wasm" | "process" | (string & {});
   installed: boolean;
+  /** Whether it's on a trusted domain, which is when it's downloaded without the install plugins message. */
+  trusted: boolean;
 }
 
 export interface PluginInfo {
@@ -165,8 +167,11 @@ export type NotFormattedReason =
   | "configError"
   /** The user didn't allow running the process plugins of the config file. */
   | "processPluginsNotAllowed"
-  /** A plugin of the config file needs to be downloaded, which the editor asks for. */
-  | "pluginsNotInstalled"
+  /**
+   * A plugin of the config file or a config file it extends needs to be downloaded from a domain
+   * that isn't trusted, which the install plugins message asks the user about.
+   */
+  | "downloadRequired"
   | (string & {});
 
 export interface FormatFileData {

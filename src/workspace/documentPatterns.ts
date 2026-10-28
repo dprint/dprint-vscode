@@ -18,7 +18,7 @@ export const ALL_FILES_PATTERN = "**/*";
 export function getConfigFilePatterns(info: Pick<ConfigInfoResponseData, "plugins" | "shebangs" | "reason">): string[] {
   // dprint formats these files once the plugins are installed and allowed or the config file is fixed
   if (
-    info.reason === "processPluginsNotAllowed" || info.reason === "pluginsNotInstalled" || info.reason === "configError"
+    info.reason === "processPluginsNotAllowed" || info.reason === "downloadRequired" || info.reason === "configError"
   ) {
     return [ALL_FILES_PATTERN];
   }

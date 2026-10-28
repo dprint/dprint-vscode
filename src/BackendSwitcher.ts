@@ -7,8 +7,8 @@ export interface SwitchableBackend {
 }
 
 export interface ReInitializeOptions {
-  /** Whether dprint should start its plugins again (ex. for the restart command). */
-  reset?: boolean;
+  /** Whether to start new dprint processes (ex. for the restart command). */
+  restart?: boolean;
 }
 
 export interface BackendSwitcherOptions<TLegacyBackend extends SwitchableBackend> {
@@ -49,7 +49,7 @@ export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {
   }
 
   reInitialize(options: ReInitializeOptions = {}) {
-    this.#queuedOptions = { reset: this.#queuedOptions.reset || options.reset };
+    this.#queuedOptions = { restart: this.#queuedOptions.restart || options.restart };
     // the queued initialization hasn't started, so it covers this request too
     if (this.#queuedInitialization != null) {
       return this.#queuedInitialization;

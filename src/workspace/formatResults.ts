@@ -30,7 +30,7 @@ export function getFormatDocumentResult(
       notFormattedReason = "failed";
       break;
     case "processPluginsNotAllowed":
-    case "pluginsNotInstalled":
+    case "downloadRequired":
       // the editor service's message says why
       notFormattedReason = "notMatched";
       break;

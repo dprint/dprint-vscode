@@ -89,6 +89,8 @@ export class WorkspaceBackend implements vscode.Disposable {
    * That keeps what the user chose for the session (ex. allowing process plugins).
    */
   readonly #services = new Map<string, Promise<ServiceResolution>>();
+  /** The editor services that were replaced by a restart, which shut down once a state doesn't use them. */
+  readonly #restartedServices = new Set<Promise<ServiceResolution>>();
   /** The problems with the config files. */
   readonly #diagnostics: vscode.DiagnosticCollection;
   /** The config files each editor service sent problems for, which are cleared once it stops. */
@@ -118,11 +120,19 @@ export class WorkspaceBackend implements vscode.Disposable {
    *
    * @param onSupported - Called once the executables support it and the new state
    * is ready, right before the formatter is registered.
-   * @param options.reset - Has the editor services that are kept start their plugins
-   * again (ex. for the restart command).
+   * @param options.restart - Starts new editor services instead of keeping them (ex. for the
+   * restart command), which also forgets what the user chose for the session.
    */
-  async initialize(onSupported: () => void, options: { reset?: boolean } = {}): Promise<boolean> {
+  async initialize(onSupported: () => void, options: { restart?: boolean } = {}): Promise<boolean> {
     this.#logger.setDebug(getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose);
+    if (options.restart) {
+      // the current state keeps using them until the new one replaces it
+      for (const service of this.#services.values()) {
+        this.#restartedServices.add(service);
+      }
+      this.#services.clear();
+      this.#session.requestedInstalls.clear();
+    }
     const state = new WorkspaceState({
       options: this.#options,
       environment: this.#environment,
@@ -192,9 +202,6 @@ export class WorkspaceBackend implements vscode.Disposable {
       await Promise.all(state.services.map(async service => {
         try {
           await service.connection.updateSettings(getEditorSettings());
-          if (options.reset) {
-            await service.connection.reset();
-          }
         } catch (err) {
           this.#logger.logError("Error updating the editor service:", err);
         }
@@ -404,22 +411,39 @@ export class WorkspaceBackend implements vscode.Disposable {
         continue;
       }
       this.#services.delete(key);
-      service.then(service => {
-        if (isUnsupportedService(service)) {
-          return;
-        }
-        // the config files of a service that stopped aren't checked anymore
-        for (const uri of this.#diagnosticUris.get(service.connection) ?? []) {
-          this.#diagnostics.delete(vscode.Uri.parse(uri));
-        }
-        this.#diagnosticUris.delete(service.connection);
-        if (this.#disposed) {
-          service.connection.dispose();
+      this.#disposeService(service);
+    }
+    // a restarted service has the same key as the one that replaced it
+    const usedServices = new Set([...this.#state?.services ?? [], ...this.#pendingState?.services ?? []]);
+    for (const service of [...this.#restartedServices]) {
+      this.#restartedServices.delete(service);
+      service.then(resolved => {
+        if (!this.#disposed && !isUnsupportedService(resolved) && usedServices.has(resolved)) {
+          // it's checked again once the state that uses it is replaced
+          this.#restartedServices.add(service);
         } else {
-          service.connection.disposeWhenIdle();
+          this.#disposeService(service);
         }
       });
     }
+  }
+
+  #disposeService(service: Promise<ServiceResolution>) {
+    service.then(service => {
+      if (isUnsupportedService(service)) {
+        return;
+      }
+      // the config files of a service that stopped aren't checked anymore
+      for (const uri of this.#diagnosticUris.get(service.connection) ?? []) {
+        this.#diagnostics.delete(vscode.Uri.parse(uri));
+      }
+      this.#diagnosticUris.delete(service.connection);
+      if (this.#disposed) {
+        service.connection.dispose();
+      } else {
+        service.connection.disposeWhenIdle();
+      }
+    });
   }
 
   /** Clears the problems of the config files that were deleted, which dprint doesn't check anymore. */
@@ -502,8 +526,8 @@ interface WorkspaceSession {
   hasNotifiedNoConfig: boolean;
   /**
    * The plugins of the config files the extension asked to install without the user running the
-   * command, which is only done once per session because installing a process plugin asks the user
-   * to allow it.
+   * command, which is only done once per session because installing asks the user whether to
+   * download what's on a domain that isn't trusted.
    */
   requestedInstalls: Set<string>;
   /** The installs in progress by the config file, which the formats of its documents wait on. */
@@ -830,24 +854,12 @@ class WorkspaceState {
       this.#logger.logError(`Error initializing in ${config.dirUri.fsPath}:`, err);
       return;
     }
-    // The extension is only used in workspaces the user trusts, so it installs the Wasm plugins
-    // (they're sandboxed) when it finds a config file. A process plugin is installed when a file is
-    // formatted instead because that asks the user to allow it.
-    const uninstalledPlugins = getUninstalledPlugins(config.info);
-    if (uninstalledPlugins.length > 0 && uninstalledPlugins.every(plugin => plugin.kind === "wasm")) {
-      this.#requestInstall(
-        config.service,
-        vscode.Uri.file(config.configFilePath).toString(),
-        config.configFilePath,
-        config.info,
-      );
-    }
   }
 
   /**
    * Installs the plugins of the config file of the document without the user running the command,
-   * which is only done once per session for the same plugins because installing a process plugin
-   * asks the user to allow it. The editor service says when the config file formats files once
+   * which is only done once per session for the same plugins because installing asks the user
+   * whether to download what's on a domain that isn't trusted. The editor service says when the config file formats files once
    * they're installed, which has its plugins refreshed.
    *
    * @returns The install in progress, which is undefined when it was already done this session.
@@ -917,9 +929,10 @@ class WorkspaceState {
       if (result.edits == null) {
         this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
         this.#onNotFormatted(result, showNoConfigNotification !== false);
-        if (result.reason === "pluginsNotInstalled" && !isAfterInstall) {
-          // formatting is when the user is asked to allow a process plugin, and the document is
-          // formatted once they're installed unless the format is cancelled in the meantime
+        if (result.reason === "downloadRequired" && !isAfterInstall) {
+          // formatting is when the user is asked whether to download what's on a domain that isn't
+          // trusted, and the document is formatted once it's installed unless the format is
+          // cancelled in the meantime
           const install = this.#requestInstall(service, target.uri, config?.configFilePath ?? target.uri, config?.info);
           if (install != null && await waitUnlessCancelled(install, token)) {
             return this.#formatDocument(document, ranges, options, token, true);
@@ -1343,7 +1356,7 @@ async function waitUnlessCancelled(promise: Promise<unknown>, token: vscode.Canc
 
 /** Gets if the plugins of the config file need to be installed or its process plugins allowed. */
 function hasPluginsToInstall(info: ConfigInfoResponseData | undefined) {
-  return info?.reason === "pluginsNotInstalled" || info?.reason === "processPluginsNotAllowed";
+  return info?.reason === "downloadRequired" || info?.reason === "processPluginsNotAllowed";
 }
 
 function getUninstalledPlugins(info: ConfigInfoResponseData | undefined) {
