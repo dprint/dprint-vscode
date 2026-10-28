@@ -28,6 +28,10 @@ export function getFormatDocumentResult(
       // formatting failed, which the editor service shows the user
       notFormattedReason = "failed";
       break;
+    case "rangeFormattingNotSupported":
+      // the editor service's message says why
+      notFormattedReason = "notMatched";
+      break;
     default:
       // includes the reasons that are newer than the extension
       notFormattedReason = "notMatched";

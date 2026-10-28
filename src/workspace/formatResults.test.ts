@@ -32,6 +32,13 @@ describe("getFormatDocumentResult", () => {
     });
   });
 
+  it("has dprint's message when range formatting isn't supported", () => {
+    assert.deepStrictEqual(getFormatDocumentResult("rangeFormattingNotSupported", "Not supported.", false), {
+      notFormattedReason: "notMatched",
+      notFormattedMessage: "Not supported.",
+    });
+  });
+
   it("is not matched for a reason that's newer than the extension", () => {
     assert.deepStrictEqual(getFormatDocumentResult("someNewReason", "New.", false), {
       notFormattedReason: "notMatched",

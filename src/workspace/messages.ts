@@ -119,6 +119,8 @@ export type NotFormattedReason =
   | "unchanged"
   /** A plugin's configuration in the config file has errors, which the editor service shows the user. */
   | "configDiagnostics"
+  /** A plugin that formats the file doesn't support formatting a range. */
+  | "rangeFormattingNotSupported"
   | (string & {});
 
 export interface FormatFileData {
