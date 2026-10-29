@@ -1,6 +1,6 @@
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import type { NotFormattedReason as ExtensionNotFormattedReason } from "../globalConfigCommand";
-import type { NotFormattedReason } from "./messages";
+import type { FormatFailedReason, NotFormattedReason } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -12,8 +12,6 @@ export function getFormatDocumentResult(
 ): FormatDocumentResult {
   let notFormattedReason: ExtensionNotFormattedReason;
   switch (reason) {
-    case "unchanged":
-      return { edits: [] };
     case "noConfigFile":
     case "globalConfigNotAllowed":
       notFormattedReason = "noConfigFile";
@@ -21,29 +19,27 @@ export function getFormatDocumentResult(
     case "noPlugin":
       notFormattedReason = isNotebookCell ? "noCellPlugin" : "noPlugin";
       break;
-    case "noPlugins":
-      notFormattedReason = "noPlugins";
-      break;
     case "configDiagnostics":
     case "configError":
-      // formatting failed, which the editor service shows the user
+      // formatting failed, which dprint shows the user
       notFormattedReason = "failed";
       break;
-    case "processPluginsNotAllowed":
-    case "downloadRequired":
-      // the editor service's message says why
-      notFormattedReason = "notMatched";
-      break;
-    case "rangeFormattingNotSupported":
-      // the editor service's message says why
-      notFormattedReason = "notMatched";
-      break;
     default:
-      // includes the reasons that are newer than the extension
+      // dprint's message says why (ex. what needs to be approved or that range formatting isn't
+      // supported), which includes the reasons that are newer than the extension
       notFormattedReason = "notMatched";
       break;
   }
   return { notFormattedReason, notFormattedMessage: message };
+}
+
+/**
+ * Gets if a format that failed is because a plugin couldn't format the file (usually a
+ * syntax error), as opposed to a plugin failing, which includes the reasons that are newer
+ * than the extension.
+ */
+export function isFormatError(reason: FormatFailedReason) {
+  return reason === "formatError";
 }
 
 /**

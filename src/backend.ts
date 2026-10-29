@@ -9,12 +9,16 @@ import { ActivatedDisposables } from "./utils";
 import { WorkspaceBackend } from "./workspace/WorkspaceBackend";
 
 /**
- * Activates the backend that formats using schema version 6 of dprint's editor service
- * when every dprint executable in use supports it, which is checked again on each
+ * Activates the backend that formats using the `dprint/*` methods of dprint's language
+ * server when the default dprint executable has them, which is checked again on each
  * initialization. Otherwise, it falls back to the legacy backend, which uses schema
- * version 5 with a dprint process for each config file.
+ * version 5 of dprint's editor service with a dprint process for each config file.
  */
-export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPaths): ExtensionBackend {
+export function activateBackend(
+  logger: Logger,
+  approvedPaths: ApprovedConfigPaths,
+  state: { globalState: vscode.Memento; workspaceState: vscode.Memento },
+): ExtensionBackend {
   const disposables = new ActivatedDisposables(logger);
   const configSchemaProvider = new ConfigJsonSchemaProvider(logger);
   disposables.push(configSchemaProvider);
@@ -25,6 +29,7 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
     approvedPaths,
     configSchemaProvider,
     logger,
+    state,
     onAncestorConfigFileCreatedOrDeleted: () => {
       switcher.reInitialize().catch(err => logger.logError("Error initializing:", err));
     },
@@ -56,8 +61,8 @@ export function activateBackend(logger: Logger, approvedPaths: ApprovedConfigPat
     canFormatWithGlobalConfig(document) {
       return (switcher.legacyBackend ?? workspaceBackend).canFormatWithGlobalConfig(document);
     },
-    installPlugins() {
-      return (switcher.legacyBackend ?? workspaceBackend).installPlugins();
+    approve() {
+      return (switcher.legacyBackend ?? workspaceBackend).approve();
     },
     dispose() {
       switcher.dispose();

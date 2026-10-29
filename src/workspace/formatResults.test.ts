@@ -1,12 +1,8 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getFormatDocumentResult, getProviderEdits } from "./formatResults";
+import { getFormatDocumentResult, getProviderEdits, isFormatError } from "./formatResults";
 
 describe("getFormatDocumentResult", () => {
-  it("has no edits when the file is unchanged", () => {
-    assert.deepStrictEqual(getFormatDocumentResult("unchanged", undefined, false), { edits: [] });
-  });
-
   it("is the extension's reason with the message", () => {
     for (
       const [reason, expected] of [
@@ -14,7 +10,6 @@ describe("getFormatDocumentResult", () => {
         ["globalConfigNotAllowed", "noConfigFile"],
         ["notMatched", "notMatched"],
         ["noPlugin", "noPlugin"],
-        ["noPlugins", "noPlugins"],
         ["configDiagnostics", "failed"],
       ]
     ) {
@@ -46,11 +41,13 @@ describe("getFormatDocumentResult", () => {
     });
   });
 
-  it("has dprint's message when the process plugins weren't allowed", () => {
-    assert.deepStrictEqual(getFormatDocumentResult("processPluginsNotAllowed", "Not allowed.", false), {
-      notFormattedReason: "notMatched",
-      notFormattedMessage: "Not allowed.",
-    });
+  it("has dprint's message when something needs to be approved", () => {
+    for (const reason of ["processPluginsNotAllowed", "downloadRequired"]) {
+      assert.deepStrictEqual(getFormatDocumentResult(reason, "Not allowed.", false), {
+        notFormattedReason: "notMatched",
+        notFormattedMessage: "Not allowed.",
+      }, reason);
+    }
   });
 
   it("is not matched for a reason that's newer than the extension", () => {
@@ -58,6 +55,15 @@ describe("getFormatDocumentResult", () => {
       notFormattedReason: "notMatched",
       notFormattedMessage: "New.",
     });
+  });
+});
+
+describe("isFormatError", () => {
+  it("is only true for a format error", () => {
+    assert.strictEqual(isFormatError("formatError"), true);
+    assert.strictEqual(isFormatError("pluginError"), false);
+    // a reason that's newer than the extension is treated like a plugin error
+    assert.strictEqual(isFormatError("someNewReason"), false);
   });
 });
 

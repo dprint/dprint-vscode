@@ -11,33 +11,37 @@ describe("getConfigFilePatterns", () => {
           plugin({ fileExtensions: ["ts", "JSON"] }),
           plugin({ fileExtensions: ["ts"], fileNames: ["Dockerfile"] }),
         ],
+        formatsOtherFiles: false,
       }),
       ["**/*.{[jJ][sS][oO][nN],[tT][sS]}", "**/[dD][oO][cC][kK][eE][rR][fF][iI][lL][eE]"],
     );
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [plugin({ fileExtensions: ["d.ts"] })] }), [
-      "**/*.[dD].[tT][sS]",
-    ]);
+    assert.deepStrictEqual(
+      getConfigFilePatterns({ plugins: [plugin({ fileExtensions: ["d.ts"] })], formatsOtherFiles: false }),
+      ["**/*.[dD].[tT][sS]"],
+    );
   });
 
   it("matches every file when what's formatted can't be matched with a glob", () => {
-    const associations = plugin({ fileExtensions: ["ts"], associations: ["**/*.mts"] });
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [associations] }), [ALL_FILES_PATTERN]);
-    const shebangs = { "#!/usr/bin/env node": "js" };
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [plugin({ fileExtensions: ["js"] })], shebangs }), [
-      ALL_FILES_PATTERN,
-    ]);
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [plugin({ fileNames: ["{a}"] })] }), [ALL_FILES_PATTERN]);
+    // ex. the associations of a plugin or a shebang
+    assert.deepStrictEqual(
+      getConfigFilePatterns({ plugins: [plugin({ fileExtensions: ["ts"] })], formatsOtherFiles: true }),
+      [ALL_FILES_PATTERN],
+    );
+    assert.deepStrictEqual(
+      getConfigFilePatterns({ plugins: [plugin({ fileNames: ["{a}"] })], formatsOtherFiles: false }),
+      [ALL_FILES_PATTERN],
+    );
   });
 
-  it("matches every file when dprint will format them once the user does something", () => {
-    for (const reason of ["processPluginsNotAllowed", "downloadRequired", "configError"]) {
-      assert.deepStrictEqual(getConfigFilePatterns({ plugins: [], reason }), [ALL_FILES_PATTERN]);
-    }
+  it("matches nothing when the plugins aren't known", () => {
+    // ex. a download or a process plugin needs to be approved
+    assert.deepStrictEqual(getConfigFilePatterns({ plugins: null, formatsOtherFiles: false }), []);
+    assert.deepStrictEqual(getConfigFilePatterns({ plugins: null, formatsOtherFiles: true }), []);
   });
 
   it("matches nothing without plugins", () => {
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [] }), []);
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [], reason: "noConfigFile" }), []);
+    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [], formatsOtherFiles: false }), []);
+    assert.deepStrictEqual(getConfigFilePatterns({ plugins: [], formatsOtherFiles: true }), []);
   });
 });
 
@@ -48,9 +52,6 @@ function plugin(info: Partial<PluginInfo>): PluginInfo {
     configKey: "test",
     fileExtensions: [],
     fileNames: [],
-    configSchemaUrl: undefined,
-    helpUrl: "",
-    updateUrl: undefined,
     ...info,
   };
 }

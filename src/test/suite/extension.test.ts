@@ -52,6 +52,33 @@ suite("Extension Test Suite", function() {
         });
       });
     },
+    /** Gets the command lines of the dprint processes that the extension started. */
+    getDprintCommandLines() {
+      const [command, args] = process.platform === "win32"
+        ? [
+          "powershell",
+          [
+            "-NoProfile",
+            "-Command",
+            `Get-CimInstance Win32_Process -Filter "ParentProcessId = ${process.pid}"`
+            + " | ForEach-Object { $_.CommandLine }",
+          ],
+        ]
+        : ["ps", ["-A", "-o", "ppid=,args="]];
+      return new Promise<string[]>((resolve, reject) => {
+        cp.execFile(command, args, (err, stdout) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          const lines = stdout.split(/\r?\n/).map(line => line.trim());
+          const commandLines = process.platform === "win32"
+            ? lines
+            : lines.filter(line => line.split(/\s+/)[0] === process.pid.toString());
+          resolve(commandLines.filter(line => /dprint/i.test(line)));
+        });
+      });
+    },
   };
 
   suiteSetup(async () => {
@@ -210,7 +237,10 @@ suite("Extension Test Suite", function() {
       // restart because the dprint process that's running for the global config file was
       // started with the other directory and is otherwise used until its config file changes
       await vscode.commands.executeCommand("dprint.restart");
-      await formatAndAssertMessage(/the configuration file in use has no plugins/);
+      // the language server says no plugin handles it instead
+      await formatAndAssertMessage(
+        /the configuration file in use has no plugins|no plugin in the configuration file in use handles/,
+      );
     } finally {
       process.env.DPRINT_CONFIG_DIR = globalConfigDir;
       await vscode.commands.executeCommand("dprint.restart");
@@ -224,6 +254,42 @@ suite("Extension Test Suite", function() {
     const excludedDoc = await context.openAndShowDocument(excludedFileUri);
     await formatAndAssertMessage(/"includes" and "excludes" .*don't match it/);
     assert.equal(excludedDoc.getText(), `{\n"test":     5\n}`);
+  });
+
+  test("asks to approve a download from a domain that isn't trusted", async function() {
+    // only the language server needs downloads to be approved
+    if (!(await context.getDprintCommandLines()).some(commandLine => /\blsp\b/.test(commandLine))) {
+      this.skip();
+    }
+    const dirPath = path.join(workspaceDir, "untrusted");
+    fs.mkdirSync(dirPath);
+    // nothing is downloaded until it's approved
+    fs.writeFileSync(
+      path.join(dirPath, "dprint.json"),
+      JSON.stringify({ plugins: ["https://example.com/dprint-vscode-test-plugin.wasm"] }),
+      "utf8",
+    );
+    const uri = vscode.Uri.file(path.join(dirPath, "file.json"));
+    fs.writeFileSync(uri.fsPath, `{\n"test":     5\n}`, "utf8");
+    try {
+      await vscode.commands.executeCommand("dprint.restart");
+      const doc = await context.openAndShowDocument(uri);
+
+      const prompts = await answerWarnings("Deny", () => context.formatCommand(doc.uri));
+      assert.equal(prompts.length, 1);
+      assert.match(prompts[0].message, /download https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/);
+      assert.deepStrictEqual(prompts[0].buttons, ["Allow", "Deny"]);
+      assert.equal(doc.getText(), `{\n"test":     5\n}`);
+
+      // it's only asked once without the user asking for it
+      assert.deepStrictEqual(await answerWarnings("Deny", () => context.formatCommand(doc.uri)), []);
+      // the command asks about what was denied
+      const commandPrompts = await answerWarnings(undefined, () => vscode.commands.executeCommand("dprint.approve"));
+      assert.deepStrictEqual(commandPrompts.map(prompt => prompt.message), [prompts[0].message]);
+    } finally {
+      fs.rmSync(dirPath, { recursive: true, force: true });
+      await vscode.commands.executeCommand("dprint.restart");
+    }
   });
 
   test("provides the schemas of the plugins for the config file", async () => {
@@ -241,6 +307,23 @@ suite("Extension Test Suite", function() {
     const messages = await waitForDiagnosticMessages(doc.uri);
     assert.deepStrictEqual(messages, ["Incorrect type. Expected \"number\"."]);
   });
+
+  /** Runs the action and returns the warnings the extension showed while it ran, which are answered with the button. */
+  async function answerWarnings(button: string | undefined, action: () => Thenable<unknown>) {
+    const prompts: { message: string; buttons: string[] }[] = [];
+    const window = vscode.window as any;
+    const { showWarningMessage } = window;
+    window.showWarningMessage = (message: string, ...buttons: string[]) => {
+      prompts.push({ message, buttons });
+      return Promise.resolve(button);
+    };
+    try {
+      await action();
+    } finally {
+      window.showWarningMessage = showWarningMessage;
+    }
+    return prompts;
+  }
 
   /** Waits for vscode to report problems in the document and returns their messages. */
   async function waitForDiagnosticMessages(uri: vscode.Uri) {

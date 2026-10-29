@@ -68,34 +68,18 @@ export class DprintExecutable {
 
   /**
    * Identifies the executable and how it's launched, which is the same for the
-   * executables that can share an editor service process.
+   * executables that can share a dprint process.
    */
   get processKey() {
     return getProcessKey(this.#command, { cwd: this.#cwd.fsPath, env: this.#env, verbose: this.#verbose });
   }
 
   /**
-   * Gets what the editor service supports (`dprint editor-service --info`), which
-   * fails for a version of dprint that doesn't have it.
+   * Starts dprint's language server, which an editor extension uses with the `dprint/*`
+   * methods. It exits with the process of the `processId` it's initialized with.
    */
-  async getEditorServiceInfo(): Promise<unknown> {
-    const stdout = await this.execShell(["editor-service", "--info"], undefined, undefined);
-    try {
-      return JSON.parse(stdout);
-    } catch (err) {
-      throw new Error(`Error parsing the editor service info. Output was: ${stdout}\n\nError: ${err}`);
-    }
-  }
-
-  /** Starts the editor service of a schema version that formats the files of a whole workspace. */
-  spawnWorkspaceEditorService(schemaVersion: number) {
-    const args = [
-      "editor-service",
-      "--parent-pid",
-      process.pid.toString(),
-      "--schema-version",
-      schemaVersion.toString(),
-    ];
+  spawnLanguageServer() {
+    const args = ["lsp"];
     if (this.#verbose) {
       args.push("--verbose");
     }

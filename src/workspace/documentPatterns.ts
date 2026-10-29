@@ -1,4 +1,4 @@
-import type { ConfigInfoResponseData } from "./messages";
+import type { ConfigInfoResult } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -11,22 +11,16 @@ export const ALL_FILES_PATTERN = "**/*";
  * what it formats because the config file's includes and excludes are left out, which are
  * matched differently than a glob (ex. like a gitignore file).
  *
- * It's every file when what the config file formats isn't known (ex. its process plugins weren't
- * allowed) or can't be matched with a glob (ex. the associations of a plugin or a shebang, which
- * an extensionless file is formatted by), and none when it has no plugins.
+ * It's every file when the config file formats other files that can't be matched with a glob
+ * (ex. with the associations of a plugin or a shebang), and none when it has no plugins or
+ * they aren't known (ex. something needs to be approved), so that the other formatters of
+ * those files are still used.
  */
-export function getConfigFilePatterns(info: Pick<ConfigInfoResponseData, "plugins" | "shebangs" | "reason">): string[] {
-  // dprint formats these files once the plugins are installed and allowed or the config file is fixed
-  if (
-    info.reason === "processPluginsNotAllowed" || info.reason === "downloadRequired" || info.reason === "configError"
-  ) {
-    return [ALL_FILES_PATTERN];
-  }
-  if (info.plugins.length === 0) {
+export function getConfigFilePatterns(info: Pick<ConfigInfoResult, "plugins" | "formatsOtherFiles">): string[] {
+  if (info.plugins == null || info.plugins.length === 0) {
     return [];
   }
-  const hasShebangs = Object.keys(info.shebangs ?? {}).length > 0;
-  if (hasShebangs || info.plugins.some(plugin => (plugin.associations?.length ?? 0) > 0)) {
+  if (info.formatsOtherFiles) {
     return [ALL_FILES_PATTERN];
   }
   const extensions = new Set(info.plugins.flatMap(plugin => plugin.fileExtensions).map(ext => ext.toLowerCase()));

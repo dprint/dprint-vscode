@@ -41,11 +41,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ restart: true })),
   );
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.installPlugins", async () => {
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.approve", async () => {
     try {
-      await backend.installPlugins();
+      await backend.approve();
     } catch (err) {
-      logger.logError("Error installing the plugins:", err);
+      logger.logError("Error approving:", err);
     }
   }));
   context.subscriptions.push(
@@ -239,18 +239,18 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
     const approvedPaths = new ApprovedConfigPaths(context);
-    // The extension formats using dprint's editor service (`dprint editor-service`). There
-    // used to be an experimental backend that used dprint's language server (`dprint lsp`)
-    // instead, but it was removed because a language server isn't a good fit here:
-    // - It needs a copy of every open document that's kept up to date as the user types
-    //   because a format request doesn't have the document's text, whereas the editor
-    //   service is only sent a document's text when formatting it.
-    // - What the extension does on top of formatting (ex. a dprint process per config
-    //   file, only being a formatter for the files of folders with a config file, untitled
-    //   documents, notebook cells, and the global config file) is done with vscode's api,
-    //   so the language server needed its own way of doing each of those.
-    // - It required bundling a language client, which made the extension much larger.
-    backend = activateBackend(logger, approvedPaths);
+    // The extension formats using the `dprint/*` methods of dprint's language server
+    // (`dprint lsp`) for editor extensions, or dprint's editor service (`dprint editor-service`)
+    // for older versions of dprint. It doesn't use a language client because:
+    // - The text document methods need a copy of every open document that's kept up to
+    //   date as the user types, whereas the `dprint/*` methods are only sent a document's
+    //   text when formatting it.
+    // - What the extension does on top of formatting (ex. only being a formatter for the
+    //   files of folders with a config file, untitled documents, notebook cells, the global
+    //   config file, and asking the user to approve what a config file needs) is done with
+    //   vscode's api.
+    // - A language client is much larger than the JSON-RPC connection it's built on.
+    backend = activateBackend(logger, approvedPaths, context);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

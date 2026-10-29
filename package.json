@@ -39,8 +39,8 @@
         "title": "Dprint: Format Selection (global config)"
       },
       {
-        "command": "dprint.installPlugins",
-        "title": "Dprint: Install Plugins"
+        "command": "dprint.approve",
+        "title": "Dprint: Approve Configuration"
       }
     ],
     "menus": {
@@ -54,8 +54,8 @@
           "when": "dprint.canFormatWithGlobalConfig && editorHasSelection"
         },
         {
-          "command": "dprint.installPlugins",
-          "when": "dprint.hasPluginsToInstall"
+          "command": "dprint.approve",
+          "when": "dprint.hasPendingApprovals"
         }
       ]
     },
@@ -126,7 +126,8 @@
     "onFileSystem:dprint"
   ],
   "dependencies": {
-    "@dsherret/which": "^0.7.4"
+    "@dsherret/which": "^0.7.4",
+    "vscode-jsonrpc": "^8.2.1"
   },
   "devDependencies": {
     "@types/glob": "^7.1.4",

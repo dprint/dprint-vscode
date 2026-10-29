@@ -13,19 +13,19 @@ export interface ReInitializeOptions {
 
 export interface BackendSwitcherOptions<TLegacyBackend extends SwitchableBackend> {
   /**
-   * Initializes the backend of schema version 6, which is false when one of the
-   * dprint executables in use doesn't support it.
+   * Initializes the backend that uses dprint's language server, which is false when
+   * the dprint executable in use doesn't support it.
    *
    * @param onSupported - Called once it's supported and ready, right before it
    * registers the formatter.
    */
   initializeWorkspace(onSupported: () => void, options: ReInitializeOptions): Promise<boolean>;
-  /** Creates the legacy backend, which uses schema version 5. */
+  /** Creates the legacy backend, which uses schema version 5 of dprint's editor service. */
   createLegacyBackend(): TLegacyBackend;
 }
 
 /**
- * Initializes the backend of schema version 6 or falls back to the legacy backend
+ * Initializes the backend that uses dprint's language server or falls back to the legacy backend
  * when it's not supported, which is checked again on each initialization.
  */
 export class BackendSwitcher<TLegacyBackend extends SwitchableBackend> {

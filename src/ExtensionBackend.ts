@@ -27,10 +27,11 @@ export interface ExtensionBackend extends vscode.Disposable {
    */
   canFormatWithGlobalConfig(document: vscode.TextDocument): Promise<boolean | undefined>;
   /**
-   * Installs the plugins of the config files that aren't installed, which asks the user to allow
-   * the process plugins that weren't.
+   * Asks the user about what the config files need approved before dprint formats with them
+   * (ex. a download from a domain that isn't trusted or running process plugins), which
+   * includes what they denied.
    */
-  installPlugins(): Promise<void>;
+  approve(): Promise<void>;
 }
 
 /** The edits for formatting a document, which are empty when it's already formatted, or why it wasn't formatted. */

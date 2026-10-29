@@ -75,9 +75,9 @@ export function activateLegacy(
     },
     // the extension finds the config file of the document itself
     canFormatWithGlobalConfig: () => Promise.resolve(undefined),
-    installPlugins() {
-      // the installed version of dprint installs them when it starts
-      vscode.window.showInformationMessage("The plugins are installed.");
+    approve() {
+      // the installed version of dprint doesn't need anything to be approved
+      vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");
       return Promise.resolve();
     },
     dispose() {

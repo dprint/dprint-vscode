@@ -77,7 +77,7 @@ export function getCommandDisplayText(command: DprintCommand) {
 
 /**
  * Identifies the command and how it's launched, which is the same for the
- * commands that can share an editor service process.
+ * commands that can share a dprint process.
  */
 export function getProcessKey(
   command: DprintCommand,
