@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
-import { getDprintConfig, getUserUseGlobalConfig } from "../config";
+import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
@@ -887,7 +887,7 @@ class WorkspaceState {
     if (service == null || token.isCancellationRequested) {
       return service == null ? { notFormattedReason: "failed" } : { edits: [] };
     }
-    const useGlobalConfig = options.useGlobalConfig ?? getUserUseGlobalConfig(document.uri);
+    const useGlobalConfig = options.useGlobalConfig ?? getDprintConfig(document.uri).useGlobalConfig;
     try {
       const result = await service.connection.format({
         ...getDocumentParams(target),
@@ -1335,7 +1335,7 @@ class WorkspaceState {
       try {
         const info = await service.connection.fileInfo({
           textDocument: { uri: vscode.Uri.file(uri.fsPath).toString() },
-          useGlobalConfig: getUserUseGlobalConfig(uri),
+          useGlobalConfig: getDprintConfig(uri).useGlobalConfig,
         });
         return info.canFormat;
       } catch (err) {
@@ -1376,7 +1376,8 @@ async function askApproval(approval: PendingApproval, choices: ApprovalChoice[])
 /** Gets the settings to send to dprint. */
 function getSettings() {
   return getServerSettings({
-    useGlobalConfig: getUserUseGlobalConfig(undefined),
+    // it's provided with each document because it's a setting of each folder
+    useGlobalConfig: false,
     ensureStableFormat: getDprintConfig(undefined).ensureStableFormat,
     verbose: getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose,
   }, process.env);

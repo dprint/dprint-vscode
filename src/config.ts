@@ -51,12 +51,3 @@ export function getDprintConfig(scope: vscode.Uri | undefined): DprintExtensionC
     return verbose === true;
   }
 }
-
-/**
- * Gets the `dprint.useGlobalConfig` setting from the user's settings without the workspace's
- * settings, because dprint runs the process plugins of the global config file without them
- * being approved, which a project shouldn't be able to opt into.
- */
-export function getUserUseGlobalConfig(scope: vscode.Uri | undefined): boolean {
-  return vscode.workspace.getConfiguration("dprint", scope).inspect("useGlobalConfig")?.globalValue === true;
-}
