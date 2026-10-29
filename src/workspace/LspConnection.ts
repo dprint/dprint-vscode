@@ -20,6 +20,7 @@ import {
   type ConfigParams,
   type ConfigSchemaResult,
   type DocumentParams,
+  DPRINT_METHODS_VERSION,
   FILE_INFO_METHOD,
   type FileInfoResult,
   FORMAT_METHOD,
@@ -398,7 +399,7 @@ export class LspConnection {
     server.initialized = connection.sendRequest<InitializeResult>("initialize", {
       ...initializeParams,
       capabilities: {
-        experimental: { dprint: {} },
+        experimental: { dprint: { version: DPRINT_METHODS_VERSION } },
         window: { workDoneProgress: true },
       },
     }).then(result => {

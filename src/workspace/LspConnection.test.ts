@@ -29,7 +29,7 @@ describe("LspConnection", () => {
     assert.strictEqual(initialize.method, "initialize");
     assert.deepStrictEqual(initialize.params, {
       ...INITIALIZE_PARAMS,
-      capabilities: { experimental: { dprint: {} }, window: { workDoneProgress: true } },
+      capabilities: { experimental: { dprint: { version: 1 } }, window: { workDoneProgress: true } },
     });
     assert.strictEqual((await process.nextMessage()).method, "initialized");
     const request = await process.nextMessage();

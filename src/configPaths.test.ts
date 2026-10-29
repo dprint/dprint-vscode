@@ -7,6 +7,7 @@ import {
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findWorkspaceFolderAncestorConfigFile,
+  getConfigFileDirPath,
   isPathWithin,
 } from "./configPaths";
 import type { Environment } from "./environment";
@@ -51,12 +52,31 @@ describe("findWorkspaceFolderAncestorConfigFile", () => {
     );
   });
 
+  it("returns undefined when the folder has a config file in a .config directory", async () => {
+    const env = new TestEnvironment();
+    env.writeFile(path.resolve("/project/dprint.json"), "{}");
+    const folderConfigPath = path.resolve("/project/packages/app/.config/dprint.json");
+    env.writeFile(folderConfigPath, "{}");
+
+    assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [folderConfigPath]), undefined);
+  });
+
   it("returns undefined when there's no config file in an ancestor directory", async () => {
     const env = new TestEnvironment();
     const subConfigPath = path.resolve("/project/packages/app/sub/dprint.json");
     env.writeFile(subConfigPath, "{}");
 
     assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(env, folderPath, [subConfigPath]), undefined);
+  });
+});
+
+describe("getConfigFileDirPath", () => {
+  it("is the directory of the config file", () => {
+    assert.strictEqual(getConfigFileDirPath(path.resolve("/project/dprint.json")), path.resolve("/project"));
+  });
+
+  it("is the parent directory of a .config directory", () => {
+    assert.strictEqual(getConfigFileDirPath(path.resolve("/project/.config/dprint.json")), path.resolve("/project"));
   });
 });
 

@@ -1,4 +1,11 @@
-import type { ApprovalDecision, ApprovalKind, ApproveParams, ApproveResult, PendingApproval } from "./messages";
+import {
+  type ApprovalDecision,
+  type ApprovalKind,
+  type ApproveParams,
+  type ApproveResult,
+  CONTENT_MODIFIED_ERROR_CODE,
+  type PendingApproval,
+} from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -60,7 +67,16 @@ export class Approvals {
         // it stays pending, so the user can still approve it with the command
         return false;
       }
-      const result = await this.#options.approve({ id: pending.id, decision });
+      let result: ApproveResult;
+      try {
+        result = await this.#options.approve({ id: pending.id, decision });
+      } catch (err) {
+        if (isContentModifiedError(err)) {
+          // what needs to be approved changed (ex. the config file changed), which formatting again gets
+          return isAllowed(decision);
+        }
+        throw err;
+      }
       if (!isAllowed(decision)) {
         return false;
       }
@@ -69,6 +85,14 @@ export class Approvals {
     }
     return true;
   }
+}
+
+/** Gets the message to ask the user with, which has what the process plugins run with. */
+export function getApprovalMessage(approval: PendingApproval) {
+  if (approval.configuration == null || Object.keys(approval.configuration).length === 0) {
+    return approval.message;
+  }
+  return `${approval.message} They run with this configuration: ${JSON.stringify(approval.configuration)}`;
 }
 
 /** Gets what the user can decide about an approval of the kind. */
@@ -86,6 +110,10 @@ export function getApprovalChoices(kind: ApprovalKind): ApprovalChoice[] {
     { title: "Allow", decision: "allow" },
     { title: "Deny", decision: "deny" },
   ];
+}
+
+function isContentModifiedError(err: unknown) {
+  return typeof err === "object" && err != null && "code" in err && err.code === CONTENT_MODIFIED_ERROR_CODE;
 }
 
 function isAllowed(decision: ApprovalDecision) {

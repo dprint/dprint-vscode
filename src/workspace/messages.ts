@@ -2,8 +2,9 @@
 
 /**
  * The version of the `dprint/*` methods of `dprint lsp` that the extension uses (see
- * dprint's docs/editor-extension-development.md), which the server says it supports
- * in the `dprint` experimental capability of its initialize result.
+ * dprint's docs/editor-extension-development.md), which the extension and the server
+ * say they support in the `dprint` experimental capability. A server supports the
+ * versions before its own, so it needs to be at least this one.
  */
 export const DPRINT_METHODS_VERSION = 1;
 
@@ -65,7 +66,8 @@ export interface FormatParams extends DocumentParams {
   text: string;
   /** The ranges to format, which is the whole text when not provided. */
   ranges?: TextRange[];
-  overrideConfig?: Record<string, unknown>;
+  /** The editor's indentation settings, which are the only config that can be overridden. */
+  overrideConfig?: { indentWidth?: number; useTabs?: boolean };
 }
 
 export type FormatResult =
@@ -94,10 +96,8 @@ export type NotFormattedReason =
   | "configDiagnostics"
   /** The config file failed to resolve, which dprint shows the user. */
   | "configError"
-  /** Something the config file needs has to be approved for download (see the approval). */
-  | "downloadRequired"
-  /** The process plugins of the config file need to be approved (see the approval). */
-  | "processPluginsNotAllowed"
+  /** Something needs to be approved before the config file is used, which the approval has. */
+  | "approvalRequired"
   | (string & {});
 
 /**
@@ -111,8 +111,12 @@ export interface PendingApproval {
   /** Identifies exactly what's approved, which changes when it does. */
   id: string;
   kind: ApprovalKind;
+  /** The config file that needs it. */
+  configFile?: string;
   /** The urls or paths to download, or the process plugins to run. */
   items: string[];
+  /** The configuration of the process plugins that were set up before by their config key, which is what they run with. */
+  configuration?: { [configKey: string]: unknown };
   /** Whether the user denied it, which is when they're only asked again when they ask for it (ex. a command). */
   denied: boolean;
   /** The message to show the user when asking. */
@@ -129,9 +133,15 @@ export interface ApproveParams {
 }
 
 export interface ApproveResult {
-  /** What else needs to be approved now, which is null when the config file is ready. */
+  /**
+   * What needs to be approved now, which is null only when the config file is ready. It's what
+   * was denied when the decision was to deny it.
+   */
   approval: PendingApproval | null;
 }
+
+/** The error code of a request for something that changed (ex. an approval that isn't pending anymore). */
+export const CONTENT_MODIFIED_ERROR_CODE = -32801;
 
 export interface FileInfoResult {
   configFile: ConfigFileInfo | null;
@@ -145,6 +155,8 @@ export interface FileInfoResult {
 
 export interface ConfigFileInfo {
   uri: string;
+  /** The directory whose files it formats, which isn't provided for a remote one. */
+  dirUri?: string;
   isGlobal: boolean;
 }
 
@@ -156,7 +168,10 @@ export interface ConfigParams {
 
 export interface ConfigInfoResult {
   configFile: ConfigFileInfo | null;
-  /** Null when they aren't known (ex. a download or process plugin needs to be approved and they weren't set up before). */
+  /**
+   * What they formatted the last time they were set up when something needs to be approved, which
+   * is null when that isn't known (ex. a plugin that needs to be downloaded).
+   */
   plugins: PluginInfo[] | null;
   /** Whether the config file formats files other than the ones of its plugins' file extensions and names (ex. associations). */
   formatsOtherFiles: boolean;

@@ -8,6 +8,7 @@ import {
   filterCacheDirConfigFiles,
   findClosestFolder,
   findWorkspaceFolderAncestorConfigFile,
+  getConfigFileDirPath,
   isPathWithin,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
@@ -35,7 +36,7 @@ import { getNoConfigMessage } from "../noConfigMessage";
 import { hasPluginForFile, type PluginFileInfo } from "../pluginFiles";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { type ApprovalChoice, Approvals } from "./approvals";
+import { type ApprovalChoice, Approvals, getApprovalMessage } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, isFormatError } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
@@ -240,8 +241,13 @@ export class WorkspaceBackend implements vscode.Disposable {
     if (type === "created" || type === "deleted") {
       return; // the backend is initialized again
     }
+    // dprint sends dprint/configChanged when what a config file formats changed, which refreshes
+    // the plugins, but schema version 5 of the editor service doesn't
+    const states = uri == null
+      ? [this.#state, this.#pendingState]
+      : [this.#state, this.#pendingState].filter(state => state?.hasLegacyFolders);
     // the state being initialized may have gotten the plugins before the change
-    await Promise.all([this.#state?.scheduleRefresh(), this.#pendingState?.scheduleRefresh()]);
+    await Promise.all(states.map(state => state?.scheduleRefresh()));
   }
 
   provideGlobalConfigFormattingEdits(
@@ -300,7 +306,7 @@ export class WorkspaceBackend implements vscode.Disposable {
       );
       for (const configFilePath of configFilePaths) {
         configFiles.push({
-          dirUri: vscode.Uri.file(path.dirname(configFilePath)),
+          dirUri: vscode.Uri.file(getConfigFileDirPath(configFilePath)),
           folderUri: folder.uri,
           configFilePath,
           isAncestor: false,
@@ -645,6 +651,11 @@ class WorkspaceState {
   /** The keys of the dprint processes the state uses, which aren't shut down while it does. */
   get serviceKeys() {
     return this.#resolvedServices.map(service => service.key);
+  }
+
+  /** Whether a config file is formatted with schema version 5 of the editor service. */
+  get hasLegacyFolders() {
+    return this.#configs.some(config => config.legacyFolder != null);
   }
 
   /** The dprint processes the state uses. */
@@ -1387,7 +1398,10 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
 
 /** Asks the user about what dprint needs approved with the message dprint provides. */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
-  const selection = await vscode.window.showWarningMessage(approval.message, ...choices.map(choice => choice.title));
+  const selection = await vscode.window.showWarningMessage(
+    getApprovalMessage(approval),
+    ...choices.map(choice => choice.title),
+  );
   return choices.find(choice => choice.title === selection)?.decision;
 }
 

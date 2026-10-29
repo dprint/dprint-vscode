@@ -17,10 +17,16 @@ export async function findWorkspaceFolderAncestorConfigFile(
   configFilePaths: readonly string[],
 ) {
   // the config file in the folder is used instead
-  if (configFilePaths.some(configFilePath => path.relative(folderPath, path.dirname(configFilePath)) === "")) {
+  if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDirPath(configFilePath)) === "")) {
     return undefined;
   }
   return findConfigFileInAncestorDirectories(env, path.dirname(folderPath));
+}
+
+/** Gets the directory whose files the config file formats, which is the directory it's in unless that's a `.config` directory. */
+export function getConfigFileDirPath(configFilePath: string) {
+  const dirPath = path.dirname(configFilePath);
+  return path.basename(dirPath) === ".config" ? path.dirname(dirPath) : dirPath;
 }
 
 /**

@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { type ApprovalChoice, Approvals, getApprovalChoices } from "./approvals";
+import { type ApprovalChoice, Approvals, getApprovalChoices, getApprovalMessage } from "./approvals";
 import type { ApprovalDecision, ApproveParams, PendingApproval } from "./messages";
 
 describe("Approvals", () => {
@@ -72,6 +72,34 @@ describe("Approvals", () => {
       approve: () => Promise.reject(new Error("Nothing is pending.")),
     });
     await assert.rejects(approvals.request(approval("download"), { isExplicit: false }), /Nothing is pending/);
+  });
+
+  it("formats again when what needs to be approved changed", async () => {
+    const changedError = Object.assign(new Error("Changed."), { code: -32801 });
+    const allowed = new Approvals({ ask: async () => "allow", approve: () => Promise.reject(changedError) });
+    assert.strictEqual(await allowed.request(approval("download"), { isExplicit: false }), true);
+    const denied = new Approvals({ ask: async () => "deny", approve: () => Promise.reject(changedError) });
+    assert.strictEqual(await denied.request(approval("download"), { isExplicit: false }), false);
+  });
+
+  it("doesn't ask about a denied approval after allowing one unless the user asks for it", async () => {
+    const processPlugins = { ...approval("processPlugins"), denied: true };
+    const { approvals, asked } = createApprovals({
+      decide: () => "allow",
+      approvalAfter: { download: processPlugins },
+    });
+    assert.strictEqual(await approvals.request(approval("download"), { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["download"]);
+  });
+});
+
+describe("getApprovalMessage", () => {
+  it("has what the process plugins run with", () => {
+    assert.strictEqual(getApprovalMessage(approval("download")), "Approve download?");
+    assert.strictEqual(
+      getApprovalMessage({ ...approval("processPlugins"), configuration: { exec: { commands: [{ command: "a" }] } } }),
+      "Approve processPlugins? They run with this configuration: {\"exec\":{\"commands\":[{\"command\":\"a\"}]}}",
+    );
   });
 });
 

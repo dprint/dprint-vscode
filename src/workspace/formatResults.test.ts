@@ -42,12 +42,10 @@ describe("getFormatDocumentResult", () => {
   });
 
   it("has dprint's message when something needs to be approved", () => {
-    for (const reason of ["processPluginsNotAllowed", "downloadRequired"]) {
-      assert.deepStrictEqual(getFormatDocumentResult(reason, "Not allowed.", false), {
-        notFormattedReason: "notMatched",
-        notFormattedMessage: "Not allowed.",
-      }, reason);
-    }
+    assert.deepStrictEqual(getFormatDocumentResult("approvalRequired", "Not allowed.", false), {
+      notFormattedReason: "notMatched",
+      notFormattedMessage: "Not allowed.",
+    });
   });
 
   it("is not matched for a reason that's newer than the extension", () => {
