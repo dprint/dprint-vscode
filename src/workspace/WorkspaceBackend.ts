@@ -38,7 +38,7 @@ import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { type ApprovalChoice, Approvals, getApprovalMessage } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
-import { getFormatDocumentResult, getProviderEdits, isFormatError } from "./formatResults";
+import { getFormatDocumentResult, getProviderEdits, isFormatError, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type ConfigInfoResult,
@@ -105,7 +105,7 @@ export class WorkspaceBackend implements vscode.Disposable {
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
   /** What's kept across the states for the session of the extension. */
-  readonly #session: WorkspaceSession = { hasNotifiedNoConfig: false };
+  readonly #session: WorkspaceSession = { hasNotifiedNoConfig: false, shownConfigErrors: new ShownConfigErrors() };
   #disposed = false;
 
   constructor(options: WorkspaceBackendOptions) {
@@ -264,7 +264,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     return this.#state.formatDocument(
       document,
       range == null ? undefined : [range],
-      { useGlobalConfig: true, notifyNoConfig: false },
+      { useGlobalConfig: true, saysWhyNotFormatted: true },
       token,
     );
   }
@@ -409,6 +409,8 @@ export class WorkspaceBackend implements vscode.Disposable {
       onDiagnostics: params => this.#setDiagnostics(connection, params),
       onConfigChanged: params => {
         this.#logger.logDebug("Configuration changed:", params.uri);
+        // an error that's still there is shown again
+        this.#session.shownConfigErrors.clear();
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
@@ -552,6 +554,8 @@ interface WorkspaceSession {
    * done once per session even when there are several.
    */
   hasNotifiedNoConfig: boolean;
+  /** The errors of the config files that were shown, which dprint doesn't show for the extension. */
+  shownConfigErrors: ShownConfigErrors;
 }
 
 /** What dprint formats a document as. */
@@ -933,7 +937,7 @@ class WorkspaceState {
           return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         case "notFormatted":
           this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
-          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri);
+          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri, config?.configFilePath ?? "");
           if (result.approval != null && !isAfterApproval) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
             // same as choosing to run what its config file says. The document is formatted once
@@ -1009,12 +1013,13 @@ class WorkspaceState {
     result: NotFormattedResult,
     options: FormatDocumentOptions & { useGlobalConfig: boolean },
     documentUri: vscode.Uri,
+    configKey: string,
   ) {
     switch (result.reason) {
       case "noConfigFile":
       case "globalConfigNotAllowed":
         this.#logger.logInfo("Configuration file not found for:", documentUri.toString());
-        if (options.notifyNoConfig !== false) {
+        if (!options.saysWhyNotFormatted) {
           this.#notifyNoConfig({
             useGlobalConfig: options.useGlobalConfig,
             hasGlobalConfig: result.reason === "globalConfigNotAllowed",
@@ -1022,13 +1027,15 @@ class WorkspaceState {
         }
         break;
       case "configDiagnostics":
-        // the problems are shown in the config file
-        this.#logger.logError(result.message ?? "The configuration file has problems.");
+      case "configError": {
+        const message = result.message ?? "The configuration file failed to resolve.";
+        this.#logger.logError(message);
+        // dprint doesn't show these to the user because only the extension knows that the user formatted
+        if (!options.saysWhyNotFormatted && this.#session.shownConfigErrors.shouldShow(configKey, message)) {
+          vscode.window.showErrorMessage(message);
+        }
         break;
-      case "configError":
-        // dprint shows the user the error
-        this.#logger.logError(result.message ?? "The configuration file failed to resolve.");
-        break;
+      }
     }
   }
 
@@ -1379,8 +1386,11 @@ class WorkspaceState {
 interface FormatDocumentOptions {
   /** Uses the global config file regardless of the setting (ex. for a command). */
   useGlobalConfig?: boolean;
-  /** Whether to notify the user about a file without a config file (ex. not for a command that says it itself). */
-  notifyNoConfig?: boolean;
+  /**
+   * Whether the caller tells the user why the document wasn't formatted (ex. a command), which is when
+   * the extension doesn't notify them about a file without a config file or a config file's error.
+   */
+  saysWhyNotFormatted?: boolean;
 }
 
 /** Waits for the promise, which resolves to false when the token is cancelled first. */

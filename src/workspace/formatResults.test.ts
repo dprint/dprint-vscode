@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getFormatDocumentResult, getProviderEdits, isFormatError } from "./formatResults";
+import { getFormatDocumentResult, getProviderEdits, isFormatError, ShownConfigErrors } from "./formatResults";
 
 describe("getFormatDocumentResult", () => {
   it("is the extension's reason with the message", () => {
@@ -70,5 +70,17 @@ describe("getProviderEdits", () => {
     assert.deepStrictEqual(getProviderEdits({ edits: [] }), []);
     assert.deepStrictEqual(getProviderEdits({ notFormattedReason: "failed" }), []);
     assert.strictEqual(getProviderEdits({ notFormattedReason: "notMatched" }), undefined);
+  });
+});
+
+describe("ShownConfigErrors", () => {
+  it("only shows an error of a config file once until it changes", () => {
+    const shown = new ShownConfigErrors();
+    assert.strictEqual(shown.shouldShow("/dprint.json", "Error."), true);
+    assert.strictEqual(shown.shouldShow("/dprint.json", "Error."), false);
+    assert.strictEqual(shown.shouldShow("/other/dprint.json", "Error."), true);
+    assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
+    shown.clear();
+    assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
   });
 });

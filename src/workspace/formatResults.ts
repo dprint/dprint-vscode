@@ -34,6 +34,30 @@ export function getFormatDocumentResult(
 }
 
 /**
+ * The errors of the config files that the user was shown, which are only shown once for a config
+ * file until they change because the editor formats without the user doing anything in between
+ * (ex. on save).
+ */
+export class ShownConfigErrors {
+  /** The message that was shown by config file. */
+  readonly #messages = new Map<string, string>();
+
+  /** Gets if the error of the config file should be shown, which remembers that it was. */
+  shouldShow(configKey: string, message: string) {
+    if (this.#messages.get(configKey) === message) {
+      return false;
+    }
+    this.#messages.set(configKey, message);
+    return true;
+  }
+
+  /** Forgets the errors that were shown (ex. a config file changed), so they're shown again. */
+  clear() {
+    this.#messages.clear();
+  }
+}
+
+/**
  * Gets if a format that failed is because a plugin couldn't format the file (usually a
  * syntax error), as opposed to a plugin failing, which includes the reasons that are newer
  * than the extension.
