@@ -22,7 +22,7 @@ import {
 } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
 import { DprintExecutable } from "../executable/DprintExecutable";
-import type { FormatDocumentResult } from "../ExtensionBackend";
+import type { ConfigFileChangeType, FormatDocumentResult } from "../ExtensionBackend";
 import {
   getLanguageFiles,
   getNotebookCellFileNames,
@@ -38,7 +38,7 @@ import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { type ApprovalChoice, Approvals } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, isFormatError } from "./formatResults";
-import { LspConnection, type ProgressHandle } from "./LspConnection";
+import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type ConfigInfoResult,
   type DocumentLanguage,
@@ -230,7 +230,16 @@ export class WorkspaceBackend implements vscode.Disposable {
     return evt.affectsConfiguration("dprint.path");
   }
 
-  async onConfigFileChanged() {
+  async onConfigFileChanged(uri?: vscode.Uri, type?: ConfigFileChangeType) {
+    // dprint doesn't watch the config files, so tell it (ex. to publish their problems)
+    if (uri != null && type != null) {
+      for (const service of this.#runningServices()) {
+        service.connection.configFileChanged(uri.toString(), getFileChangeType(type));
+      }
+    }
+    if (type === "created" || type === "deleted") {
+      return; // the backend is initialized again
+    }
     // the state being initialized may have gotten the plugins before the change
     await Promise.all([this.#state?.scheduleRefresh(), this.#pendingState?.scheduleRefresh()]);
   }
@@ -407,6 +416,11 @@ export class WorkspaceBackend implements vscode.Disposable {
       approve: params => connection.approve(params),
     });
     return { key, connection, approvals };
+  }
+
+  /** The dprint processes the states use. */
+  #runningServices() {
+    return new Set([...this.#state?.services ?? [], ...this.#pendingState?.services ?? []]);
   }
 
   /** Shuts down the dprint processes that the states don't use anymore. */
@@ -823,8 +837,12 @@ class WorkspaceState {
       this.#options.onAncestorConfigFileCreatedOrDeleted();
     };
     watcher.onDidCreate(onCreateOrDelete);
-    watcher.onDidChange(() => {
+    watcher.onDidChange(uri => {
       this.#logger.logDebug("Ancestor configuration file changed in:", dirPath);
+      // dprint doesn't watch the config files, so tell it (ex. to publish their problems)
+      for (const service of this.#resolvedServices) {
+        service.connection.configFileChanged(uri.toString(), FileChangeType.Changed);
+      }
       this.scheduleRefresh();
     });
     watcher.onDidDelete(onCreateOrDelete);
@@ -1482,4 +1500,15 @@ function showProgress(title: string, percentage: number | undefined): ProgressHa
     },
     end,
   };
+}
+
+function getFileChangeType(type: ConfigFileChangeType) {
+  switch (type) {
+    case "created":
+      return FileChangeType.Created;
+    case "changed":
+      return FileChangeType.Changed;
+    case "deleted":
+      return FileChangeType.Deleted;
+  }
 }

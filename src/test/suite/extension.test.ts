@@ -287,7 +287,8 @@ suite("Extension Test Suite", function() {
       const commandPrompts = await answerWarnings(undefined, () => vscode.commands.executeCommand("dprint.approve"));
       assert.deepStrictEqual(commandPrompts.map(prompt => prompt.message), [prompts[0].message]);
     } finally {
-      fs.rmSync(dirPath, { recursive: true, force: true });
+      // dprint may be reading the directory because it's told the config file was deleted
+      fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       await vscode.commands.executeCommand("dprint.restart");
     }
   });

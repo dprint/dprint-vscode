@@ -7,7 +7,8 @@ export interface ExtensionBackend extends vscode.Disposable {
   /** Gets if a change to the settings needs the backend to be initialized again. */
   affectsInitialization(evt: vscode.ConfigurationChangeEvent): boolean;
   /** Called when a config file's contents change (not when one is created or deleted). */
-  onConfigFileChanged(): Promise<void>;
+  /** Called when a config file in the workspace was created, changed, or deleted. */
+  onConfigFileChanged(uri: vscode.Uri, type: ConfigFileChangeType): Promise<void>;
   /**
    * Gets the edits for formatting the document, or only the range when provided, using
    * the global config file when the document doesn't have a config file in an ancestor
@@ -43,3 +44,6 @@ export type FormatDocumentResult =
     /** The message to show the user, which is the message for the reason when it's not provided. */
     notFormattedMessage?: string;
   };
+
+/** How a config file changed. */
+export type ConfigFileChangeType = "created" | "changed" | "deleted";

@@ -47,8 +47,8 @@ export function activateBackend(
     affectsInitialization(evt) {
       return (switcher.legacyBackend ?? workspaceBackend).affectsInitialization(evt);
     },
-    onConfigFileChanged() {
-      return switcher.legacyBackend?.onConfigFileChanged() ?? workspaceBackend.onConfigFileChanged();
+    onConfigFileChanged(uri, type) {
+      return switcher.legacyBackend?.onConfigFileChanged(uri, type) ?? workspaceBackend.onConfigFileChanged(uri, type);
     },
     provideGlobalConfigFormattingEdits(document, range, options, token) {
       return (switcher.legacyBackend ?? workspaceBackend).provideGlobalConfigFormattingEdits(

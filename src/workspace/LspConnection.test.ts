@@ -10,7 +10,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
-import { LspConnection, type ServerProcess } from "./LspConnection";
+import { FileChangeType, LspConnection, type ServerProcess } from "./LspConnection";
 import type {
   ClientInitializeParams,
   ConfigChangedParams,
@@ -334,6 +334,22 @@ describe("LspConnection", () => {
     connection.updateWorkspaceFolders([other]);
     connection.updateSettings({ verbose: true });
     assert.strictEqual((await process.nextMessage()).method, "workspace/didChangeConfiguration");
+  });
+
+  it("tells a running server that a config file changed", async () => {
+    const { connection, processes } = createConnection();
+    // a server that's started later reads the config file when it's used
+    connection.configFileChanged("file:///dprint.json", FileChangeType.Changed);
+    assert.strictEqual(processes.length, 0);
+
+    await connection.initialize();
+    const process = processes[0];
+    await process.nextMessage(); // initialize
+    await process.nextMessage(); // initialized
+    connection.configFileChanged("file:///dprint.json", FileChangeType.Deleted);
+    const message = await process.nextMessage();
+    assert.strictEqual(message.method, "workspace/didChangeWatchedFiles");
+    assert.deepStrictEqual(message.params, { changes: [{ uri: "file:///dprint.json", type: 3 }] });
   });
 
   it("kills the process when it doesn't exit in time", async t => {

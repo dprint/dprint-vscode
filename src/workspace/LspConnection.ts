@@ -39,6 +39,13 @@ import { isSupportedServer } from "./serverSupport";
 
 export type ServerProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
+/** How a watched file changed, which is the language server protocol's `FileChangeType`. */
+export enum FileChangeType {
+  Created = 1,
+  Changed = 2,
+  Deleted = 3,
+}
+
 /** The parts of the logger that are used, which is a subset so this can be unit tested. */
 export interface ConnectionLogger {
   log(message: string): void;
@@ -150,6 +157,17 @@ export class LspConnection {
     const server = this.#server;
     if (server != null) {
       this.#notify(server, "workspace/didChangeConfiguration", { settings });
+    }
+  }
+
+  /**
+   * Tells a running server that a config file was created, changed, or deleted, which it doesn't watch
+   * for itself. One that's started later reads the config files when they're used.
+   */
+  configFileChanged(uri: string, type: FileChangeType) {
+    const server = this.#server;
+    if (server != null) {
+      this.#notify(server, "workspace/didChangeWatchedFiles", { changes: [{ uri, type }] });
     }
   }
 
