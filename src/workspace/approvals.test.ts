@@ -1,6 +1,12 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { type ApprovalChoice, Approvals, getApprovalChoices, getApprovalMessage } from "./approvals";
+import {
+  type ApprovalChoice,
+  Approvals,
+  getApprovalChoices,
+  getApprovalMessage,
+  toPlainNotificationText,
+} from "./approvals";
 import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
 
 const READY: FormatStatus = { kind: "ready" };
@@ -242,16 +248,22 @@ describe("Approvals", () => {
   });
 
   it("sends what the user decided for the session again to a dprint process that was started again", async () => {
-    const { approvals, approved } = createApprovals({ decide: () => "allow" });
+    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
     await approvals.request([approval("processPlugins")], { isExplicit: false });
     approved.length = 0;
-    await approvals.sendSessionDecisionsAgain([approval("processPlugins"), approval("other")]);
+    // it's pending again because the new process doesn't know it
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), true);
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "allow" }]);
-    // a restart forgets them
-    approvals.forget();
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    // not when it was denied since
     approved.length = 0;
-    await approvals.sendSessionDecisionsAgain([approval("processPlugins")]);
+    const denied = { ...approval("processPlugins"), denied: true };
+    assert.strictEqual(await approvals.request([denied], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, []);
+    // forgetting them asks again
+    approvals.forget();
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    assert.deepStrictEqual(asked, ["processPlugins", "processPlugins"]);
   });
 
   it("denies what replaced an approval the user denied, but never allows it", async () => {
@@ -328,6 +340,23 @@ describe("getApprovalMessage", () => {
       configFile: { ...configFile("file:///tmp/dprint.json"), inWorkspace: false },
     };
     assert.match(getApprovalMessage(download), /The configuration file is outside the workspace: .*dprint\.json$/);
+  });
+
+  it("has the descriptions of the decisions", () => {
+    const download = approval("download");
+    download.decisions = download.decisions.map(option =>
+      option.id === "allow" ? { ...option, description: "Downloads it." } : option
+    );
+    assert.strictEqual(getApprovalMessage(download), "Approve download? (allow: Downloads it.)");
+  });
+});
+
+describe("toPlainNotificationText", () => {
+  it("doesn't have Markdown links", () => {
+    assert.strictEqual(
+      toPlainNotificationText("Run [this](command:workbench.action.terminal.new) [a] (b)"),
+      "Run [this]\u200B(command:workbench.action.terminal.new) [a] (b)",
+    );
   });
 });
 

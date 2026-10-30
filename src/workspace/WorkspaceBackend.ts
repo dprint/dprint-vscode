@@ -37,7 +37,7 @@ import { getNoConfigMessage } from "../noConfigMessage";
 import { hasPluginForFile, type PluginFileInfo } from "../pluginFiles";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { type ApprovalChoice, Approvals, getApprovalMessage } from "./approvals";
+import { type ApprovalChoice, Approvals, getApprovalMessage, toPlainNotificationText } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
@@ -174,7 +174,16 @@ export class WorkspaceBackend implements vscode.Disposable {
         // the files without a config file in the workspace are formatted with this one
         state.getDefaultService(),
       ]);
-      const unsupportedError = getUnsupportedError(defaultService, configFiles.length > 0);
+      // dprint or the extension needs to be updated after a version mismatch, which doesn't fall back to
+      // schema version 5 because that version of dprint may not have it anymore
+      const versionMismatchErrors = new Set(
+        [defaultService, ...configServices]
+          .filter(service => isUnsupportedServer(service) && service.isVersionMismatch)
+          .map(service => (service as UnsupportedServer).error),
+      );
+      const unsupportedError = isUnsupportedServer(defaultService) && defaultService.isVersionMismatch
+        ? undefined
+        : getUnsupportedError(defaultService, configFiles.length > 0);
       if (unsupportedError != null) {
         this.#logger.logInfo(`Using schema version 5 of the editor service. ${unsupportedError}`);
         state.dispose();
@@ -184,15 +193,14 @@ export class WorkspaceBackend implements vscode.Disposable {
         (retiredState?.retire() ?? Promise.resolve()).then(() => this.#disposeUnusedServices());
         // the legacy backend has nothing to approve
         await setHasPendingApprovals(this.#session, false);
-        // dprint or the extension needs to be updated to use the language server
-        if (isUnsupportedServer(defaultService) && defaultService.isVersionMismatch) {
-          vscode.window.showWarningMessage(defaultService.error);
-        }
         return false;
       }
       if (this.#disposed) {
         state.dispose();
         return false;
+      }
+      for (const error of versionMismatchErrors) {
+        vscode.window.showWarningMessage(toPlainNotificationText(error));
       }
       if (isUnsupportedServer(defaultService)) {
         this.#logger.logWarn(
@@ -203,6 +211,11 @@ export class WorkspaceBackend implements vscode.Disposable {
         const service = configServices[i];
         if (!isUnsupportedServer(service)) {
           return { ...configFile, service, legacyFolder: undefined, info: undefined };
+        }
+        if (service.isVersionMismatch) {
+          // its files aren't formatted until dprint or the extension is updated
+          this.#logger.logWarn(`Can't format the files of ${configFile.configFilePath}. ${service.error}`);
+          return { ...configFile, service: undefined, legacyFolder: undefined, info: undefined };
         }
         this.#logger.logInfo(
           `Using schema version 5 of the editor service for ${configFile.configFilePath}. ${service.error}`,
@@ -450,25 +463,14 @@ export class WorkspaceBackend implements vscode.Disposable {
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
-      // the new server doesn't know what the config files were resolved from, which getting them again tells
-      // it, or what the user decided for the session
+      // the new server doesn't know what the config files were resolved from, which getting them again
+      // tells it (what the user decided for the session is sent again when it's asked about)
       onRestart: () => {
-        this.onConfigFileChanged()
-          .then(() => this.#sendSessionDecisionsAgain(connection))
-          .catch(err => this.#logger.logError("Error refreshing:", err));
+        this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
     });
     return connection;
-  }
-
-  /** Sends what the user decided for the session again to a dprint process that was started again. */
-  async #sendSessionDecisionsAgain(connection: LspConnection) {
-    const service = this.#state?.services.find(service => service.connection === connection);
-    if (service == null) {
-      return;
-    }
-    service.approvals.sendSessionDecisionsAgain((await connection.pendingApprovals()).approvals);
   }
 
   #createService(key: string, connection: LspConnection): Service {
@@ -581,7 +583,10 @@ interface ConfigFile {
   isAncestor: boolean;
 }
 
-/** A config file and what formats its files, which is either a dprint process or a legacy folder. */
+/**
+ * A config file and what formats its files, which is either a dprint process or a legacy folder (or neither
+ * for a version of dprint the extension doesn't support).
+ */
 interface Config extends ConfigFile {
   service: Service | undefined;
   /** Formats the files with schema version 5 when the executable doesn't have the `dprint/*` methods. */
@@ -926,11 +931,20 @@ class WorkspaceState {
   /** Shows what the user decided for the config files, which they can forget. */
   async showDecisions() {
     const results = await Promise.all(this.#resolvedServices.map(service => service.connection.decisions()));
-    const decisions = results.flatMap(result => result.decisions);
+    // the "Always" decisions are shared by the processes
+    const decisions = [
+      ...new Map(results.flatMap(result => result.decisions).map(decision => [JSON.stringify(decision), decision]))
+        .values(),
+    ];
     const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
       label: `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
         decision.items.join(", ")
       }`,
+      detail: decision.kind === "downloads"
+        ? "Downloads"
+        : decision.kind === "processPlugins"
+        ? "Process plugins"
+        : decision.kind,
       description: decision.configFile == null
         ? "Every configuration file"
         : vscode.Uri.parse(decision.configFile).fsPath,
@@ -1056,7 +1070,7 @@ class WorkspaceState {
     try {
       // this also sets up the plugins that are approved, so the first format doesn't wait on it
       config.info = await config.service.connection.configInfo({
-        configFile: { uri: vscode.Uri.file(config.configFilePath).toString() },
+        configFile: { uri: vscode.Uri.file(config.configFilePath).toString(), dirUri: config.dirUri.toString() },
       });
       const notFormatted = getNotFormatted(config.info.status);
       const approvals = notFormatted?.approvals ?? [];
@@ -1095,7 +1109,8 @@ class WorkspaceState {
     if (config?.legacyFolder != null) {
       return this.#formatLegacyDocument(config.legacyFolder, document, target, ranges, token);
     }
-    const service = config?.service ?? await this.#getDefaultServiceOrWarn();
+    // a config file without a dprint process has a version of dprint the extension doesn't support
+    const service = config != null ? config.service : await this.#getDefaultServiceOrWarn();
     if (service == null || token.isCancellationRequested) {
       return service == null ? { notFormattedReason: "failed" } : { edits: [] };
     }
@@ -1115,7 +1130,8 @@ class WorkspaceState {
         case "formatted":
           this.#logger.logDebug("Response - Formatted:", target.uri);
           if (result.notice != null) {
-            this.#onMessage(result.notice, result.configFile, options);
+            // a command doesn't say anything about it itself
+            this.#onMessage(result.notice, result.configFile, {});
           }
           return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         case "notFormatted":
@@ -1656,7 +1672,7 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
 /** Asks the user about what dprint needs approved with the message dprint provides. */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
   const selection = await vscode.window.showWarningMessage(
-    getApprovalMessage(approval),
+    toPlainNotificationText(getApprovalMessage(approval)),
     ...choices.map(choice => choice.title),
   );
   return choices.find(choice => choice.title === selection)?.decision;
@@ -1717,16 +1733,17 @@ function getDiagnosticSeverity(severity: number | undefined) {
 
 /** Shows a message from dprint (ex. a config file that failed to resolve). */
 function showMessage(params: MessageParams) {
+  const message = toPlainNotificationText(params.message);
   switch (params.type) {
     case MessageType.Error:
-      vscode.window.showErrorMessage(params.message);
+      vscode.window.showErrorMessage(message);
       break;
     case MessageType.Warning:
-      vscode.window.showWarningMessage(params.message);
+      vscode.window.showWarningMessage(message);
       break;
     default:
       // includes the types that are newer than the extension
-      vscode.window.showInformationMessage(params.message);
+      vscode.window.showInformationMessage(message);
       break;
   }
 }
@@ -1821,7 +1838,7 @@ function showSeverityMessage(message: Notice) {
     : message.severity === "info"
     ? vscode.window.showInformationMessage
     : vscode.window.showWarningMessage;
-  show(message.message, ...titles).then(selection => {
+  show(toPlainNotificationText(message.message), ...titles).then(selection => {
     const action = actions.find(action => action.title === selection);
     if (action != null) {
       vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(action.uri));

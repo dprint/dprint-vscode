@@ -62,19 +62,6 @@ export class Approvals {
     this.#sessionDecisions.clear();
   }
 
-  /**
-   * Sends what the user decided for the session again for the approvals that are pending again,
-   * which is for a dprint process that was started again after it exited.
-   */
-  async sendSessionDecisionsAgain(pending: PendingApproval[]) {
-    for (const approval of pending) {
-      const decision = this.#sessionDecisions.get(approval.id);
-      if (decision != null && approval.decisions.some(option => option.id === decision)) {
-        await this.#options.approve({ id: approval.id, decision }).catch(() => {/* it's asked about again */});
-      }
-    }
-  }
-
   request(approvals: PendingApproval[], options: { isExplicit: boolean }): Promise<boolean> {
     const key = approvals.map(approval => approval.id).sort().join("\n");
     const inProgress = this.#inProgress.get(key);
@@ -97,21 +84,24 @@ export class Approvals {
         // what's left was denied
         return false;
       }
-      if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
-        return false;
-      }
       askedNow.add(approval.id);
-      this.#asked.add(approval.id);
-      const decision = await this.#options.ask(approval, getApprovalChoices(approval));
+      // what the user decided for the session is sent again (ex. to a dprint process that was
+      // started again after it exited, which doesn't know it) instead of asking
+      let decision = options.isExplicit ? undefined : this.#getSessionDecision(approval);
       if (decision == null) {
-        // it stays pending, so the user can still approve it with the command
-        return false;
+        if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
+          return false;
+        }
+        this.#asked.add(approval.id);
+        decision = await this.#options.ask(approval, getApprovalChoices(approval));
+        if (decision == null) {
+          // it stays pending, so the user can still approve it with the command
+          return false;
+        }
       }
       const allows = isAllowed(approval, decision);
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
-      if (!approval.decisions.find(option => option.id === decision)?.always) {
-        this.#sessionDecisions.set(approval.id, decision);
-      }
+      this.#rememberSessionDecision(approval, decision);
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
         pending = result.approvals;
@@ -139,7 +129,9 @@ export class Approvals {
           );
           const denial = replacement?.decisions.find(option => option.id === decision);
           if (replacement != null && denial != null) {
-            await this.#options.approve({ id: replacement.id, decision }).catch(() => {/* it's asked about later */});
+            await this.#options.approve({ id: replacement.id, decision })
+              .then(() => this.#rememberSessionDecision(replacement, decision))
+              .catch(() => {/* it's asked about later */});
           }
           return false;
         }
@@ -151,6 +143,34 @@ export class Approvals {
     }
     // it's formatted again once the config file is used
     return status == null || status.kind === "ready";
+  }
+
+  /**
+   * Gets what the user decided for the session about the approval when it's still what's used,
+   * which isn't an allow that the user denied since (ex. with "Always Deny" in another window).
+   */
+  #getSessionDecision(approval: PendingApproval) {
+    const decision = this.#sessionDecisions.get(approval.id);
+    if (decision == null || !approval.decisions.some(option => option.id === decision)) {
+      return undefined;
+    }
+    if (approval.denied) {
+      // dprint knows it's denied, which is newer than an allow
+      if (isAllowed(approval, decision)) {
+        this.#sessionDecisions.delete(approval.id);
+      }
+      return undefined;
+    }
+    return decision;
+  }
+
+  /** Remembers what the user decided for the session, which an "Always" decision replaces. */
+  #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
+    if (approval.decisions.find(option => option.id === decision)?.always) {
+      this.#sessionDecisions.delete(approval.id);
+    } else {
+      this.#sessionDecisions.set(approval.id, decision);
+    }
   }
 }
 
@@ -175,7 +195,22 @@ export function getApprovalMessage(approval: PendingApproval) {
       JSON.stringify(approval.trustedConfiguration)
     }`;
   }
+  // the descriptions of the decisions, which can't be tooltips of the buttons
+  const descriptions = approval.decisions
+    .filter(option => option.description.length > 0)
+    .map(option => `${option.label}: ${option.description}`);
+  if (descriptions.length > 0) {
+    message += ` (${descriptions.join(" ")})`;
+  }
   return message;
+}
+
+/**
+ * Gets text that's shown as it is in a notification, which shows a Markdown link (ex. one that runs
+ * a command) as a link otherwise. dprint's messages have text from config files.
+ */
+export function toPlainNotificationText(text: string) {
+  return text.replace(/\]\(/g, "]\u200B(");
 }
 
 /** Gets the path of a file uri to show the user, which is the uri for another kind of uri (ex. https). */

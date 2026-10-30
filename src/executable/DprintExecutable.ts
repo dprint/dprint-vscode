@@ -55,6 +55,16 @@ export class DprintExecutable {
   static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const command = await getCommand(options);
     if (process.platform !== "win32") {
+      // a bare name is found on the absolute directories of the path, which an empty or relative
+      // one (ex. ".") would otherwise make the workspace folder
+      if (isBareCommand(command.path) && /^[\w.-]+$/.test(command.path)) {
+        const filePath = await which(command.path, whichEnvironment);
+        if (filePath == null) {
+          throw new Error(`${command.path} wasn't found on the path.`);
+        }
+        // a plain name doesn't need the shell
+        return { kind: "path", path: filePath };
+      }
       return command;
     }
     const resolved = await resolveWindowsCommand(
@@ -100,7 +110,7 @@ export class DprintExecutable {
     return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
-      env: this.#env,
+      env: getLaunchEnv(this.#env),
       shell: launchInfo.shell,
     });
   }
@@ -117,7 +127,7 @@ export class DprintExecutable {
         const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
         const childProcess = execFile(launchInfo.command, launchInfo.args, {
           cwd: this.#cwd.fsPath,
-          env: this.#env,
+          env: getLaunchEnv(this.#env),
           encoding: "utf8",
           shell: launchInfo.shell,
         }, (err, stdout, stderr) => {
@@ -177,7 +187,7 @@ async function getCommand(options: DprintExecutableOptions): Promise<DprintComma
 
 function runShellCommand(command: string, cwd: string | undefined) {
   return new Promise<string>((resolve, reject) => {
-    exec(command, { cwd, encoding: "utf8" }, (err, stdout, stderr) => {
+    exec(command, { cwd, encoding: "utf8", env: getLaunchEnv(undefined) }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`Failed running \`${command}\` from the dprint.path setting: ${stderr || err.message}`));
       } else {
@@ -185,6 +195,17 @@ function runShellCommand(command: string, cwd: string | undefined) {
       }
     });
   });
+}
+
+/**
+ * Gets the environment to launch a process with, which has cmd.exe not look for the commands it
+ * runs in the current directory first (the workspace folder) on Windows.
+ */
+function getLaunchEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv | undefined {
+  if (process.platform !== "win32") {
+    return env;
+  }
+  return { ...(env ?? process.env), NoDefaultCurrentDirectoryInExePath: "1" };
 }
 
 /** Gets if the command is a name without a directory, which is looked for on the path. */
