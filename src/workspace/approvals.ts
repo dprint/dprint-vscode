@@ -47,7 +47,7 @@ export class Approvals {
    * What the user decided for the session by approval id, which a dprint process that was started
    * again after it exited doesn't know.
    */
-  readonly #sessionDecisions = new Map<string, ApprovalDecision>();
+  readonly #sessionDecisions = new Map<string, SessionDecision>();
   /** Whether what the user answers isn't used anymore (see `cancel`). */
   #isCancelled = false;
 
@@ -172,7 +172,7 @@ export class Approvals {
         const result = await this.#options.approve({ id: approval.id, decision });
         if (result.notice != null) {
           // ex. an "Always" decision that couldn't be stored is still used for the session
-          this.#sessionDecisions.set(approval.id, decision);
+          this.#setSessionDecision(approval, decision);
         }
         pending = result.approvals;
         status = result.status;
@@ -228,8 +228,9 @@ export class Approvals {
    */
   #getSessionDecision(approval: PendingApproval) {
     // an approval of process plugins that were set up since has the id it had before
-    const decision = this.#sessionDecisions.get(approval.id)
-      ?? (approval.idBeforeSetUp == null ? undefined : this.#sessionDecisions.get(approval.idBeforeSetUp));
+    // the one for the id wins over the one for the id it had before (ex. a later denial)
+    const decision = (this.#sessionDecisions.get(approval.id)
+      ?? (approval.idBeforeSetUp == null ? undefined : this.#sessionDecisions.get(approval.idBeforeSetUp)))?.decision;
     if (decision == null || !approval.decisions.some(option => option.id === decision)) {
       return undefined;
     }
@@ -247,8 +248,24 @@ export class Approvals {
   #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
     this.#forgetSessionDecision(approval);
     if (!approval.decisions.find(option => option.id === decision)?.always) {
-      this.#sessionDecisions.set(approval.id, decision);
+      this.#setSessionDecision(approval, decision);
     }
+  }
+
+  /**
+   * Uses the decision for the session, which replaces what was decided before about the process
+   * plugins of the config file (ex. a denial replaces an allow of an earlier configuration of them).
+   */
+  #setSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
+    const configFileKey = `${approval.configFile.uri}\n${approval.configFile.dirUri}`;
+    if (approval.kind === "processPlugins") {
+      for (const [id, existing] of this.#sessionDecisions) {
+        if (existing.kind === "processPlugins" && existing.configFileKey === configFileKey) {
+          this.#sessionDecisions.delete(id);
+        }
+      }
+    }
+    this.#sessionDecisions.set(approval.id, { decision, kind: approval.kind, configFileKey });
   }
 
   /** Forgets what the user decided for the session about the approval, including by the id it had before it was set up. */
@@ -258,6 +275,14 @@ export class Approvals {
       this.#sessionDecisions.delete(approval.idBeforeSetUp);
     }
   }
+}
+
+/** What the user decided for the session about an approval. */
+interface SessionDecision {
+  decision: ApprovalDecision;
+  kind: PendingApproval["kind"];
+  /** The config file the approval is for, by its uri and directory. */
+  configFileKey: string;
 }
 
 /**

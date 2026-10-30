@@ -336,6 +336,19 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }]);
   });
 
+  it("only keeps the most recent decision for the session about the process plugins of a config file", async () => {
+    const { approvals, approved } = createApprovals({ decide: approval => approval.id === "first" ? "allow" : "deny" });
+    await approvals.request([{ ...approval("processPlugins"), id: "first" }], { isExplicit: false });
+    // a denial of another configuration of them replaces the allow
+    await approvals.request([{ ...approval("processPlugins"), id: "second" }], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(
+      await approvals.sendSessionDecisionsAgain([{ ...approval("processPlugins"), id: "first" }]),
+      false,
+    );
+    assert.deepStrictEqual(approved, []);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };
