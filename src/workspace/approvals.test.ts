@@ -288,6 +288,14 @@ describe("Approvals", () => {
     }]);
   });
 
+  it("doesn't ask again about an approval that was asked about before it was set up", async () => {
+    const { approvals, asked } = createApprovals({ decide: () => undefined });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    const setUp = { ...approval("processPlugins"), id: "setUp", idBeforeSetUp: "processPlugins" };
+    assert.strictEqual(await approvals.request([setUp], { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

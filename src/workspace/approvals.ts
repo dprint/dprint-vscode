@@ -137,7 +137,10 @@ export class Approvals {
         decision = undefined;
       }
       if (decision == null) {
-        if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
+        // an approval of process plugins that were set up since was asked about by the id it had before
+        const wasAsked = this.#asked.has(approval.id)
+          || (approval.idBeforeSetUp != null && this.#asked.has(approval.idBeforeSetUp));
+        if (!options.isExplicit && (approval.denied || wasAsked)) {
           // the others are still asked about
           isSkipped = true;
           continue;
