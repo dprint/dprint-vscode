@@ -33,10 +33,13 @@ describe("getServerSupport", () => {
     assert.deepStrictEqual(getServerSupport({ capabilities: {}, serverInfo: { name: "dprint", version: "0.64.0" } }), {
       error: "dprint 0.64.0 doesn't support the dprint methods of its language server.",
       isUnavailable: false,
+      isVersionMismatch: false,
     });
+    // it has the capability, so it's a newer dprint
     assert.deepStrictEqual(getServerSupport({ capabilities: { experimental: { dprint: { versions: [] } } } }), {
       error: "dprint unknown doesn't support the dprint methods of its language server.",
       isUnavailable: false,
+      isVersionMismatch: true,
     });
   });
 

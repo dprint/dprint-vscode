@@ -296,6 +296,46 @@ describe("Approvals", () => {
     assert.deepStrictEqual(asked, ["processPlugins"]);
   });
 
+  it("sends a decision again only once when its approval keeps being pending again", async () => {
+    let sends = 0;
+    const approvals = new Approvals({
+      ask: async () => "allow",
+      approve: async () => {
+        sends++;
+        throw Object.assign(new Error("Changed."), {
+          code: -32803,
+          data: {
+            kind: "approvalChanged",
+            current: { configFile: null, approvals: [approval("download")], status: READY },
+          },
+        });
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    assert.strictEqual(sends, 2);
+  });
+
+  it("doesn't send an allow again for an approval that was denied since", async () => {
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "allow",
+      approve: async params => {
+        approved.push(params);
+        throw Object.assign(new Error("Changed."), {
+          code: -32803,
+          data: {
+            kind: "approvalChanged",
+            current: { configFile: null, approvals: [{ ...approval("download"), denied: true }], status: READY },
+          },
+        });
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

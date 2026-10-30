@@ -501,11 +501,13 @@ export class WorkspaceBackend implements vscode.Disposable {
   #createService(key: string, connection: LspConnection): Service {
     const approvals = new Approvals({
       ask: askApproval,
-      approve: async params => {
+      approve: async (params, options) => {
         const result = await connection.approve(params);
-        // ex. the decision couldn't be stored
-        if (result.notice != null) {
+        // ex. the decision couldn't be stored, which isn't shown when the user didn't do anything
+        if (result.notice != null && !options?.isResent) {
           showSeverityMessage(result.notice);
+        } else if (result.notice != null) {
+          this.#logger.logWarn(result.notice.message);
         }
         return result;
       },
@@ -1751,15 +1753,30 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
   }
 }
 
-/** Asks the user about what dprint needs approved with the message dprint provides. */
 /** The scheme of the read-only documents of what's approved. */
 const APPROVAL_CONFIGURATION_SCHEME = "dprint-approval";
-/** What's approved by the path of its document, which is the approval's id. */
+/** What's approved by the path of its document, which is the approval's id, while it's asked about. */
 const approvalConfigurations = new Map<string, string>();
 
+/** Asks the user about what dprint needs approved with the message dprint provides. */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
   const details = getApprovalDetails(approval);
   const titles = choices.map(choice => choice.title);
+  const documentPath = `/${approval.id}.jsonc`;
+  try {
+    return await askApprovalShowingDetails(approval, choices, titles, details, documentPath);
+  } finally {
+    approvalConfigurations.delete(documentPath);
+  }
+}
+
+async function askApprovalShowingDetails(
+  approval: PendingApproval,
+  choices: ApprovalChoice[],
+  titles: string[],
+  details: string,
+  documentPath: string,
+) {
   while (true) {
     const selection = await vscode.window.showWarningMessage(
       toPlainNotificationText(getApprovalMessage(approval)),
@@ -1770,7 +1787,6 @@ async function askApproval(approval: PendingApproval, choices: ApprovalChoice[])
       return choices.find(choice => choice.title === selection)?.decision;
     }
     // it's asked about again once the user has seen what's approved, which is a read-only document
-    const documentPath = `/${approval.id}.jsonc`;
     approvalConfigurations.set(documentPath, details);
     const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
@@ -1932,7 +1948,6 @@ function toPlainQuickPickText(text: string) {
 
 /** Shows the message to the user like its severity says, which is a warning for one that isn't known. */
 function showSeverityMessage(message: Notice) {
-  // the actions that aren't known are left out
   // the actions that aren't known are left out, and so is opening anything but a file (ex. a website)
   const actions = (message.actions ?? []).filter(
     (action): action is { kind: "openUri"; label: string; uri: string } =>

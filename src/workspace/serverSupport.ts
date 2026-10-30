@@ -35,6 +35,8 @@ export function getServerSupport(result: InitializeResult): { version: string } 
       return {
         error: `dprint ${version} doesn't support the dprint methods of its language server.`,
         isUnavailable: false,
+        // a server with the capability has the methods, so it isn't used with an older protocol
+        isVersionMismatch: capability != null,
       };
     }
     const update = Math.max(...serverVersions) > Math.max(...DPRINT_METHODS_VERSIONS)

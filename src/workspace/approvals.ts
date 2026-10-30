@@ -23,8 +23,11 @@ export interface ApprovalChoice {
 export interface ApprovalsOptions {
   /** Asks the user about the approval, which resolves to undefined when they dismissed it. */
   ask(approval: PendingApproval, choices: ApprovalChoice[]): Promise<ApprovalDecision | undefined>;
-  /** Sends what the user decided to dprint. */
-  approve(params: ApproveParams): Promise<ApproveResult>;
+  /**
+   * Sends what the user decided to dprint, which is sent again without the user doing anything
+   * when `isResent` is true (ex. after dprint was started again).
+   */
+  approve(params: ApproveParams, options?: { isResent?: boolean }): Promise<ApproveResult>;
   /** Gets what needs to be approved for the config file and whether it's used. */
   pendingApprovals(configFile: ConfigFileIdentifier): Promise<ConfigApprovals>;
 }
@@ -75,7 +78,7 @@ export class Approvals {
     let isSent = false;
     const queue = [...pending];
     const sent = new Set<string>();
-    while (queue.length > 0) {
+    while (queue.length > 0 && !this.#isCancelled) {
       const approval = queue.shift()!;
       const decision = sent.has(approval.id) ? undefined : this.#getSessionDecision(approval);
       if (decision == null) {
@@ -83,7 +86,7 @@ export class Approvals {
       }
       sent.add(approval.id);
       try {
-        const result = await this.#options.approve({ id: approval.id, decision });
+        const result = await this.#options.approve({ id: approval.id, decision }, { isResent: true });
         isSent = true;
         // what a decision that was sent again reveals may have a decision for the session too
         queue.push(...result.approvals);
@@ -117,8 +120,10 @@ export class Approvals {
     // whether the config file is used now, which is only known after something was approved
     let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
-    // the decisions to send again for an approval that's pending again after it changed
+    // the decisions to send again for an approval that's pending again after it changed, which is
+    // only done once for an approval
     const decisionsToSendAgain = new Map<string, ApprovalDecision>();
+    const sentAgain = new Set<string>();
     // whether an approval wasn't asked about, so not everything was allowed
     let isSkipped = false;
     while (pending.length > 0) {
@@ -131,8 +136,13 @@ export class Approvals {
       // what the user decided for the session is sent again (ex. to a dprint process that was
       // started again after it exited, which doesn't know it) instead of asking, except that a
       // command asks about what they denied again
-      let decision = decisionsToSendAgain.get(approval.id) ?? this.#getSessionDecision(approval);
+      let decision = decisionsToSendAgain.get(approval.id);
       decisionsToSendAgain.delete(approval.id);
+      if (decision != null && approval.denied && isAllowed(approval, decision)) {
+        // dprint knows it was denied since (ex. in another window), which is newer
+        decision = undefined;
+      }
+      decision ??= this.#getSessionDecision(approval);
       if (options.isExplicit && decision != null && !isAllowed(approval, decision)) {
         decision = undefined;
       }
@@ -181,9 +191,10 @@ export class Approvals {
         }
         // what needs to be approved changed (ex. the config file changed), so the decision wasn't used
         ({ approvals: pending, status } = getChangedResult(err) ?? await this.#options.pendingApprovals(configFile));
-        if (allows && pending.some(other => other.id === approval.id) && !decisionsToSendAgain.has(approval.id)) {
+        if (allows && pending.some(other => other.id === approval.id) && !sentAgain.has(approval.id)) {
           // the same approval is pending again, so the user's decision is sent again once
           askedNow.delete(approval.id);
+          sentAgain.add(approval.id);
           decisionsToSendAgain.set(approval.id, decision);
           continue;
         }
@@ -225,7 +236,7 @@ export class Approvals {
     if (approval.denied) {
       // dprint knows it's denied, which is newer than an allow
       if (isAllowed(approval, decision)) {
-        this.#sessionDecisions.delete(approval.id);
+        this.#forgetSessionDecision(approval);
       }
       return undefined;
     }
@@ -234,10 +245,17 @@ export class Approvals {
 
   /** Remembers what the user decided for the session, which an "Always" decision replaces. */
   #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
-    if (approval.decisions.find(option => option.id === decision)?.always) {
-      this.#sessionDecisions.delete(approval.id);
-    } else {
+    this.#forgetSessionDecision(approval);
+    if (!approval.decisions.find(option => option.id === decision)?.always) {
       this.#sessionDecisions.set(approval.id, decision);
+    }
+  }
+
+  /** Forgets what the user decided for the session about the approval, including by the id it had before it was set up. */
+  #forgetSessionDecision(approval: PendingApproval) {
+    this.#sessionDecisions.delete(approval.id);
+    if (approval.idBeforeSetUp != null) {
+      this.#sessionDecisions.delete(approval.idBeforeSetUp);
     }
   }
 }
@@ -273,8 +291,10 @@ export const SHOW_DETAILS_TITLE = "Show Details";
  * user before they decide.
  */
 export function getApprovalDetails(approval: PendingApproval) {
-  const sections = [`// ${approval.title}\n${approval.message.split("\n").map(line => `// ${line}`).join("\n")}`];
-  sections.push(`// what's approved\n${approval.items.map(item => `// - ${getItemText(item)}`).join("\n")}`);
+  const sections = [`// ${toCommentLine(approval.title)}\n${toCommentLines(approval.message)}`];
+  sections.push(
+    `// what's approved\n${approval.items.map(item => `// - ${toCommentLine(getItemText(item))}`).join("\n")}`,
+  );
   const configurations = approval.items
     .filter(item => item.configuration != null)
     .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
@@ -292,6 +312,16 @@ export function getApprovalDetails(approval: PendingApproval) {
     );
   }
   return sections.join("\n\n");
+}
+
+/** Gets text as lines of comments, which text from a config file can't end (ex. to add a section). */
+function toCommentLines(text: string) {
+  return text.split(/\r\n|[\r\n\u2028\u2029]/).map(line => `// ${line}`).join("\n");
+}
+
+/** Gets text as one line of a comment. */
+function toCommentLine(text: string) {
+  return text.replace(/\r\n|[\r\n\u2028\u2029]/g, " ");
 }
 
 /** Gets the text of an approval's item, which has where it's from. */
