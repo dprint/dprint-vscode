@@ -12,7 +12,7 @@ describe("getServerSupport", () => {
   it("is the version of dprint when the server has the dprint methods", () => {
     assert.deepStrictEqual(
       getServerSupport({
-        capabilities: { experimental: { dprint: { version: 1 } } },
+        capabilities: { experimental: { dprint: { version: 1, versions: [1] } } },
         serverInfo: { name: "dprint", version: "0.65.0" },
       }),
       { version: "0.65.0" },
@@ -22,7 +22,7 @@ describe("getServerSupport", () => {
   it("isn't supported when the server uses a version the extension didn't say it supports", () => {
     assert.strictEqual(
       "error" in getServerSupport({
-        capabilities: { experimental: { dprint: { version: 2 } } },
+        capabilities: { experimental: { dprint: { version: 2, versions: [2] } } },
         serverInfo: { name: "dprint", version: "0.70.0" },
       }),
       true,
@@ -34,7 +34,7 @@ describe("getServerSupport", () => {
       error: "dprint 0.64.0 doesn't support the dprint methods of its language server.",
       isUnavailable: false,
     });
-    assert.deepStrictEqual(getServerSupport({ capabilities: { experimental: { dprint: {} } } }), {
+    assert.deepStrictEqual(getServerSupport({ capabilities: { experimental: { dprint: { versions: [] } } } }), {
       error: "dprint unknown doesn't support the dprint methods of its language server.",
       isUnavailable: false,
     });

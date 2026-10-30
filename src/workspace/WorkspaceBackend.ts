@@ -37,15 +37,25 @@ import { getNoConfigMessage } from "../noConfigMessage";
 import { hasPluginForFile, type PluginFileInfo } from "../pluginFiles";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { type ApprovalChoice, Approvals, getApprovalMessage, toPlainNotificationText } from "./approvals";
+import {
+  type ApprovalChoice,
+  Approvals,
+  getApprovalConfiguration,
+  getApprovalMessage,
+  SHOW_CONFIGURATION_TITLE,
+  toPlainNotificationText,
+} from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type Action,
+  type ConfigApprovals,
   type ConfigFileInfo,
   type ConfigInfoResult,
   type DocumentLanguage,
+  type FormatResult,
+  type FormatStatus,
   getNotFormatted,
   type MessageParams,
   MessageType,
@@ -476,8 +486,16 @@ export class WorkspaceBackend implements vscode.Disposable {
   #createService(key: string, connection: LspConnection): Service {
     const approvals = new Approvals({
       ask: askApproval,
-      approve: params => connection.approve(params),
-      pendingApprovals: configFile => connection.pendingApprovals({ configFile }),
+      approve: async params => {
+        const result = await connection.approve(params);
+        // ex. the decision couldn't be stored
+        if (result.notice != null) {
+          showSeverityMessage(result.notice);
+        }
+        return result;
+      },
+      // it's for one config file
+      pendingApprovals: async configFile => await connection.pendingApprovals({ configFile }) as ConfigApprovals,
     });
     return { key, connection, approvals };
   }
@@ -938,7 +956,7 @@ class WorkspaceState {
     ];
     const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
       label: `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
-        decision.items.join(", ")
+        decision.specifiers.join(", ")
       }`,
       detail: decision.kind === "downloads"
         ? "Downloads"
@@ -947,7 +965,7 @@ class WorkspaceState {
         : decision.kind,
       description: decision.configFile == null
         ? "Every configuration file"
-        : vscode.Uri.parse(decision.configFile).fsPath,
+        : vscode.Uri.parse(decision.configFile.uri).fsPath,
     }));
     if (results.some(result => result.allowProcessPlugins)) {
       items.unshift({ label: "Process plugins are allowed by dprint's settings file (editor.allowProcessPlugins)" });
@@ -973,14 +991,20 @@ class WorkspaceState {
     }
     // each process forgets what was decided for its session, and the stored decisions are shared
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
-      await service.connection.forgetDecisions();
+      const result = await service.connection.forgetDecisions();
       // the user is asked again even about what they were asked about before
       service.approvals.forget();
+      return result.notice;
     }));
     const failure = results.find(result => result.status === "rejected");
+    // ex. the stored decisions couldn't be forgotten, which is the same for each process
+    const notice = results.map(result => result.status === "fulfilled" ? result.value : undefined)
+      .find(notice => notice != null);
     if (failure != null) {
       this.#logger.logError("Error forgetting the approval decisions:", failure.reason);
       vscode.window.showErrorMessage(`dprint failed to forget the approval decisions: ${failure.reason}`);
+    } else if (notice != null) {
+      showSeverityMessage(notice);
     } else {
       vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
     }
@@ -1126,28 +1150,43 @@ class WorkspaceState {
       if (result == null) {
         return { edits: [] }; // cancelled
       }
-      switch (result.kind) {
-        case "formatted":
+      // a kind that's newer than the extension is handled like a result that isn't formatted with
+      // the fields it has (ex. its approvals), or otherwise like a failure that's shown for a command
+      const kind = result.kind === "formatted" || result.kind === "failed" || !("claim" in result)
+        ? result.kind
+        : "notFormatted";
+      switch (kind) {
+        case "formatted": {
+          const formatted = result as Extract<FormatResult, { kind: "formatted" }>;
           this.#logger.logDebug("Response - Formatted:", target.uri);
-          if (result.notice != null) {
+          if (formatted.notice != null) {
             // a command doesn't say anything about it itself
-            this.#onMessage(result.notice, result.configFile, {});
+            this.#onMessage(formatted.notice, formatted.configFile, {});
           }
-          return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
-        case "notFormatted":
-          this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
-          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri);
+          return { edits: formatted.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
+        }
+        case "notFormatted": {
+          const notFormatted = result.kind === "notFormatted" ? result : {
+            ...getNotFormatted(result as FormatStatus)!,
+            kind: "notFormatted" as const,
+            configFile: result.configFile,
+          };
+          this.#logger.logDebug(`Response - Not formatted (${notFormatted.reason}):`, target.uri);
+          this.#onNotFormatted(notFormatted, { ...options, useGlobalConfig }, document.uri);
           // only a document dprint says to claim is asked about when the user didn't run a command
           // (it isn't when what the config file formats isn't known) unless the user chose dprint
           // as the formatter of its language
-          const mayAsk = result.claim || options.saysWhyNotFormatted === true || isDprintDefaultFormatter(document);
-          if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval && mayAsk) {
+          const mayAsk = notFormatted.claim || options.saysWhyNotFormatted === true
+            || isDprintDefaultFormatter(document);
+          if (notFormatted.approvals != null && notFormatted.approvals.length > 0 && !isAfterApproval && mayAsk) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
             // same as choosing to run what its config file says.
-            const approval = this.#requestApproval(service, result.approvals, { isExplicit: false }).catch(err => {
-              this.#logger.logError("Error approving:", err);
-              return false;
-            }).finally(() => this.scheduleRefresh());
+            const approval = this.#requestApproval(service, notFormatted.approvals, { isExplicit: false }).catch(
+              err => {
+                this.#logger.logError("Error approving:", err);
+                return false;
+              },
+            ).finally(() => this.scheduleRefresh());
             if (options.saysWhyNotFormatted) {
               // a command waits on it unless it's cancelled
               if (await waitUnlessCancelled(approval, token)) {
@@ -1160,9 +1199,12 @@ class WorkspaceState {
               });
             }
           }
-          return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
+          return getFormatDocumentResult(notFormatted.reason, notFormatted.message, target.notebookUri != null);
+        }
         default: {
-          // includes the kinds that are newer than the extension, which are only shown for a command
+          // includes the kinds that are newer than the extension without a claim, which are only shown
+          // for a command (VS Code chooses the formatter by the config file's patterns, so a failure's
+          // claim doesn't change which documents dprint formats)
           const failed = result as {
             message?: string;
             show?: ShowPolicy;
@@ -1671,11 +1713,21 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
 
 /** Asks the user about what dprint needs approved with the message dprint provides. */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
-  const selection = await vscode.window.showWarningMessage(
-    toPlainNotificationText(getApprovalMessage(approval)),
-    ...choices.map(choice => choice.title),
-  );
-  return choices.find(choice => choice.title === selection)?.decision;
+  const configuration = getApprovalConfiguration(approval);
+  const titles = choices.map(choice => choice.title);
+  while (true) {
+    const selection = await vscode.window.showWarningMessage(
+      toPlainNotificationText(getApprovalMessage(approval)),
+      ...titles,
+      ...(configuration == null ? [] : [SHOW_CONFIGURATION_TITLE]),
+    );
+    if (selection !== SHOW_CONFIGURATION_TITLE || configuration == null) {
+      return choices.find(choice => choice.title === selection)?.decision;
+    }
+    // it's asked about again once the user has seen what they run with
+    const document = await vscode.workspace.openTextDocument({ language: "jsonc", content: configuration });
+    await vscode.window.showTextDocument(document, { preview: true });
+  }
 }
 
 /** Gets the settings to send to dprint. */
@@ -1830,16 +1882,16 @@ function getFileChangeType(type: ConfigFileChangeType) {
 function showSeverityMessage(message: Notice) {
   // the actions that aren't known are left out
   const actions = (message.actions ?? []).filter(
-    (action): action is { kind: "openUri"; title: string; uri: string } => action.kind === "openUri",
+    (action): action is { kind: "openUri"; label: string; uri: string } => action.kind === "openUri",
   );
-  const titles = actions.map(action => action.title);
+  const titles = actions.map(action => action.label);
   const show = message.severity === "error"
     ? vscode.window.showErrorMessage
     : message.severity === "info"
     ? vscode.window.showInformationMessage
     : vscode.window.showWarningMessage;
   show(toPlainNotificationText(message.message), ...titles).then(selection => {
-    const action = actions.find(action => action.title === selection);
+    const action = actions.find(action => action.label === selection);
     if (action != null) {
       vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(action.uri));
     }

@@ -73,5 +73,8 @@ function plugin(): PluginInfo {
     configKey: "test",
     fileExtensions: ["ts"],
     fileNames: [],
+    additive: false,
+    rangeFormatting: "supported",
+    helpUrl: "https://dprint.dev/plugins/test",
   };
 }

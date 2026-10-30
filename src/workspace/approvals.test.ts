@@ -4,6 +4,7 @@ import {
   type ApprovalChoice,
   Approvals,
   getApprovalChoices,
+  getApprovalConfiguration,
   getApprovalMessage,
   toPlainNotificationText,
 } from "./approvals";
@@ -71,7 +72,7 @@ describe("Approvals", () => {
     let decide!: (decision: ApprovalDecision) => void;
     const asked: string[] = [];
     const approvals = new Approvals({
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       ask: pending => {
         asked.push(pending.id);
         return new Promise(resolve => decide = resolve);
@@ -89,21 +90,21 @@ describe("Approvals", () => {
 
   it("rejects when approving fails and it's still pending", async () => {
     const approvals = new Approvals({
-      pendingApprovals: async () => ({ approvals: [approval("download")] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [approval("download")], status: READY }),
       ask: async () => "allow",
       approve: () => Promise.reject(new Error("Failed.")),
     });
     await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Failed/);
     // the decision was used when it isn't pending anymore (ex. only the response was lost)
     const used = new Approvals({
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       ask: async () => "allow",
       approve: () => Promise.reject(new Error("Failed.")),
     });
     assert.strictEqual(await used.request([approval("download")], { isExplicit: false }), true);
     // a denial that fails is said
     const denied = new Approvals({
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       ask: async () => "deny",
       approve: () => Promise.reject(new Error("Failed.")),
     });
@@ -115,13 +116,13 @@ describe("Approvals", () => {
     const allowed = new Approvals({
       ask: async () => "allow",
       approve: () => Promise.reject(changedError),
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
     assert.strictEqual(await allowed.request([approval("download")], { isExplicit: false }), true);
     const denied = new Approvals({
       ask: async () => "deny",
       approve: () => Promise.reject(changedError),
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
     assert.strictEqual(await denied.request([approval("download")], { isExplicit: false }), false);
   });
@@ -130,11 +131,11 @@ describe("Approvals", () => {
     const changed = approval("changed");
     const changedError = Object.assign(new Error("Changed."), {
       code: -32803,
-      data: { kind: "approvalChanged", approvals: [changed] },
+      data: { kind: "approvalChanged", current: { configFile: null, approvals: [changed], status: READY } },
     });
     const asked: string[] = [];
     const approvals = new Approvals({
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       ask: async pending => {
         asked.push(pending.id);
         return "allow";
@@ -168,7 +169,9 @@ describe("Approvals", () => {
       },
       // dprint only provides what's pending for the config file
       pendingApprovals: async configFile => ({
+        configFile: null,
         approvals: [other, changed].filter(a => a.configFile.uri === configFile.uri),
+        status: READY,
       }),
     });
     const download = { ...approval("download"), configFile: configFile("file:///dprint.json") };
@@ -217,7 +220,7 @@ describe("Approvals", () => {
         }
         return { configFile: null, approvals: [], status: READY };
       },
-      pendingApprovals: async () => ({ approvals: [pending] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [pending], status: READY }),
     });
     const download = { ...approval("download"), configFile: configFile("file:///dprint.json") };
     assert.strictEqual(await approvals.request([download], { isExplicit: false }), true);
@@ -238,10 +241,10 @@ describe("Approvals", () => {
         approved.push(params);
         throw Object.assign(new Error("Changed."), {
           code: -32803,
-          data: { kind: "approvalChanged", approvals: [replacement] },
+          data: { kind: "approvalChanged", current: { configFile: null, approvals: [replacement], status: READY } },
         });
       },
-      pendingApprovals: async () => ({ approvals: [] }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
     assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
@@ -277,12 +280,12 @@ describe("Approvals", () => {
           if (params.id === "processPlugins") {
             throw Object.assign(new Error("Changed."), {
               code: -32803,
-              data: { kind: "approvalChanged", approvals: [replacement] },
+              data: { kind: "approvalChanged", current: { configFile: null, approvals: [replacement], status: READY } },
             });
           }
           return { configFile: null, approvals: [], status: READY };
         },
-        pendingApprovals: async () => ({ approvals: [] }),
+        pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       });
     assert.strictEqual(await create("deny").request([approval("processPlugins")], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }, {
@@ -311,27 +314,13 @@ describe("Approvals", () => {
 });
 
 describe("getApprovalMessage", () => {
-  it("has what the process plugins run with", () => {
-    assert.strictEqual(getApprovalMessage(approval("download")), "Approve download?");
-    const processPlugins = approval("processPlugins");
-    processPlugins.items[0] = {
-      ...processPlugins.items[0],
-      plugin: { name: "dprint-plugin-exec", version: "0.5.0", configKey: "exec" },
-      configuration: { commands: [{ command: "a" }] },
-    };
-    assert.strictEqual(
-      getApprovalMessage(processPlugins),
-      "Approve processPlugins? They run with this configuration: {\"exec\":{\"commands\":[{\"command\":\"a\"}]}}",
-    );
+  it("has the config file", () => {
+    assert.match(getApprovalMessage(approval("download")), /^Approve download\? Configuration file: .*dprint\.json$/);
   });
 
-  it("has what the process plugins that weren't set up run with", () => {
+  it("says how to see what the process plugins run with", () => {
     const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
-    assert.strictEqual(
-      getApprovalMessage(processPlugins),
-      "Approve processPlugins? The plugins that weren't set up before run with this configuration: "
-        + "{\"exec\":{\"commands\":[]}}",
-    );
+    assert.match(getApprovalMessage(processPlugins), /Choose "Show Configuration" to see what they run with\.$/);
   });
 
   it("says when the config file is outside the workspace", () => {
@@ -347,7 +336,33 @@ describe("getApprovalMessage", () => {
     download.decisions = download.decisions.map(option =>
       option.id === "allow" ? { ...option, description: "Downloads it." } : option
     );
-    assert.strictEqual(getApprovalMessage(download), "Approve download? (allow: Downloads it.)");
+    assert.match(getApprovalMessage(download), / \(allow: Downloads it\.\)$/);
+  });
+});
+
+describe("getApprovalConfiguration", () => {
+  it("has what the process plugins run with", () => {
+    assert.strictEqual(getApprovalConfiguration(approval("download")), undefined);
+    const processPlugins = approval("processPlugins");
+    processPlugins.items[0] = {
+      ...processPlugins.items[0],
+      plugin: { name: "dprint-plugin-exec", version: "0.5.0", configKey: "exec" },
+      configuration: { commands: [{ command: "a" }] },
+    };
+    assert.strictEqual(
+      getApprovalConfiguration(processPlugins),
+      "// what the process plugins run with\n"
+        + JSON.stringify({ exec: { commands: [{ command: "a" }] } }, undefined, 2),
+    );
+  });
+
+  it("has what the process plugins that weren't set up run with", () => {
+    const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
+    assert.strictEqual(
+      getApprovalConfiguration(processPlugins),
+      "// what the process plugins that weren't set up before run with\n"
+        + JSON.stringify({ exec: { commands: [] } }, undefined, 2),
+    );
   });
 });
 
@@ -418,7 +433,7 @@ function createApprovals(options: {
   const asked: string[] = [];
   const approved: ApproveParams[] = [];
   const approvals = new Approvals({
-    pendingApprovals: async () => ({ approvals: [] }),
+    pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     ask: async (pending, choices) => {
       asked.push(pending.id);
       return options.decide(pending, choices);

@@ -473,7 +473,7 @@ const INITIALIZE_PARAMS: ClientInitializeParams = {
 };
 
 const SUPPORTED_RESULT: InitializeResult = {
-  capabilities: { experimental: { dprint: { version: 1 } } },
+  capabilities: { experimental: { dprint: { version: 1, versions: [1] } } },
   serverInfo: { name: "dprint", version: "0.65.0" },
 };
 

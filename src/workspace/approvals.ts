@@ -4,11 +4,11 @@ import {
   type ApprovalDecision,
   type ApproveParams,
   type ApproveResult,
+  type ConfigApprovals,
   type ConfigFileIdentifier,
   type ErrorData,
   type FormatStatus,
   type PendingApproval,
-  type PendingApprovalsResult,
 } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -25,7 +25,7 @@ export interface ApprovalsOptions {
   /** Sends what the user decided to dprint. */
   approve(params: ApproveParams): Promise<ApproveResult>;
   /** Gets what needs to be approved for the config file and whether it's used. */
-  pendingApprovals(configFile: ConfigFileIdentifier): Promise<PendingApprovalsResult>;
+  pendingApprovals(configFile: ConfigFileIdentifier): Promise<ConfigApprovals>;
 }
 
 /**
@@ -180,20 +180,13 @@ export class Approvals {
  */
 export function getApprovalMessage(approval: PendingApproval) {
   let message = approval.message;
-  if (!approval.configFile.inWorkspace) {
-    message += ` The configuration file is outside the workspace: ${getDisplayPath(approval.configFile.uri)}`;
-  }
-  const configurations = approval.items
-    .filter(item => item.configuration != null)
-    .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
-  if (configurations.length > 0) {
-    message += ` They run with this configuration: ${JSON.stringify(Object.fromEntries(configurations))}`;
-  }
-  // what a process plugin that wasn't set up before runs with, which includes what the config file extends
-  if (approval.trustedConfiguration != null) {
-    message += ` The plugins that weren't set up before run with this configuration: ${
-      JSON.stringify(approval.trustedConfiguration)
-    }`;
+  const configFilePath = getDisplayPath(approval.configFile.uri);
+  message += approval.configFile.inWorkspace
+    ? ` Configuration file: ${configFilePath}`
+    : ` The configuration file is outside the workspace: ${configFilePath}`;
+  // a notification is cut off after 1000 characters, so what they run with is shown on its own
+  if (getApprovalConfiguration(approval) != null) {
+    message += ` Choose "${SHOW_CONFIGURATION_TITLE}" to see what they run with.`;
   }
   // the descriptions of the decisions, which can't be tooltips of the buttons
   const descriptions = approval.decisions
@@ -203,6 +196,34 @@ export function getApprovalMessage(approval: PendingApproval) {
     message += ` (${descriptions.join(" ")})`;
   }
   return message;
+}
+
+/** The title of the button that shows what the process plugins of an approval run with. */
+export const SHOW_CONFIGURATION_TITLE = "Show Configuration";
+
+/**
+ * Gets what the process plugins of the approval run with as text to show the user before they
+ * decide, which is undefined when there's nothing to show.
+ */
+export function getApprovalConfiguration(approval: PendingApproval) {
+  const configurations = approval.items
+    .filter(item => item.configuration != null)
+    .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
+  const sections: string[] = [];
+  if (configurations.length > 0) {
+    sections.push(
+      `// what the process plugins run with\n${JSON.stringify(Object.fromEntries(configurations), undefined, 2)}`,
+    );
+  }
+  // what a process plugin that wasn't set up before runs with, which includes what the config file extends
+  if (approval.trustedConfiguration != null) {
+    sections.push(
+      `// what the process plugins that weren't set up before run with\n${
+        JSON.stringify(approval.trustedConfiguration, undefined, 2)
+      }`,
+    );
+  }
+  return sections.length === 0 ? undefined : sections.join("\n\n");
 }
 
 /**
@@ -239,11 +260,12 @@ function isApprovalChangedError(err: unknown) {
 }
 
 /** Gets what needs to be approved now from the error for an approval that isn't pending anymore. */
-function getChangedResult(err: unknown): { approvals: PendingApproval[]; status?: FormatStatus } | undefined {
+function getChangedResult(err: unknown): ConfigApprovals | undefined {
   const data = typeof err === "object" && err != null && "data" in err ? err.data as ErrorData | undefined : undefined;
-  return data?.kind === "approvalChanged" && "approvals" in data && Array.isArray(data.approvals)
-    ? { approvals: data.approvals, status: "status" in data ? data.status as FormatStatus | undefined : undefined }
+  const current = data?.kind === "approvalChanged" && "current" in data
+    ? data.current as ConfigApprovals | undefined
     : undefined;
+  return current != null && Array.isArray(current.approvals) ? current : undefined;
 }
 
 /** Gets if the decision allows the approval, which dprint says for a decision the extension doesn't know. */
