@@ -156,7 +156,7 @@ export class Approvals {
       if (decision == null) {
         // an approval of process plugins that were set up since was asked about by the id it had before
         const wasAsked = this.#asked.has(approval.id)
-          || (approval.idBeforeSetUp != null && this.#asked.has(approval.idBeforeSetUp));
+          || getPreviousIds(approval).some(id => this.#asked.has(id));
         if (!options.isExplicit && (approval.denied || wasAsked)) {
           // the others are still asked about
           isSkipped = true;
@@ -238,10 +238,11 @@ export class Approvals {
    * which isn't an allow that the user denied since (ex. with "Always Deny" in another window).
    */
   #getSessionDecision(approval: PendingApproval) {
-    // an approval of process plugins that were set up since has the id it had before
-    // the one for the id wins over the one for the id it had before (ex. a later denial)
-    const decision = (this.#sessionDecisions.get(approval.id)
-      ?? (approval.idBeforeSetUp == null ? undefined : this.#sessionDecisions.get(approval.idBeforeSetUp)))?.decision;
+    // an approval may have had other ids before (ex. before its process plugins were set up),
+    // where the one for its id wins and then the earlier ones in order
+    const decision = [approval.id, ...getPreviousIds(approval)]
+      .map(id => this.#sessionDecisions.get(id))
+      .find(decision => decision != null)?.decision;
     if (decision == null || !approval.decisions.some(option => option.id === decision)) {
       return undefined;
     }
@@ -264,26 +265,22 @@ export class Approvals {
   }
 
   /**
-   * Uses the decision for the session, which replaces what was decided before about the process
-   * plugins of the config file (ex. a denial replaces an allow of an earlier configuration of them).
+   * Uses the decision for the session, which replaces what was decided before in its group (ex. a
+   * denial replaces an allow of an earlier configuration of a config file's process plugins).
    */
   #setSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
-    const configFileKey = `${approval.configFile.uri}\n${approval.configFile.dirUri}`;
-    if (approval.kind === "processPlugins") {
-      for (const [id, existing] of this.#sessionDecisions) {
-        if (existing.kind === "processPlugins" && existing.configFileKey === configFileKey) {
-          this.#sessionDecisions.delete(id);
-        }
+    for (const [id, existing] of this.#sessionDecisions) {
+      if (existing.decisionGroup === approval.decisionGroup) {
+        this.#sessionDecisions.delete(id);
       }
     }
-    this.#sessionDecisions.set(approval.id, { decision, kind: approval.kind, configFileKey });
+    this.#sessionDecisions.set(approval.id, { decision, decisionGroup: approval.decisionGroup });
   }
 
-  /** Forgets what the user decided for the session about the approval, including by the id it had before it was set up. */
+  /** Forgets what the user decided for the session about the approval, including by its earlier ids. */
   #forgetSessionDecision(approval: PendingApproval) {
-    this.#sessionDecisions.delete(approval.id);
-    if (approval.idBeforeSetUp != null) {
-      this.#sessionDecisions.delete(approval.idBeforeSetUp);
+    for (const id of [approval.id, ...getPreviousIds(approval)]) {
+      this.#sessionDecisions.delete(id);
     }
   }
 }
@@ -291,9 +288,8 @@ export class Approvals {
 /** What the user decided for the session about an approval. */
 interface SessionDecision {
   decision: ApprovalDecision;
-  kind: PendingApproval["kind"];
-  /** The config file the approval is for, by its uri and directory. */
-  configFileKey: string;
+  /** The decisions it replaces have the same group. */
+  decisionGroup: string;
 }
 
 /**
@@ -358,6 +354,11 @@ function toCommentLines(text: string) {
 /** Gets text as one line of a comment. */
 function toCommentLine(text: string) {
   return text.replace(/\r\n|[\r\n\u2028\u2029]/g, " ");
+}
+
+/** Gets the earlier ids of the approval, which are like its id. */
+function getPreviousIds(approval: PendingApproval) {
+  return approval.previousIds ?? [];
 }
 
 /** Gets the text of an approval's item, which has where it's from. */

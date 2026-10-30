@@ -268,7 +268,7 @@ describe("Approvals", () => {
     const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
     await approvals.request([approval("processPlugins")], { isExplicit: false });
     approved.length = 0;
-    const setUp = { ...approval("processPlugins"), id: "setUp", idBeforeSetUp: "processPlugins" };
+    const setUp = { ...approval("processPlugins"), id: "setUp", previousIds: ["processPlugins"] };
     assert.strictEqual(await approvals.sendSessionDecisionsAgain([setUp]), true);
     assert.deepStrictEqual(approved, [{ id: "setUp", decision: "allow" }]);
     assert.deepStrictEqual(asked, ["processPlugins"]);
@@ -291,7 +291,7 @@ describe("Approvals", () => {
   it("doesn't ask again about an approval that was asked about before it was set up", async () => {
     const { approvals, asked } = createApprovals({ decide: () => undefined });
     await approvals.request([approval("processPlugins")], { isExplicit: false });
-    const setUp = { ...approval("processPlugins"), id: "setUp", idBeforeSetUp: "processPlugins" };
+    const setUp = { ...approval("processPlugins"), id: "setUp", previousIds: ["processPlugins"] };
     assert.strictEqual(await approvals.request([setUp], { isExplicit: false }), false);
     assert.deepStrictEqual(asked, ["processPlugins"]);
   });
@@ -623,6 +623,8 @@ function approval(id: string): PendingApproval {
     id,
     kind: isProcessPlugins ? "processPlugins" : "downloads",
     title: id,
+    // the process plugins of a config file are one group, and a download is its own
+    decisionGroup: isProcessPlugins ? "processPlugins:file:///dprint.json" : id,
     configFile: configFile("file:///dprint.json"),
     items: [{ specifier: `https://example.com/${id}`, kind: "plugin" }],
     decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
