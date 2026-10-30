@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -39,7 +40,7 @@ import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
 import { type ApprovalChoice, Approvals, getApprovalMessage } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
-import { getFormatDocumentResult, getProviderEdits, isFormatError, ShownConfigErrors } from "./formatResults";
+import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type ConfigInfoResult,
@@ -51,6 +52,7 @@ import {
   type NotFormattedResult,
   type PendingApproval,
   type PublishDiagnosticsParams,
+  type ShowPolicy,
   type TextRange,
   type WorkspaceFolder,
 } from "./messages";
@@ -419,7 +421,7 @@ export class WorkspaceBackend implements vscode.Disposable {
           this.#state?.refreshSchema();
           return;
         }
-        // an error that's still there is shown again
+        // an error that's still there is shown again, which is by the canonical path dprint provides
         if (params.uri == null) {
           this.#session.shownConfigErrors.clear();
         } else {
@@ -863,7 +865,7 @@ class WorkspaceState {
         this.#logger.logError("Error approving:", err);
       }
     }
-    // dprint says when a config file formats files once something's allowed, but not when it's denied
+    // what the config files format may have changed once dprint responded
     this.scheduleRefresh();
   }
 
@@ -1026,9 +1028,9 @@ class WorkspaceState {
           }
           return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
         default: {
-          // includes the kinds that are newer than the extension
-          const failed = result as { reason?: string; message?: string };
-          this.#onFormatFailed(failed.reason ?? "pluginError", failed.message ?? "Formatting failed.");
+          // includes the kinds that are newer than the extension, which are only shown for a command
+          const failed = result as { message?: string; show?: ShowPolicy };
+          this.#onFormatFailed(failed.message ?? "Formatting failed.", failed.show ?? "command");
           return { notFormattedReason: "failed" };
         }
       }
@@ -1100,13 +1102,29 @@ class WorkspaceState {
           }, documentUri);
         }
         break;
-      case "configDiagnostics":
-      case "configError": {
-        const message = result.message ?? "The configuration file failed to resolve.";
-        this.#logger.logError(message);
+      default: {
+        if (result.message == null || options.saysWhyNotFormatted) {
+          break;
+        }
         // dprint doesn't show these to the user because only the extension knows that the user formatted
-        if (!options.saysWhyNotFormatted && this.#session.shownConfigErrors.shouldShow(configFilePath, message)) {
-          vscode.window.showErrorMessage(message);
+        switch (result.show) {
+          case "always":
+            this.#logger.logError(result.message);
+            vscode.window.showErrorMessage(result.message);
+            break;
+          case "oncePerConfigFile": {
+            this.#logger.logError(result.message);
+            // the errors are forgotten by the canonical path that dprint says changed
+            const key = configFilePath == null ? undefined : getCanonicalPath(configFilePath);
+            if (this.#session.shownConfigErrors.shouldShow(key, result.message)) {
+              vscode.window.showErrorMessage(result.message);
+            }
+            break;
+          }
+          default:
+            // only for a command, which says why itself
+            this.#logger.logInfo(result.message);
+            break;
         }
         break;
       }
@@ -1144,10 +1162,10 @@ class WorkspaceState {
     });
   }
 
-  #onFormatFailed(reason: string, message: string) {
-    // a syntax error isn't shown because a format usually happens without the user doing anything
-    // (ex. on save) and the editor already shows it
-    if (isFormatError(reason)) {
+  #onFormatFailed(message: string, show: ShowPolicy) {
+    // ex. a syntax error isn't shown because a format usually happens without the user doing
+    // anything (ex. on save) and the editor already shows it
+    if (show !== "always") {
       this.#logger.logWarn("Error formatting text:", message);
       return;
     }
@@ -1612,5 +1630,17 @@ function getFileChangeType(type: ConfigFileChangeType) {
       return FileChangeType.Changed;
     case "deleted":
       return FileChangeType.Deleted;
+  }
+}
+
+/**
+ * Gets the path with its symlinks resolved like the paths dprint provides, which is the path when it
+ * can't be. It's normalized like the `fsPath` of a uri (ex. the case of a drive letter).
+ */
+function getCanonicalPath(filePath: string) {
+  try {
+    return vscode.Uri.file(fs.realpathSync.native(filePath)).fsPath;
+  } catch {
+    return vscode.Uri.file(filePath).fsPath;
   }
 }

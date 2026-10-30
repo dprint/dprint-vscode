@@ -28,8 +28,15 @@ export interface ClientInitializeParams {
 
 /** The parts of the initialize result that are used. */
 export interface InitializeResult {
-  capabilities: { experimental?: { dprint?: { version?: number } } };
+  capabilities: { experimental?: { dprint?: ServerCapability } };
   serverInfo?: { name: string; version?: string };
+}
+
+/** The `dprint` experimental capability of the server. */
+export interface ServerCapability {
+  version?: number;
+  /** Where dprint's own files are, which are left out when their directory can't be found. */
+  files?: { settings?: string; approvals?: string; globalConfig?: string };
 }
 
 export interface WorkspaceFolder {
@@ -59,7 +66,7 @@ export type GlobalConfigUse = "whenNoConfigFile" | "never";
 
 export interface DocumentLanguage {
   id: string;
-  /** The file extensions of the language with the leading period (ex. ".ts"). */
+  /** The file extensions of the language, with or without the leading period (ex. ".ts"). */
   fileExtensions?: string[];
   /** The file names of the language (ex. "Dockerfile"). */
   fileNames?: string[];
@@ -77,7 +84,7 @@ export type FormatResult =
   /** The edits of the text that was sent, which are empty when it's already formatted. */
   | { kind: "formatted"; edits: TextEdit[] }
   | NotFormattedResult
-  | { kind: "failed"; reason: FormatFailedReason; message: string; plugin?: FilePlugin };
+  | { kind: "failed"; reason: FormatFailedReason; message: string; show: ShowPolicy; plugin?: FilePlugin };
 
 export interface NotFormattedResult extends NotFormatted {
   kind: "notFormatted";
@@ -88,9 +95,19 @@ export interface NotFormatted {
   reason: NotFormattedReason;
   /** The message to show the user about why the file wasn't formatted (ex. for a command the user ran). */
   message?: string;
+  /** When to show the message. */
+  show: ShowPolicy;
+  /** Whether to keep acting as the document's formatter so the user is told why it isn't formatted. */
+  claim: boolean;
   /** What the user needs to approve for the file to be formatted. */
   approvals?: PendingApproval[];
 }
+
+/**
+ * When to show a message for a request the user made (ex. a format on save or a command), which
+ * may be a value that's newer than the extension that's handled like "command".
+ */
+export type ShowPolicy = "always" | "command" | "oncePerConfigFile" | (string & {});
 
 /** Whether a document or the documents of a config file are formatted, which may be a kind that's newer than the extension. */
 export type FormatStatus = { kind: "ready" } | ({ kind: "notFormatted" } & NotFormatted) | { kind: string & {} };
@@ -112,6 +129,8 @@ export type NotFormattedReason =
   | "unsupportedDocument"
   /** The document isn't a file, so its language is needed. */
   | "languageRequired"
+  /** The config file that was asked about doesn't exist (ex. it was deleted). */
+  | "configFileNotFound"
   | (string & {});
 
 /**
@@ -126,7 +145,7 @@ export interface PendingApproval {
   id: string;
   kind: ApprovalKind;
   /** The config file that needs it. */
-  configFile?: string;
+  configFile?: ConfigFileInfo;
   /** What's downloaded or run. */
   items: ApprovalItem[];
   /** The decisions the user can make in the order to show them. */
@@ -159,6 +178,10 @@ export interface ApprovalDecisionOption {
   id: ApprovalDecision;
   /** What to show the user, which is for a decision the extension doesn't know. */
   label: string;
+  /** Whether it allows what's approved, which is otherwise denied. */
+  allows: boolean;
+  /** Whether it's remembered after dprint stops, which is otherwise only for the session. */
+  always: boolean;
 }
 
 export interface ApproveParams {
@@ -168,10 +191,12 @@ export interface ApproveParams {
 
 export interface ApproveResult {
   /**
-   * What needs to be approved now for the config file, which is empty only when it's ready. It has
+   * What needs to be approved now for the config file, which is empty when nothing does. It has
    * what was denied when the decision was to deny it.
    */
   approvals: PendingApproval[];
+  /** Whether the config file is used now, which isn't ready when it has an error or was deleted. */
+  status: FormatStatus;
 }
 
 /** The data of an error, which may be a kind that's newer than the extension. */
@@ -214,7 +239,8 @@ export interface ConfigFileInfo {
 
 /** Either the config file itself or a document it's used for, and not both. */
 export interface ConfigParams extends Partial<DocumentParams> {
-  configFile?: { uri: string };
+  /** The config file, with the directory it's used for when it's the global config file. */
+  configFile?: { uri: string; dirUri?: string };
 }
 
 export interface ConfigInfoResult {
@@ -261,8 +287,10 @@ export interface ConfigSchemaResult {
 }
 
 export interface ConfigChangedParams {
-  /** The config file, which is every config file when it's not provided (ex. dprint's settings file changed). */
+  /** The canonical path of the config file, which is every config file when it's not provided. */
   uri?: string;
+  /** The directory the global config file changed for. */
+  dirUri?: string;
   reason?: "created" | "changed" | "deleted" | (string & {});
   /** What changed, which is anything when it's not provided. */
   changes?: ("schema" | (string & {}))[];
@@ -330,7 +358,7 @@ export function getNotFormatted(status: FormatStatus): NotFormatted | undefined 
     return status as NotFormatted;
   }
   // a kind that's newer than the extension
-  return { reason: "notMatched" };
+  return { reason: "notMatched", show: "command", claim: false };
 }
 
 /** Gets what needs to be approved for the status. */

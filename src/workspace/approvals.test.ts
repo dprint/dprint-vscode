@@ -1,7 +1,9 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
 import { type ApprovalChoice, Approvals, getApprovalChoices, getApprovalMessage } from "./approvals";
-import type { ApprovalDecision, ApproveParams, PendingApproval } from "./messages";
+import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
+
+const READY: FormatStatus = { kind: "ready" };
 
 describe("Approvals", () => {
   it("asks about the approval and what else needs to be approved after it", async () => {
@@ -68,7 +70,7 @@ describe("Approvals", () => {
         asked.push(pending.id);
         return new Promise(resolve => decide = resolve);
       },
-      approve: async () => ({ approvals: [] }),
+      approve: async () => ({ approvals: [], status: READY }),
     });
 
     const first = approvals.request([approval("download")], { isExplicit: false });
@@ -89,7 +91,7 @@ describe("Approvals", () => {
   });
 
   it("formats again when what needs to be approved changed", async () => {
-    const changedError = Object.assign(new Error("Changed."), { code: -32001 });
+    const changedError = Object.assign(new Error("Changed."), { code: -32001, data: { kind: "approvalChanged" } });
     const allowed = new Approvals({
       ask: async () => "allow",
       approve: () => Promise.reject(changedError),
@@ -121,7 +123,7 @@ describe("Approvals", () => {
         if (params.id === "download") {
           throw changedError;
         }
-        return { approvals: [] };
+        return { approvals: [], status: READY };
       },
     });
     assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), true);
@@ -129,9 +131,9 @@ describe("Approvals", () => {
   });
 
   it("asks about what's pending for the config file when what needs to be approved changed", async () => {
-    const changedError = Object.assign(new Error("Changed."), { code: -32001 });
-    const changed = { ...approval("changed"), configFile: "file:///dprint.json" };
-    const other = { ...approval("other"), configFile: "file:///other/dprint.json" };
+    const changedError = Object.assign(new Error("Changed."), { code: -32001, data: { kind: "approvalChanged" } });
+    const changed = { ...approval("changed"), configFile: configFile("file:///dprint.json") };
+    const other = { ...approval("other"), configFile: configFile("file:///other/dprint.json") };
     const asked: string[] = [];
     const approvals = new Approvals({
       ask: async pending => {
@@ -142,13 +144,55 @@ describe("Approvals", () => {
         if (params.id === "download") {
           throw changedError;
         }
-        return { approvals: [] };
+        return { approvals: [], status: READY };
       },
       pendingApprovals: async () => [other, changed],
     });
-    const download = { ...approval("download"), configFile: "file:///dprint.json" };
+    const download = { ...approval("download"), configFile: configFile("file:///dprint.json") };
     assert.strictEqual(await approvals.request([download], { isExplicit: false }), true);
     assert.deepStrictEqual(asked, ["download", "changed"]);
+  });
+
+  it("is false when the config file isn't used after it's allowed", async () => {
+    // ex. it has an error
+    const { approvals } = createApprovals({
+      decide: () => "allow",
+      statusAfter: { kind: "notFormatted", reason: "configError", show: "oncePerConfigFile", claim: true },
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+  });
+
+  it("uses whether a decision that's newer than the extension allows it", async () => {
+    const download = approval("download");
+    download.decisions.push({ id: "trustDomain", label: "Trust the domain", allows: true, always: true });
+    download.decisions.push({ id: "block", label: "Block", allows: false, always: true });
+    const allowed = createApprovals({ decide: () => "trustDomain" });
+    assert.strictEqual(await allowed.approvals.request([download], { isExplicit: false }), true);
+    const denied = createApprovals({ decide: () => "block" });
+    assert.strictEqual(await denied.approvals.request([download], { isExplicit: false }), false);
+  });
+
+  it("gets what's pending again when approving fails with an error that isn't known", async () => {
+    // ex. a language client library's own error with the same code
+    const otherError = Object.assign(new Error("Other."), { code: -32001 });
+    const pending = { ...approval("processPlugins"), configFile: configFile("file:///dprint.json") };
+    const asked: string[] = [];
+    const approvals = new Approvals({
+      ask: async approval => {
+        asked.push(approval.id);
+        return "allow";
+      },
+      approve: async params => {
+        if (params.id === "download") {
+          throw otherError;
+        }
+        return { approvals: [], status: READY };
+      },
+      pendingApprovals: async () => [pending],
+    });
+    const download = { ...approval("download"), configFile: configFile("file:///dprint.json") };
+    assert.strictEqual(await approvals.request([download], { isExplicit: false }), true);
+    assert.deepStrictEqual(asked, ["download", "processPlugins"]);
   });
 
   it("doesn't ask about a denied approval after allowing one unless the user asks for it", async () => {
@@ -181,17 +225,26 @@ describe("getApprovalMessage", () => {
 describe("getApprovalChoices", () => {
   it("offers the decisions dprint says the approval has", () => {
     assert.deepStrictEqual(
-      getApprovalChoices({ decisions: [{ id: "allow", label: "Allow" }, { id: "deny", label: "Deny" }] }).map(
+      getApprovalChoices({
+        decisions: [{ id: "allow", label: "Allow", allows: true, always: false }, {
+          id: "deny",
+          label: "Deny",
+          allows: false,
+          always: false,
+        }],
+      }).map(
         choice => [choice.title, choice.decision],
       ),
       [["Allow", "allow"], ["Deny", "deny"]],
     );
     assert.deepStrictEqual(
       getApprovalChoices({
-        decisions: [{ id: "allow", label: "Allow" }, { id: "alwaysAllow", label: "Always Allow" }, {
-          id: "deny",
-          label: "Deny",
-        }, { id: "alwaysDeny", label: "Always Deny" }],
+        decisions: [
+          { id: "allow", label: "Allow", allows: true, always: false },
+          { id: "alwaysAllow", label: "Always Allow", allows: true, always: true },
+          { id: "deny", label: "Deny", allows: false, always: false },
+          { id: "alwaysDeny", label: "Always Deny", allows: false, always: true },
+        ],
       }).map(choice => [
         choice.title,
         choice.decision,
@@ -203,10 +256,12 @@ describe("getApprovalChoices", () => {
   it("shows a decision that's newer than the extension with its label", () => {
     assert.deepStrictEqual(
       getApprovalChoices({
-        decisions: [{ id: "allow", label: "Allow" }, { id: "trustDomain", label: "Trust the domain" }, {
-          id: "deny",
-          label: "Deny",
-        }],
+        decisions: [{ id: "allow", label: "Allow", allows: true, always: false }, {
+          id: "trustDomain",
+          label: "Trust the domain",
+          allows: true,
+          always: false,
+        }, { id: "deny", label: "Deny", allows: false, always: false }],
       }).map(
         choice => [choice.title, choice.decision],
       ),
@@ -218,6 +273,7 @@ describe("getApprovalChoices", () => {
 function createApprovals(options: {
   decide: (approval: PendingApproval, choices: ApprovalChoice[]) => ApprovalDecision | undefined;
   approvalsAfter?: Record<string, PendingApproval[]>;
+  statusAfter?: FormatStatus;
 }) {
   const asked: string[] = [];
   const approved: ApproveParams[] = [];
@@ -229,7 +285,7 @@ function createApprovals(options: {
     },
     approve: async params => {
       approved.push(params);
-      return { approvals: options.approvalsAfter?.[params.id] ?? [] };
+      return { approvals: options.approvalsAfter?.[params.id] ?? [], status: options.statusAfter ?? READY };
     },
   });
   return { approvals, asked, approved };
@@ -244,8 +300,14 @@ function approval(id: string): PendingApproval {
     decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
       id,
       label: id,
+      allows: id.endsWith("llow"),
+      always: id.startsWith("always"),
     })),
     denied: false,
     message: `Approve ${id}?`,
   };
+}
+
+function configFile(uri: string): ConfigFileInfo {
+  return { uri, dirUri: uri.slice(0, uri.lastIndexOf("/")), kind: "local" };
 }

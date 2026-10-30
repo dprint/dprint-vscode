@@ -1,6 +1,6 @@
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import type { NotFormattedReason as ExtensionNotFormattedReason } from "../globalConfigCommand";
-import type { FormatFailedReason, NotFormattedReason } from "./messages";
+import type { NotFormattedReason } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -74,15 +74,6 @@ export class ShownConfigErrors {
     // it may be one of the others
     this.#otherMessages.clear();
   }
-}
-
-/**
- * Gets if a format that failed is because a plugin couldn't format the file (usually a
- * syntax error), as opposed to a plugin failing, which includes the reasons that are newer
- * than the extension.
- */
-export function isFormatError(reason: FormatFailedReason) {
-  return reason === "formatError";
 }
 
 /**

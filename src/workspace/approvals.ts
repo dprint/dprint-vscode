@@ -4,6 +4,7 @@ import {
   type ApproveParams,
   type ApproveResult,
   type ErrorData,
+  type FormatStatus,
   type PendingApproval,
 } from "./messages";
 
@@ -60,6 +61,8 @@ export class Approvals {
 
   async #request(approvals: PendingApproval[], options: { isExplicit: boolean }) {
     let pending = approvals;
+    // whether the config file is used now, which is only known after something was approved
+    let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
     while (pending.length > 0) {
       const approval = pending.find(approval => !askedNow.has(approval.id));
@@ -77,25 +80,36 @@ export class Approvals {
         // it stays pending, so the user can still approve it with the command
         return false;
       }
+      const allows = isAllowed(approval, decision);
+      const isForConfigFile = (other: PendingApproval) => other.configFile?.uri === approval.configFile?.uri;
       try {
-        pending = (await this.#options.approve({ id: approval.id, decision })).approvals;
+        const result = await this.#options.approve({ id: approval.id, decision });
+        pending = result.approvals;
+        status = result.status;
       } catch (err) {
-        if (!isApprovalChangedError(err)) {
-          throw err;
-        }
-        if (!isAllowed(decision)) {
+        if (!allows) {
           return false;
         }
+        if (!isApprovalChangedError(err)) {
+          // the decision may still have been used, so what's pending is gotten again
+          pending = (await this.#options.pendingApprovals()).filter(isForConfigFile);
+          status = undefined;
+          if (pending.length === 0) {
+            throw err;
+          }
+          continue;
+        }
         // what needs to be approved changed (ex. the config file changed), which the error may have
-        pending = getChangedApprovals(err)
-          ?? (await this.#options.pendingApprovals()).filter(pending => pending.configFile === approval.configFile);
+        pending = getChangedApprovals(err) ?? (await this.#options.pendingApprovals()).filter(isForConfigFile);
+        status = undefined;
         continue;
       }
-      if (!isAllowed(decision)) {
+      if (!allows) {
         return false;
       }
     }
-    return true;
+    // it's formatted again once the config file is used
+    return status == null || status.kind === "ready";
   }
 }
 
@@ -115,8 +129,14 @@ export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">)
   return approval.decisions.map(option => ({ title: option.label, decision: option.id }));
 }
 
+/**
+ * Gets if the error is for an approval that isn't pending anymore, which is recognized by its data
+ * because a language client library may use the same code for its own errors.
+ */
 function isApprovalChangedError(err: unknown) {
-  return typeof err === "object" && err != null && "code" in err && err.code === APPROVAL_CHANGED_ERROR_CODE;
+  return typeof err === "object" && err != null && "code" in err && err.code === APPROVAL_CHANGED_ERROR_CODE
+    && "data" in err && typeof err.data === "object" && err.data != null && "kind" in err.data
+    && err.data.kind === "approvalChanged";
 }
 
 /** Gets what needs to be approved now from the error for an approval that isn't pending anymore. */
@@ -127,6 +147,8 @@ function getChangedApprovals(err: unknown): PendingApproval[] | undefined {
     : undefined;
 }
 
-function isAllowed(decision: ApprovalDecision) {
-  return decision === "allow" || decision === "alwaysAllow";
+/** Gets if the decision allows the approval, which dprint says for a decision the extension doesn't know. */
+function isAllowed(approval: PendingApproval, decision: ApprovalDecision) {
+  const option = approval.decisions.find(option => option.id === decision);
+  return option?.allows ?? (decision === "allow" || decision === "alwaysAllow");
 }

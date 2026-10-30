@@ -1,6 +1,6 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getFormatDocumentResult, getProviderEdits, isFormatError, ShownConfigErrors } from "./formatResults";
+import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 
 describe("getFormatDocumentResult", () => {
   it("is the extension's reason with the message", () => {
@@ -53,15 +53,6 @@ describe("getFormatDocumentResult", () => {
       notFormattedReason: "notMatched",
       notFormattedMessage: "New.",
     });
-  });
-});
-
-describe("isFormatError", () => {
-  it("is only true for a format error", () => {
-    assert.strictEqual(isFormatError("formatError"), true);
-    assert.strictEqual(isFormatError("pluginError"), false);
-    // a reason that's newer than the extension is treated like a plugin error
-    assert.strictEqual(isFormatError("someNewReason"), false);
   });
 });
 
