@@ -33,6 +33,11 @@ export interface ExtensionBackend extends vscode.Disposable {
    * includes what they denied.
    */
   approve(): Promise<void>;
+  /**
+   * Forgets what the user decided about what the config files need approved, including the
+   * "Always" decisions, so they're asked again.
+   */
+  forgetDecisions(): Promise<void>;
 }
 
 /** The edits for formatting a document, which are empty when it's already formatted, or why it wasn't formatted. */

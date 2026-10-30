@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -43,6 +42,7 @@ import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
+  type ConfigFileInfo,
   type ConfigInfoResult,
   type DocumentLanguage,
   getApprovals,
@@ -52,6 +52,7 @@ import {
   type NotFormattedResult,
   type PendingApproval,
   type PublishDiagnosticsParams,
+  type Severity,
   type ShowPolicy,
   type TextRange,
   type WorkspaceFolder,
@@ -287,6 +288,11 @@ export class WorkspaceBackend implements vscode.Disposable {
     return this.#state?.approve() ?? Promise.resolve();
   }
 
+  /** Forgets what the user decided about what the config files need approved, so they're asked again. */
+  forgetDecisions() {
+    return this.#state?.forgetDecisions() ?? Promise.resolve();
+  }
+
   dispose() {
     this.#disposed = true;
     this.#pendingState?.dispose();
@@ -421,11 +427,11 @@ export class WorkspaceBackend implements vscode.Disposable {
           this.#state?.refreshSchema();
           return;
         }
-        // an error that's still there is shown again, which is by the canonical path dprint provides
+        // an error that's still there is shown again
         if (params.uri == null) {
           this.#session.shownConfigErrors.clear();
         } else {
-          this.#session.shownConfigErrors.forget(vscode.Uri.parse(params.uri).fsPath);
+          this.#session.shownConfigErrors.forget({ uri: params.uri, dirUri: params.dirUri });
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
@@ -442,7 +448,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     const approvals = new Approvals({
       ask: askApproval,
       approve: params => connection.approve(params),
-      pendingApprovals: async () => (await connection.pendingApprovals()).approvals,
+      pendingApprovals: configFile => connection.pendingApprovals({ configFile }),
     });
     return { key, connection, approvals };
   }
@@ -869,6 +875,15 @@ class WorkspaceState {
     this.scheduleRefresh();
   }
 
+  /** Forgets what the user decided for every config file, including the "Always" decisions. */
+  async forgetDecisions() {
+    // the decisions are dprint's, so forgetting them with one process forgets them for the others
+    // except what they decided for their session
+    await Promise.all(this.#resolvedServices.map(service => service.connection.forgetDecisions()));
+    vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
+    this.scheduleRefresh();
+  }
+
   watchAncestorConfigFile(configFilePath: string) {
     const dirPath = getConfigFileDir(this.#environment, configFilePath);
     // config files in workspace folders are already watched by the extension
@@ -1013,8 +1028,13 @@ class WorkspaceState {
           return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         case "notFormatted":
           this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
-          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri, config?.configFilePath);
-          if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval) {
+          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri);
+          // only a document dprint says to claim is asked about when the user didn't run a command
+          // (it isn't when what the config file formats isn't known) unless the user chose dprint
+          // as the formatter of its language
+          const mayAsk = result.claim || options.saysWhyNotFormatted === true
+            || isDprintDefaultFormatter(document.languageId);
+          if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval && mayAsk) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
             // same as choosing to run what its config file says. The document is formatted once
             // it's approved unless the format is cancelled in the meantime.
@@ -1029,8 +1049,12 @@ class WorkspaceState {
           return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
         default: {
           // includes the kinds that are newer than the extension, which are only shown for a command
-          const failed = result as { message?: string; show?: ShowPolicy };
-          this.#onFormatFailed(failed.message ?? "Formatting failed.", failed.show ?? "command");
+          const failed = result as { message?: string; show?: ShowPolicy; severity?: Severity };
+          this.#onFormatFailed(
+            failed.message ?? "Formatting failed.",
+            failed.show ?? "command",
+            failed.severity ?? "warning",
+          );
           return { notFormattedReason: "failed" };
         }
       }
@@ -1086,10 +1110,9 @@ class WorkspaceState {
   }
 
   #onNotFormatted(
-    result: NotFormattedResult,
+    result: NotFormattedResult & { configFile: ConfigFileInfo | null },
     options: FormatDocumentOptions & { useGlobalConfig: boolean },
     documentUri: vscode.Uri,
-    configFilePath: string | undefined,
   ) {
     switch (result.reason) {
       case "noConfigFile":
@@ -1103,21 +1126,22 @@ class WorkspaceState {
         }
         break;
       default: {
-        if (result.message == null || options.saysWhyNotFormatted) {
+        if (options.saysWhyNotFormatted) {
           break;
         }
         // dprint doesn't show these to the user because only the extension knows that the user formatted
         switch (result.show) {
           case "always":
             this.#logger.logError(result.message);
-            vscode.window.showErrorMessage(result.message);
+            showSeverityMessage(result.severity, result.message);
             break;
           case "oncePerConfigFile": {
             this.#logger.logError(result.message);
-            // the errors are forgotten by the canonical path that dprint says changed
-            const key = configFilePath == null ? undefined : getCanonicalPath(configFilePath);
-            if (this.#session.shownConfigErrors.shouldShow(key, result.message)) {
-              vscode.window.showErrorMessage(result.message);
+            const configFile = result.configFile == null
+              ? undefined
+              : { uri: result.configFile.uri, dirUri: result.configFile.dirUri };
+            if (this.#session.shownConfigErrors.shouldShow(configFile, result.message)) {
+              showSeverityMessage(result.severity, result.message);
             }
             break;
           }
@@ -1162,7 +1186,7 @@ class WorkspaceState {
     });
   }
 
-  #onFormatFailed(message: string, show: ShowPolicy) {
+  #onFormatFailed(message: string, show: ShowPolicy, severity: Severity) {
     // ex. a syntax error isn't shown because a format usually happens without the user doing
     // anything (ex. on save) and the editor already shows it
     if (show !== "always") {
@@ -1172,7 +1196,7 @@ class WorkspaceState {
     this.#logger.logError("Error formatting text:", message);
     if (!this.#shownPluginErrors.has(message)) {
       this.#shownPluginErrors.add(message);
-      vscode.window.showErrorMessage(`dprint failed to format the document: ${message}`);
+      showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
     }
   }
 
@@ -1580,6 +1604,11 @@ function showMessage(params: MessageParams) {
   }
 }
 
+/** Gets if the user chose dprint as the default formatter of the language. */
+function isDprintDefaultFormatter(languageId: string) {
+  return isDprintExtensionId(vscode.workspace.getConfiguration("editor", { languageId }).get("defaultFormatter"));
+}
+
 async function getDefaultFormatterLanguageIds() {
   const languageIds = await vscode.languages.getLanguages();
   return languageIds.filter(languageId => {
@@ -1633,14 +1662,17 @@ function getFileChangeType(type: ConfigFileChangeType) {
   }
 }
 
-/**
- * Gets the path with its symlinks resolved like the paths dprint provides, which is the path when it
- * can't be. It's normalized like the `fsPath` of a uri (ex. the case of a drive letter).
- */
-function getCanonicalPath(filePath: string) {
-  try {
-    return vscode.Uri.file(fs.realpathSync.native(filePath)).fsPath;
-  } catch {
-    return vscode.Uri.file(filePath).fsPath;
+/** Shows the message to the user like its severity says, which is a warning for one that isn't known. */
+function showSeverityMessage(severity: Severity, message: string) {
+  switch (severity) {
+    case "error":
+      vscode.window.showErrorMessage(message);
+      break;
+    case "info":
+      vscode.window.showInformationMessage(message);
+      break;
+    default:
+      vscode.window.showWarningMessage(message);
+      break;
   }
 }

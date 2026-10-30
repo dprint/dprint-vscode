@@ -48,6 +48,13 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.logError("Error approving:", err);
     }
   }));
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.forgetDecisions", async () => {
+    try {
+      await backend.forgetDecisions();
+    } catch (err) {
+      logger.logError("Error forgetting the approval decisions:", err);
+    }
+  }));
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dprint.formatWithGlobalConfig",

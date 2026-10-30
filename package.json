@@ -41,6 +41,10 @@
       {
         "command": "dprint.approve",
         "title": "Dprint: Approve Configuration"
+      },
+      {
+        "command": "dprint.forgetDecisions",
+        "title": "Dprint: Forget Approval Decisions"
       }
     ],
     "menus": {

@@ -1,6 +1,6 @@
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import type { NotFormattedReason as ExtensionNotFormattedReason } from "../globalConfigCommand";
-import type { NotFormattedReason } from "./messages";
+import type { ConfigFileIdentifier, NotFormattedReason } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -36,43 +36,47 @@ export function getFormatDocumentResult(
 /**
  * The errors of the config files that the user was shown, which are only shown once for a config
  * file until they change because the editor formats without the user doing anything in between
- * (ex. on save).
+ * (ex. on save). A config file is identified by its uri and the directory it's used for, which
+ * dprint provides.
  */
 export class ShownConfigErrors {
-  /** The message that was shown by the path of a config file the extension knows about. */
+  /** The message that was shown by the key of a config file. */
   readonly #messages = new Map<string, string>();
-  /** The messages that were shown of the config files the extension doesn't know about (ex. the global one). */
+  /** The messages that were shown without a config file. */
   readonly #otherMessages = new Set<string>();
 
-  /**
-   * Gets if the error of the config file should be shown, which remembers that it was.
-   *
-   * @param configFilePath - The config file the extension knows the file is formatted with, if any.
-   */
-  shouldShow(configFilePath: string | undefined, message: string) {
-    if (configFilePath == null) {
+  /** Gets if the error of the config file should be shown, which remembers that it was. */
+  shouldShow(configFile: ConfigFileIdentifier | undefined, message: string) {
+    if (configFile == null) {
       const isShown = this.#otherMessages.has(message);
       this.#otherMessages.add(message);
       return !isShown;
     }
-    if (this.#messages.get(configFilePath) === message) {
+    const key = getConfigFileKey(configFile);
+    if (this.#messages.get(key) === message) {
       return false;
     }
-    this.#messages.set(configFilePath, message);
+    this.#messages.set(key, message);
     return true;
   }
 
-  /** Forgets every error that was shown (ex. dprint's settings file changed), so they're shown again. */
+  /** Forgets every error that was shown (ex. every config file may have changed), so they're shown again. */
   clear() {
     this.#messages.clear();
     this.#otherMessages.clear();
   }
 
-  /** Forgets the errors that were shown for the config file (ex. it changed), so they're shown again. */
-  forget(configFilePath: string) {
-    this.#messages.delete(configFilePath);
-    // it may be one of the others
-    this.#otherMessages.clear();
+  /**
+   * Forgets the errors that were shown for the config file (ex. it changed), so they're shown again,
+   * which is for each directory it's used for without a `dirUri`.
+   */
+  forget(configFile: ConfigFileIdentifier) {
+    const prefix = getConfigFileKey({ uri: configFile.uri, dirUri: "" });
+    for (const key of [...this.#messages.keys()]) {
+      if (configFile.dirUri == null ? key.startsWith(prefix) : key === getConfigFileKey(configFile)) {
+        this.#messages.delete(key);
+      }
+    }
   }
 }
 
@@ -85,4 +89,8 @@ export function getProviderEdits(result: FormatDocumentResult) {
     return result.edits;
   }
   return result.notFormattedReason === "failed" ? [] : undefined;
+}
+
+function getConfigFileKey(configFile: ConfigFileIdentifier) {
+  return `${configFile.uri}\n${configFile.dirUri ?? ""}`;
 }

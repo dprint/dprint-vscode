@@ -19,8 +19,19 @@ export interface UnsupportedServer {
 export function getServerSupport(result: InitializeResult): { version: string } | UnsupportedServer {
   const version = result.serverInfo?.version ?? "unknown";
   if (!isSupportedServer(result)) {
+    // a server that has the methods says which versions of them it supports
+    const serverVersions = result.capabilities?.experimental?.dprint?.versions ?? [];
+    if (serverVersions.length === 0) {
+      return {
+        error: `dprint ${version} doesn't support the dprint methods of its language server.`,
+        isUnavailable: false,
+      };
+    }
+    const update = Math.max(...serverVersions) > Math.max(...DPRINT_METHODS_VERSIONS)
+      ? "Update the dprint extension to use it."
+      : "Update dprint to use it with this version of the extension.";
     return {
-      error: `dprint ${version} doesn't support the dprint methods of its language server.`,
+      error: `dprint ${version} doesn't support the versions of the dprint methods that the extension does. ${update}`,
       isUnavailable: false,
     };
   }

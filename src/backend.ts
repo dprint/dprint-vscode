@@ -64,6 +64,9 @@ export function activateBackend(
     approve() {
       return (switcher.legacyBackend ?? workspaceBackend).approve();
     },
+    forgetDecisions() {
+      return (switcher.legacyBackend ?? workspaceBackend).forgetDecisions();
+    },
     dispose() {
       switcher.dispose();
       disposables.dispose();

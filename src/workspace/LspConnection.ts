@@ -23,6 +23,8 @@ import {
   FILE_INFO_METHOD,
   type FileInfoParams,
   type FileInfoResult,
+  FORGET_DECISIONS_METHOD,
+  type ForgetDecisionsParams,
   FORMAT_METHOD,
   type FormatParams,
   type FormatResult,
@@ -30,6 +32,7 @@ import {
   type MessageParams,
   MessageType,
   PENDING_APPROVALS_METHOD,
+  type PendingApprovalsParams,
   type PendingApprovalsResult,
   type ProgressParams,
   type PublishDiagnosticsParams,
@@ -145,8 +148,12 @@ export class LspConnection {
     return this.#request<FileInfoResult>(FILE_INFO_METHOD, params);
   }
 
-  pendingApprovals() {
-    return this.#request<PendingApprovalsResult>(PENDING_APPROVALS_METHOD, {});
+  pendingApprovals(params: PendingApprovalsParams = {}) {
+    return this.#request<PendingApprovalsResult>(PENDING_APPROVALS_METHOD, params);
+  }
+
+  forgetDecisions(params: ForgetDecisionsParams = {}) {
+    return this.#request<object>(FORGET_DECISIONS_METHOD, params);
   }
 
   configInfo(params: ConfigParams) {

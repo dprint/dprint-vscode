@@ -80,6 +80,10 @@ export function activateLegacy(
       vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");
       return Promise.resolve();
     },
+    forgetDecisions() {
+      vscode.window.showInformationMessage("The installed version of dprint doesn't ask to approve anything.");
+      return Promise.resolve();
+    },
     dispose() {
       disposed = true;
       initializationDisposables.dispose();

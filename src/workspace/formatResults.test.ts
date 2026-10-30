@@ -65,24 +65,41 @@ describe("getProviderEdits", () => {
 });
 
 describe("ShownConfigErrors", () => {
+  const configFile = { uri: "file:///dprint.json", dirUri: "file:///" };
+  const otherConfigFile = { uri: "file:///other/dprint.json", dirUri: "file:///other" };
+
   it("only shows an error of a config file once until it changes", () => {
     const shown = new ShownConfigErrors();
-    assert.strictEqual(shown.shouldShow("/dprint.json", "Error."), true);
-    assert.strictEqual(shown.shouldShow("/dprint.json", "Error."), false);
-    assert.strictEqual(shown.shouldShow("/other/dprint.json", "Error."), true);
-    assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
-    shown.forget("/dprint.json");
-    assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
+    assert.strictEqual(shown.shouldShow(configFile, "Error."), true);
+    assert.strictEqual(shown.shouldShow(configFile, "Error."), false);
+    assert.strictEqual(shown.shouldShow(otherConfigFile, "Error."), true);
+    assert.strictEqual(shown.shouldShow(configFile, "Other error."), true);
+    shown.forget(configFile);
+    assert.strictEqual(shown.shouldShow(configFile, "Other error."), true);
     // the other config file wasn't forgotten
-    assert.strictEqual(shown.shouldShow("/other/dprint.json", "Error."), false);
+    assert.strictEqual(shown.shouldShow(otherConfigFile, "Error."), false);
   });
 
-  it("shows each error of the config files the extension doesn't know about once", () => {
+  it("shows an error of the global config file once for each directory", () => {
+    const shown = new ShownConfigErrors();
+    const global = (dirUri: string) => ({ uri: "file:///global/dprint.json", dirUri });
+    assert.strictEqual(shown.shouldShow(global("file:///c%3A/"), "Error."), true);
+    assert.strictEqual(shown.shouldShow(global("file:///d%3A/"), "Error."), true);
+    shown.forget(global("file:///c%3A/"));
+    assert.strictEqual(shown.shouldShow(global("file:///c%3A/"), "Error."), true);
+    assert.strictEqual(shown.shouldShow(global("file:///d%3A/"), "Error."), false);
+    // each directory without one
+    shown.forget({ uri: "file:///global/dprint.json" });
+    assert.strictEqual(shown.shouldShow(global("file:///c%3A/"), "Error."), true);
+    assert.strictEqual(shown.shouldShow(global("file:///d%3A/"), "Error."), true);
+  });
+
+  it("shows each error without a config file once until every one is forgotten", () => {
     const shown = new ShownConfigErrors();
     assert.strictEqual(shown.shouldShow(undefined, "Error."), true);
     assert.strictEqual(shown.shouldShow(undefined, "Other error."), true);
     assert.strictEqual(shown.shouldShow(undefined, "Error."), false);
-    shown.forget("/global/dprint.json");
+    shown.clear();
     assert.strictEqual(shown.shouldShow(undefined, "Error."), true);
   });
 });

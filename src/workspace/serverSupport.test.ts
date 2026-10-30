@@ -39,6 +39,23 @@ describe("getServerSupport", () => {
       isUnavailable: false,
     });
   });
+
+  it("says what to update when the server doesn't support the extension's versions", () => {
+    const result = (versions: number[]) => ({
+      capabilities: { experimental: { dprint: { versions } } },
+      serverInfo: { name: "dprint", version: "1.0.0" },
+    });
+    assert.deepStrictEqual(getServerSupport(result([2])), {
+      error: "dprint 1.0.0 doesn't support the versions of the dprint methods that the extension does. "
+        + "Update the dprint extension to use it.",
+      isUnavailable: false,
+    });
+    assert.deepStrictEqual(getServerSupport(result([0])), {
+      error: "dprint 1.0.0 doesn't support the versions of the dprint methods that the extension does. "
+        + "Update dprint to use it with this version of the extension.",
+      isUnavailable: false,
+    });
+  });
 });
 
 describe("getUnsupportedError", () => {
