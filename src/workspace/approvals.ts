@@ -72,12 +72,22 @@ export class Approvals {
    */
   async sendSessionDecisionsAgain(pending: PendingApproval[]) {
     let isSent = false;
-    for (const approval of pending) {
-      const decision = this.#getSessionDecision(approval);
-      if (decision != null) {
-        await this.#options.approve({ id: approval.id, decision })
-          .then(() => isSent = true)
-          .catch(() => {/* it's asked about again */});
+    const queue = [...pending];
+    const sent = new Set<string>();
+    while (queue.length > 0) {
+      const approval = queue.shift()!;
+      const decision = sent.has(approval.id) ? undefined : this.#getSessionDecision(approval);
+      if (decision == null) {
+        continue;
+      }
+      sent.add(approval.id);
+      try {
+        const result = await this.#options.approve({ id: approval.id, decision });
+        isSent = true;
+        // what a decision that was sent again reveals may have a decision for the session too
+        queue.push(...result.approvals);
+      } catch {
+        // it's asked about again
       }
     }
     return isSent;
@@ -146,6 +156,10 @@ export class Approvals {
       this.#rememberSessionDecision(approval, decision);
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
+        if (result.notice != null) {
+          // ex. an "Always" decision that couldn't be stored is still used for the session
+          this.#sessionDecisions.set(approval.id, decision);
+        }
         pending = result.approvals;
         status = result.status;
       } catch (err) {
@@ -198,7 +212,9 @@ export class Approvals {
    * which isn't an allow that the user denied since (ex. with "Always Deny" in another window).
    */
   #getSessionDecision(approval: PendingApproval) {
-    const decision = this.#sessionDecisions.get(approval.id);
+    // an approval of process plugins that were set up since has the id it had before
+    const decision = this.#sessionDecisions.get(approval.id)
+      ?? (approval.idBeforeSetUp == null ? undefined : this.#sessionDecisions.get(approval.idBeforeSetUp));
     if (decision == null || !approval.decisions.some(option => option.id === decision)) {
       return undefined;
     }

@@ -264,6 +264,30 @@ describe("Approvals", () => {
     assert.deepStrictEqual(created.approved, []);
   });
 
+  it("sends what the user decided for the session again for the id an approval had before it was set up", async () => {
+    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    approved.length = 0;
+    const setUp = { ...approval("processPlugins"), id: "setUp", idBeforeSetUp: "processPlugins" };
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([setUp]), true);
+    assert.deepStrictEqual(approved, [{ id: "setUp", decision: "allow" }]);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+  });
+
+  it("sends what the user decided for the session again for what a decision that was sent again reveals", async () => {
+    const { approvals, approved } = createApprovals({
+      decide: () => "allow",
+      approvalsAfter: { download: [approval("processPlugins")] },
+    });
+    await approvals.request([approval("download")], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("download")]), true);
+    assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }, {
+      id: "processPlugins",
+      decision: "allow",
+    }]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

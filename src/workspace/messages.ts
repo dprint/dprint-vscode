@@ -112,7 +112,7 @@ export interface FormatResponse {
 /** What formatting a document did with the config file that was used. */
 export type FormatResult = { configFile: ConfigFileInfo | null } & FormatResponse["result"];
 
-/** Something to tell the user about a document that was formatted or a config file that's used. */
+/** Something to tell the user about the result of a request (ex. a decision that couldn't be stored). */
 export interface Notice {
   message: string;
   show: ShowPolicy;
@@ -203,8 +203,10 @@ export interface PendingApproval {
   denied: boolean;
   /** What the user decided before, which is "deny" or "alwaysDeny" when it's denied. */
   previousDecision?: ApprovalDecision;
-  /** The message to show the user when asking. */
+  /** The message to show the user when asking, which has everything to see apart from the configuration. */
   message: string;
+  /** The id it had before its process plugins were set up, which a session's decision is sent again for. */
+  idBeforeSetUp?: string;
   /** What the process plugins that weren't set up before run with once they're allowed, which includes what it extends. */
   trustedConfiguration?: { [key: string]: unknown };
 }
