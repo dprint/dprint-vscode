@@ -87,17 +87,21 @@ export class Approvals {
         pending = result.approvals;
         status = result.status;
       } catch (err) {
-        if (!allows) {
-          return false;
-        }
         if (!isApprovalChangedError(err)) {
+          if (!allows) {
+            throw err;
+          }
           // the decision may still have been used, so what's pending is gotten again
           pending = (await this.#options.pendingApprovals()).filter(isForConfigFile);
           status = undefined;
-          if (pending.length === 0) {
+          if (pending.some(pending => pending.id === approval.id)) {
+            // it wasn't used
             throw err;
           }
           continue;
+        }
+        if (!allows) {
+          return false;
         }
         // what needs to be approved changed (ex. the config file changed), which the error may have
         pending = getChangedApprovals(err) ?? (await this.#options.pendingApprovals()).filter(isForConfigFile);

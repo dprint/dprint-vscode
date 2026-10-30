@@ -1,4 +1,4 @@
-import type { ConfigInfoResult } from "./messages";
+import { type ConfigInfoResult, getNotFormatted } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -11,13 +11,14 @@ export const ALL_FILES_PATTERN = "**/*";
  * excludes are left out, which are matched differently than a glob (ex. like a gitignore file).
  *
  * It's every file when the config file formats other files that can't be matched with a glob
- * (ex. with a shebang), and none when it has no plugins or they aren't known (ex. something
- * needs to be approved), so that the other formatters of those files are still used.
+ * (ex. with a shebang), and none when it has no plugins, they aren't known (ex. something
+ * needs to be approved), or dprint says not to claim its files (ex. what needs to be approved
+ * was denied), so that the other formatters of those files are still used.
  */
 export function getConfigFilePatterns(
-  info: Pick<ConfigInfoResult, "plugins" | "otherFiles" | "filePatterns">,
+  info: Pick<ConfigInfoResult, "plugins" | "otherFiles" | "filePatterns" | "status">,
 ): string[] {
-  if (info.plugins == null || info.plugins.length === 0) {
+  if (info.plugins == null || info.plugins.length === 0 || getNotFormatted(info.status)?.claim === false) {
     return [];
   }
   if (info.otherFiles.length > 0) {

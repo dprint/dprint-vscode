@@ -9,6 +9,7 @@ describe("getConfigFilePatterns", () => {
       getConfigFilePatterns({
         plugins: [plugin()],
         otherFiles: [],
+        status: { kind: "ready" },
         filePatterns: [
           { glob: "**/*.[tT][sS]", configKeys: ["test"] },
           { glob: "src/**/*.other", configKeys: ["test"] },
@@ -24,6 +25,7 @@ describe("getConfigFilePatterns", () => {
       getConfigFilePatterns({
         plugins: [plugin()],
         otherFiles: [{ kind: "shebang", values: ["#!/usr/bin/env node"] }],
+        status: { kind: "ready" },
         filePatterns: [{ glob: "**/*.[tT][sS]", configKeys: ["test"] }],
       }),
       [ALL_FILES_PATTERN],
@@ -32,7 +34,10 @@ describe("getConfigFilePatterns", () => {
 
   it("matches nothing when the plugins aren't known", () => {
     // ex. a download needs to be approved
-    assert.deepStrictEqual(getConfigFilePatterns({ plugins: null, otherFiles: [], filePatterns: [] }), []);
+    assert.deepStrictEqual(
+      getConfigFilePatterns({ plugins: null, otherFiles: [], filePatterns: [], status: { kind: "ready" } }),
+      [],
+    );
   });
 
   it("matches nothing without plugins", () => {
@@ -41,6 +46,20 @@ describe("getConfigFilePatterns", () => {
         plugins: [],
         otherFiles: [{ kind: "shebang", values: ["#!/bin/sh"] }],
         filePatterns: [],
+        status: { kind: "ready" },
+      }),
+      [],
+    );
+  });
+
+  it("matches nothing when dprint says not to claim the files", () => {
+    // ex. what needs to be approved was denied
+    assert.deepStrictEqual(
+      getConfigFilePatterns({
+        plugins: [plugin()],
+        otherFiles: [],
+        filePatterns: [{ glob: "**/*.[tT][sS]", configKeys: ["test"] }],
+        status: { kind: "notFormatted", reason: "approvalRequired", show: "command", claim: false },
       }),
       [],
     );

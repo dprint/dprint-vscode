@@ -81,13 +81,27 @@ describe("Approvals", () => {
     assert.deepStrictEqual(asked, ["download"]);
   });
 
-  it("rejects when approving fails", async () => {
+  it("rejects when approving fails and it's still pending", async () => {
     const approvals = new Approvals({
+      pendingApprovals: async () => [approval("download")],
+      ask: async () => "allow",
+      approve: () => Promise.reject(new Error("Failed.")),
+    });
+    await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Failed/);
+    // the decision was used when it isn't pending anymore (ex. only the response was lost)
+    const used = new Approvals({
       pendingApprovals: async () => [],
       ask: async () => "allow",
-      approve: () => Promise.reject(new Error("Nothing is pending.")),
+      approve: () => Promise.reject(new Error("Failed.")),
     });
-    await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Nothing is pending/);
+    assert.strictEqual(await used.request([approval("download")], { isExplicit: false }), true);
+    // a denial that fails is said
+    const denied = new Approvals({
+      pendingApprovals: async () => [],
+      ask: async () => "deny",
+      approve: () => Promise.reject(new Error("Failed.")),
+    });
+    await assert.rejects(denied.request([approval("download")], { isExplicit: false }), /Failed/);
   });
 
   it("formats again when what needs to be approved changed", async () => {
