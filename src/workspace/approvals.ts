@@ -20,6 +20,8 @@ export interface ApprovalsOptions {
   ask(approval: PendingApproval, choices: ApprovalChoice[]): Promise<ApprovalDecision | undefined>;
   /** Sends what the user decided to dprint. */
   approve(params: ApproveParams): Promise<ApproveResult>;
+  /** Gets what needs to be approved for the config files dprint used. */
+  pendingApprovals(): Promise<PendingApproval[]>;
 }
 
 /**
@@ -81,13 +83,12 @@ export class Approvals {
         if (!isContentModifiedError(err)) {
           throw err;
         }
-        // what needs to be approved changed (ex. the config file changed), which the error may have
-        const changedApprovals = getChangedApprovals(err);
-        if (changedApprovals == null) {
-          // formatting again gets it
-          return isAllowed(decision);
+        if (!isAllowed(decision)) {
+          return false;
         }
-        pending = changedApprovals;
+        // what needs to be approved changed (ex. the config file changed), which the error may have
+        pending = getChangedApprovals(err)
+          ?? (await this.#options.pendingApprovals()).filter(pending => pending.configFile === approval.configFile);
         continue;
       }
       if (!isAllowed(decision)) {
@@ -111,11 +112,8 @@ export function getApprovalMessage(approval: PendingApproval) {
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {
-  const choices = approval.decisions
-    .map(decision => ({ title: DECISION_TITLES[decision], decision }))
-    // a decision that's newer than the extension isn't known how to show
-    .filter((choice): choice is ApprovalChoice => choice.title != null);
-  return choices.length > 0 ? choices : [{ title: "Allow", decision: "allow" }, { title: "Deny", decision: "deny" }];
+  // a decision that's newer than the extension is shown as it is
+  return approval.decisions.map(decision => ({ title: DECISION_TITLES[decision] ?? decision, decision }));
 }
 
 const DECISION_TITLES: { [decision: string]: string | undefined } = {

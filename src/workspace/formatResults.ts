@@ -39,21 +39,34 @@ export function getFormatDocumentResult(
  * (ex. on save).
  */
 export class ShownConfigErrors {
-  /** The message that was shown by config file. */
+  /** The message that was shown by the path of a config file the extension knows about. */
   readonly #messages = new Map<string, string>();
+  /** The messages that were shown of the config files the extension doesn't know about (ex. the global one). */
+  readonly #otherMessages = new Set<string>();
 
-  /** Gets if the error of the config file should be shown, which remembers that it was. */
-  shouldShow(configKey: string, message: string) {
-    if (this.#messages.get(configKey) === message) {
+  /**
+   * Gets if the error of the config file should be shown, which remembers that it was.
+   *
+   * @param configFilePath - The config file the extension knows the file is formatted with, if any.
+   */
+  shouldShow(configFilePath: string | undefined, message: string) {
+    if (configFilePath == null) {
+      const isShown = this.#otherMessages.has(message);
+      this.#otherMessages.add(message);
+      return !isShown;
+    }
+    if (this.#messages.get(configFilePath) === message) {
       return false;
     }
-    this.#messages.set(configKey, message);
+    this.#messages.set(configFilePath, message);
     return true;
   }
 
-  /** Forgets the errors that were shown (ex. a config file changed), so they're shown again. */
-  clear() {
-    this.#messages.clear();
+  /** Forgets the errors that were shown for the config file (ex. it changed), so they're shown again. */
+  forget(configFilePath: string) {
+    this.#messages.delete(configFilePath);
+    // it may be one of the others
+    this.#otherMessages.clear();
   }
 }
 

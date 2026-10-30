@@ -1,4 +1,4 @@
-import { DPRINT_METHODS_VERSION, type InitializeResult } from "./messages";
+import { DPRINT_METHODS_VERSIONS, type InitializeResult } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -29,8 +29,9 @@ export function getServerSupport(result: InitializeResult): { version: string } 
 
 /** Gets if the language server has the `dprint/*` methods the extension uses. */
 export function isSupportedServer(result: InitializeResult) {
+  // the server responds with the version it uses of the ones the extension supports
   const methodsVersion = result.capabilities?.experimental?.dprint?.version;
-  return typeof methodsVersion === "number" && methodsVersion >= DPRINT_METHODS_VERSION;
+  return typeof methodsVersion === "number" && DPRINT_METHODS_VERSIONS.includes(methodsVersion);
 }
 
 /**

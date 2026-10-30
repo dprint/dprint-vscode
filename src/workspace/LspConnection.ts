@@ -19,7 +19,7 @@ import {
   type ConfigInfoResult,
   type ConfigParams,
   type ConfigSchemaResult,
-  DPRINT_METHODS_VERSION,
+  DPRINT_METHODS_VERSIONS,
   FILE_INFO_METHOD,
   type FileInfoParams,
   type FileInfoResult,
@@ -84,6 +84,11 @@ export interface LspConnectionOptions {
   onDiagnostics(params: PublishDiagnosticsParams): void;
   /** Called when what a config file formats may have changed in a way the editor can't see. */
   onConfigChanged(params: ConfigChangedParams): void;
+  /**
+   * Called when a server is started again after one exited (ex. it crashed), which doesn't know
+   * what the one before it was told (ex. the files the config files were resolved from).
+   */
+  onRestart?(): void;
   logger: ConnectionLogger;
   /** How long to wait for the server to exit after it's asked to before killing it. Defaults to one second. */
   killTimeout?: number;
@@ -115,6 +120,8 @@ export class LspConnection {
   /** Called when a request or an interaction finishes. */
   readonly #idleListeners = new Set<() => void>();
   #server: Server | undefined;
+  /** Whether a server was started, which is when starting another is a restart. */
+  #hasStarted = false;
   #interactionCount = 0;
   /** Whether it's waiting to shut down, which is when a server isn't started again. */
   #closing = false;
@@ -316,7 +323,12 @@ export class LspConnection {
       return undefined;
     }
     if (this.#server == null && !this.#closing) {
+      const isRestart = this.#hasStarted;
+      this.#hasStarted = true;
       this.#server = this.#startServer();
+      if (isRestart) {
+        this.#server.initialized.then(() => this.#options.onRestart?.(), () => {/* the requests fail too */});
+      }
     }
     return this.#server;
   }
@@ -405,7 +417,7 @@ export class LspConnection {
     server.initialized = connection.sendRequest<InitializeResult>("initialize", {
       ...initializeParams,
       capabilities: {
-        experimental: { dprint: { version: DPRINT_METHODS_VERSION } },
+        experimental: { dprint: { versions: DPRINT_METHODS_VERSIONS } },
         window: { workDoneProgress: true },
       },
     }).then(result => {

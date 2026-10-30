@@ -1,12 +1,12 @@
 // note: this file should not import "vscode" so that it can be unit tested
 
 /**
- * The version of the `dprint/*` methods of `dprint lsp` that the extension uses (see
- * dprint's docs/editor-extension-development.md), which the extension and the server
- * say they support in the `dprint` experimental capability. A server supports the
- * versions before its own, so it needs to be at least this one.
+ * The versions of the `dprint/*` methods of `dprint lsp` that the extension supports (see
+ * dprint's docs/editor-extension-development.md), which it sends in the `dprint` experimental
+ * capability. The server responds with the one it uses, or without the capability when it
+ * doesn't support any of them.
  */
-export const DPRINT_METHODS_VERSION = 1;
+export const DPRINT_METHODS_VERSIONS = [1];
 
 export const FORMAT_METHOD = "dprint/format";
 export const FILE_INFO_METHOD = "dprint/fileInfo";

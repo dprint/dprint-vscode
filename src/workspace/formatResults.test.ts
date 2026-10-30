@@ -80,7 +80,18 @@ describe("ShownConfigErrors", () => {
     assert.strictEqual(shown.shouldShow("/dprint.json", "Error."), false);
     assert.strictEqual(shown.shouldShow("/other/dprint.json", "Error."), true);
     assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
-    shown.clear();
+    shown.forget("/dprint.json");
     assert.strictEqual(shown.shouldShow("/dprint.json", "Other error."), true);
+    // the other config file wasn't forgotten
+    assert.strictEqual(shown.shouldShow("/other/dprint.json", "Error."), false);
+  });
+
+  it("shows each error of the config files the extension doesn't know about once", () => {
+    const shown = new ShownConfigErrors();
+    assert.strictEqual(shown.shouldShow(undefined, "Error."), true);
+    assert.strictEqual(shown.shouldShow(undefined, "Other error."), true);
+    assert.strictEqual(shown.shouldShow(undefined, "Error."), false);
+    shown.forget("/global/dprint.json");
+    assert.strictEqual(shown.shouldShow(undefined, "Error."), true);
   });
 });

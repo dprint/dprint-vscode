@@ -415,7 +415,11 @@ export class WorkspaceBackend implements vscode.Disposable {
       onConfigChanged: params => {
         this.#logger.logDebug("Configuration changed:", params.uri);
         // an error that's still there is shown again
-        this.#session.shownConfigErrors.clear();
+        this.#session.shownConfigErrors.forget(vscode.Uri.parse(params.uri).fsPath);
+        this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
+      },
+      // the new server doesn't know what the config files were resolved from, which getting them again tells it
+      onRestart: () => {
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
@@ -427,6 +431,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     const approvals = new Approvals({
       ask: askApproval,
       approve: params => connection.approve(params),
+      pendingApprovals: async () => (await connection.pendingApprovals()).approvals,
     });
     return { key, connection, approvals };
   }
@@ -885,6 +890,10 @@ class WorkspaceState {
    * which dprint doesn't watch, so it's told when they change.
    */
   #updateWatchedFiles() {
+    // a state that was stopped while refreshing disposed its watchers
+    if (this.#disposed) {
+      return;
+    }
     const uris = new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []));
     for (const [uri, watcher] of [...this.#fileWatchers]) {
       if (!uris.has(uri)) {
@@ -975,8 +984,8 @@ class WorkspaceState {
     try {
       const result = await service.connection.format({
         ...getDocumentParams(target),
-        // the setting of the extension is used instead of dprint's
-        globalConfig: useGlobalConfig ? "whenNoConfigFile" : "never",
+        // dprint's setting is the environment variable when the setting of the folder is off
+        globalConfig: useGlobalConfig ? "whenNoConfigFile" : undefined,
         text: document.getText(),
         ranges: ranges?.map(toTextRange),
       }, token);
@@ -989,7 +998,7 @@ class WorkspaceState {
           return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         case "notFormatted":
           this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
-          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri, config?.configFilePath ?? "");
+          this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri, config?.configFilePath);
           if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
             // same as choosing to run what its config file says. The document is formatted once
@@ -1065,7 +1074,7 @@ class WorkspaceState {
     result: NotFormattedResult,
     options: FormatDocumentOptions & { useGlobalConfig: boolean },
     documentUri: vscode.Uri,
-    configKey: string,
+    configFilePath: string | undefined,
   ) {
     switch (result.reason) {
       case "noConfigFile":
@@ -1083,7 +1092,7 @@ class WorkspaceState {
         const message = result.message ?? "The configuration file failed to resolve.";
         this.#logger.logError(message);
         // dprint doesn't show these to the user because only the extension knows that the user formatted
-        if (!options.saysWhyNotFormatted && this.#session.shownConfigErrors.shouldShow(configKey, message)) {
+        if (!options.saysWhyNotFormatted && this.#session.shownConfigErrors.shouldShow(configFilePath, message)) {
           vscode.window.showErrorMessage(message);
         }
         break;
@@ -1427,7 +1436,7 @@ class WorkspaceState {
       try {
         const info = await service.connection.fileInfo({
           textDocument: { uri: vscode.Uri.file(uri.fsPath).toString() },
-          globalConfig: getDprintConfig(uri).useGlobalConfig ? "whenNoConfigFile" : "never",
+          globalConfig: getDprintConfig(uri).useGlobalConfig ? "whenNoConfigFile" : undefined,
         });
         return info.status.kind === "ready";
       } catch (err) {

@@ -17,13 +17,15 @@ describe("getServerSupport", () => {
       }),
       { version: "0.65.0" },
     );
-    // a newer version of the methods
-    assert.deepStrictEqual(
-      getServerSupport({
+  });
+
+  it("isn't supported when the server uses a version the extension didn't say it supports", () => {
+    assert.strictEqual(
+      "error" in getServerSupport({
         capabilities: { experimental: { dprint: { version: 2 } } },
         serverInfo: { name: "dprint", version: "0.70.0" },
       }),
-      { version: "0.70.0" },
+      true,
     );
   });
 

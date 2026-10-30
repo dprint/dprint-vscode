@@ -63,6 +63,7 @@ describe("Approvals", () => {
     let decide!: (decision: ApprovalDecision) => void;
     const asked: string[] = [];
     const approvals = new Approvals({
+      pendingApprovals: async () => [],
       ask: pending => {
         asked.push(pending.id);
         return new Promise(resolve => decide = resolve);
@@ -80,6 +81,7 @@ describe("Approvals", () => {
 
   it("rejects when approving fails", async () => {
     const approvals = new Approvals({
+      pendingApprovals: async () => [],
       ask: async () => "allow",
       approve: () => Promise.reject(new Error("Nothing is pending.")),
     });
@@ -88,9 +90,17 @@ describe("Approvals", () => {
 
   it("formats again when what needs to be approved changed", async () => {
     const changedError = Object.assign(new Error("Changed."), { code: -32801 });
-    const allowed = new Approvals({ ask: async () => "allow", approve: () => Promise.reject(changedError) });
+    const allowed = new Approvals({
+      ask: async () => "allow",
+      approve: () => Promise.reject(changedError),
+      pendingApprovals: async () => [],
+    });
     assert.strictEqual(await allowed.request([approval("download")], { isExplicit: false }), true);
-    const denied = new Approvals({ ask: async () => "deny", approve: () => Promise.reject(changedError) });
+    const denied = new Approvals({
+      ask: async () => "deny",
+      approve: () => Promise.reject(changedError),
+      pendingApprovals: async () => [],
+    });
     assert.strictEqual(await denied.request([approval("download")], { isExplicit: false }), false);
   });
 
@@ -99,6 +109,7 @@ describe("Approvals", () => {
     const changedError = Object.assign(new Error("Changed."), { code: -32801, data: { approvals: [changed] } });
     const asked: string[] = [];
     const approvals = new Approvals({
+      pendingApprovals: async () => [],
       ask: async pending => {
         asked.push(pending.id);
         return "allow";
@@ -111,6 +122,29 @@ describe("Approvals", () => {
       },
     });
     assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), true);
+    assert.deepStrictEqual(asked, ["download", "changed"]);
+  });
+
+  it("asks about what's pending for the config file when what needs to be approved changed", async () => {
+    const changedError = Object.assign(new Error("Changed."), { code: -32801 });
+    const changed = { ...approval("changed"), configFile: "file:///dprint.json" };
+    const other = { ...approval("other"), configFile: "file:///other/dprint.json" };
+    const asked: string[] = [];
+    const approvals = new Approvals({
+      ask: async pending => {
+        asked.push(pending.id);
+        return "allow";
+      },
+      approve: async params => {
+        if (params.id === "download") {
+          throw changedError;
+        }
+        return { approvals: [] };
+      },
+      pendingApprovals: async () => [other, changed],
+    });
+    const download = { ...approval("download"), configFile: "file:///dprint.json" };
+    assert.strictEqual(await approvals.request([download], { isExplicit: false }), true);
     assert.deepStrictEqual(asked, ["download", "changed"]);
   });
 
@@ -156,10 +190,12 @@ describe("getApprovalChoices", () => {
     );
   });
 
-  it("leaves out a decision that's newer than the extension", () => {
+  it("shows a decision that's newer than the extension as it is", () => {
     assert.deepStrictEqual(
-      getApprovalChoices({ decisions: ["allow", "trustDomain", "deny"] }).map(choice => choice.decision),
-      ["allow", "deny"],
+      getApprovalChoices({ decisions: ["allow", "trustDomain", "deny"] }).map(
+        choice => [choice.title, choice.decision],
+      ),
+      [["Allow", "allow"], ["trustDomain", "trustDomain"], ["Deny", "deny"]],
     );
   });
 });
@@ -171,6 +207,7 @@ function createApprovals(options: {
   const asked: string[] = [];
   const approved: ApproveParams[] = [];
   const approvals = new Approvals({
+    pendingApprovals: async () => [],
     ask: async (pending, choices) => {
       asked.push(pending.id);
       return options.decide(pending, choices);
