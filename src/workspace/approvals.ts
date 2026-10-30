@@ -55,6 +55,12 @@ export class Approvals {
    * again after it exited doesn't know.
    */
   readonly #sessionDecisions = new Map<string, SessionDecision>();
+  /**
+   * The "Always" decisions by config file that aren't known to be stored yet, which are kept for the
+   * session when a later result for the config file says one couldn't be stored (ex. after allowing
+   * the download that sets up the process plugins, which may be asked about on its own).
+   */
+  readonly #unstoredAlwaysDecisions = new Map<string, [PendingApproval, ApprovalDecision][]>();
   /** Whether what the user answers isn't used anymore (see `cancel`). */
   #isCancelled = false;
 
@@ -74,6 +80,7 @@ export class Approvals {
   forget() {
     this.#asked.clear();
     this.#sessionDecisions.clear();
+    this.#unstoredAlwaysDecisions.clear();
   }
 
   /**
@@ -133,9 +140,6 @@ export class Approvals {
     const sentAgain = new Set<string>();
     // whether an approval wasn't asked about, so not everything was allowed
     let isSkipped = false;
-    // the "Always" decisions, which are kept for the session when one couldn't be stored, which a
-    // later result may say (ex. allowing the download that sets up the process plugins)
-    const alwaysDecisions: [PendingApproval, ApprovalDecision][] = [];
     // the config file of the last decision, which a status after it is for
     let lastConfigFile: ConfigFileIdentifier | undefined;
     while (pending.length > 0) {
@@ -181,16 +185,23 @@ export class Approvals {
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
       lastConfigFile = configFile;
       this.#rememberSessionDecision(approval, decision);
+      const configFileKey = `${configFile.uri}\n${configFile.dirUri}`;
       if (approval.decisions.find(option => option.id === decision)?.always) {
-        alwaysDecisions.push([approval, decision]);
+        const unstored = this.#unstoredAlwaysDecisions.get(configFileKey) ?? [];
+        unstored.push([approval, decision]);
+        this.#unstoredAlwaysDecisions.set(configFileKey, unstored);
       }
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
         if (result.notice != null) {
           // ex. an "Always" decision that couldn't be stored is still used for the session
-          for (const [alwaysApproval, alwaysDecision] of alwaysDecisions) {
+          for (const [alwaysApproval, alwaysDecision] of this.#unstoredAlwaysDecisions.get(configFileKey) ?? []) {
             this.#setSessionDecision(alwaysApproval, alwaysDecision);
           }
+          this.#unstoredAlwaysDecisions.delete(configFileKey);
+        } else if (result.status.kind === "ready") {
+          // dprint stored them once the config file is used
+          this.#unstoredAlwaysDecisions.delete(configFileKey);
         }
         pending = result.approvals;
         status = result.status;

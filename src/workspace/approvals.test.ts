@@ -11,6 +11,14 @@ import {
 import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
 
 const READY: FormatStatus = { kind: "ready" };
+const APPROVAL_REQUIRED: FormatStatus = {
+  kind: "notFormatted",
+  reason: "approvalRequired",
+  message: "",
+  show: "command",
+  severity: "warning",
+  claim: true,
+};
 
 describe("Approvals", () => {
   it("asks about the approval and what else needs to be approved after it", async () => {
@@ -378,7 +386,7 @@ describe("Approvals", () => {
         approved.push(params);
         // the process plugins are set up once the download is allowed, which is when it's stored
         return params.id === "processPlugins"
-          ? { configFile: null, approvals: [approval("download")], status: READY }
+          ? { configFile: null, approvals: [approval("download")], status: APPROVAL_REQUIRED }
           : { configFile: null, approvals: [], status: READY, notice };
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
@@ -391,6 +399,38 @@ describe("Approvals", () => {
       id: "download",
       decision: "allow",
     }]);
+  });
+
+  it("keeps an \"Always\" decision for the session when a result of another request says it couldn't be stored", async () => {
+    const approved: ApproveParams[] = [];
+    const notice = { message: "Failed storing it.", show: "always", severity: "warning" };
+    const approvals = new Approvals({
+      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "allow",
+      approve: async params => {
+        approved.push(params);
+        return params.id === "processPlugins"
+          ? {
+            configFile: null,
+            approvals: [],
+            status: {
+              kind: "notFormatted",
+              reason: "approvalRequired",
+              message: "",
+              show: "command",
+              severity: "warning",
+              claim: true,
+            },
+          }
+          : { configFile: null, approvals: [], status: READY, notice };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    // ex. the user asked about each with the status bar item
+    await approvals.request([approval("processPlugins")], { isExplicit: true });
+    await approvals.request([approval("download")], { isExplicit: true });
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
   });
 
   it("asks about the other approvals when one was denied", async () => {
