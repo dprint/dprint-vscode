@@ -1,6 +1,7 @@
 import { which } from "@dsherret/which";
 import { exec, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -53,13 +54,20 @@ export class DprintExecutable {
 
   static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const command = await getCommand(options);
-    return process.platform === "win32"
-      ? await resolveWindowsCommand(
-        command,
-        commandPath => which(commandPath, whichEnvironment),
-        process.env.PATHEXT,
-      )
-      : command;
+    if (process.platform !== "win32") {
+      return command;
+    }
+    const resolved = await resolveWindowsCommand(
+      command,
+      commandPath => which(commandPath, whichEnvironment),
+      process.env.PATHEXT,
+    );
+    // Windows looks for a bare command in the current directory first, which is the workspace
+    // folder, so one that isn't found on the path isn't started
+    if (isBareCommand(resolved.path)) {
+      throw new Error(`${resolved.path} wasn't found on the path.`);
+    }
+    return resolved;
   }
 
   get cmdPath() {
@@ -179,11 +187,23 @@ function runShellCommand(command: string, cwd: string | undefined) {
   });
 }
 
-/** File system access for `which` that works with the older Node.js versions of vscode. */
+/** Gets if the command is a name without a directory, which is looked for on the path. */
+function isBareCommand(command: string) {
+  return !/[\\/]/.test(command);
+}
+
+/**
+ * File system access for `which` that works with the older Node.js versions of vscode, which only
+ * looks in the absolute directories of the path so a relative one can't be the workspace folder.
+ */
 const whichEnvironment: Parameters<typeof which>[1] = {
   isWindows: process.platform === "win32",
   env(key) {
-    return process.env[key];
+    const value = process.env[key];
+    if (key.toUpperCase() !== "PATH" || value == null) {
+      return value;
+    }
+    return value.split(path.delimiter).filter(dir => path.isAbsolute(dir)).join(path.delimiter);
   },
   async stat(filePath) {
     const info = await fs.promises.stat(filePath);

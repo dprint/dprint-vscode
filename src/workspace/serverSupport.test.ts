@@ -40,6 +40,15 @@ describe("getServerSupport", () => {
     });
   });
 
+  it("uses what dprint says to tell the user when it doesn't support the extension's versions", () => {
+    assert.deepStrictEqual(
+      getServerSupport({
+        capabilities: { experimental: { dprint: { versions: [2], message: "Update the extension." } } },
+      }),
+      { error: "Update the extension.", isUnavailable: false, isVersionMismatch: true },
+    );
+  });
+
   it("says what to update when the server doesn't support the extension's versions", () => {
     const result = (versions: number[]) => ({
       capabilities: { experimental: { dprint: { versions } } },

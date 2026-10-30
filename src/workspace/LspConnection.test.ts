@@ -71,16 +71,18 @@ describe("LspConnection", () => {
       kind: "formatted",
       edits: [{ range: { start: { line: 0, character: 4 }, end: { line: 0, character: 4 } }, newText: "_formatted" }],
     };
-    request.respond(result);
-    assert.deepStrictEqual(await format, result);
+    request.respond({ configFile: null, result });
+    // the result is with the config file that was used
+    assert.deepStrictEqual(await format, { configFile: null, ...result });
 
     const notFormatted = connection.format(
       { textDocument: { uri: "file:///file.ts" }, text: "text" },
       new FakeCancellationToken(),
     );
     const notFormattedResult = { kind: "notFormatted", reason: "notMatched", message: "Not matched." };
-    (await process.nextRequest("dprint/format")).respond(notFormattedResult);
-    assert.deepStrictEqual(await notFormatted, notFormattedResult);
+    const configFile = { uri: "file:///dprint.json", dirUri: "file:///", kind: "local", inWorkspace: true };
+    (await process.nextRequest("dprint/format")).respond({ configFile, result: notFormattedResult });
+    assert.deepStrictEqual(await notFormatted, { configFile, ...notFormattedResult });
   });
 
   it("cancels a format", async () => {

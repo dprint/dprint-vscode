@@ -25,8 +25,12 @@ export interface UnsupportedServer {
 export function getServerSupport(result: InitializeResult): { version: string } | UnsupportedServer {
   const version = result.serverInfo?.version ?? "unknown";
   if (!isSupportedServer(result)) {
-    // a server that has the methods says which versions of them it supports
-    const serverVersions = result.capabilities?.experimental?.dprint?.versions ?? [];
+    // a server that has the methods says what to tell the user, or at least which versions of them it supports
+    const capability = result.capabilities?.experimental?.dprint;
+    if (capability?.message != null) {
+      return { error: capability.message, isUnavailable: false, isVersionMismatch: true };
+    }
+    const serverVersions = capability?.versions ?? [];
     if (serverVersions.length === 0) {
       return {
         error: `dprint ${version} doesn't support the dprint methods of its language server.`,

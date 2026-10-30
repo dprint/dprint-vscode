@@ -70,7 +70,7 @@ describe("Approvals", () => {
         asked.push(pending.id);
         return new Promise(resolve => decide = resolve);
       },
-      approve: async () => ({ approvals: [], status: READY }),
+      approve: async () => ({ configFile: null, approvals: [], status: READY }),
     });
 
     const first = approvals.request([approval("download")], { isExplicit: false });
@@ -137,7 +137,7 @@ describe("Approvals", () => {
         if (params.id === "download") {
           throw changedError;
         }
-        return { approvals: [], status: READY };
+        return { configFile: null, approvals: [], status: READY };
       },
     });
     assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), true);
@@ -158,7 +158,7 @@ describe("Approvals", () => {
         if (params.id === "download") {
           throw changedError;
         }
-        return { approvals: [], status: READY };
+        return { configFile: null, approvals: [], status: READY };
       },
       // dprint only provides what's pending for the config file
       pendingApprovals: async configFile => ({
@@ -209,13 +209,49 @@ describe("Approvals", () => {
         if (params.id === "download") {
           throw otherError;
         }
-        return { approvals: [], status: READY };
+        return { configFile: null, approvals: [], status: READY };
       },
       pendingApprovals: async () => ({ approvals: [pending] }),
     });
     const download = { ...approval("download"), configFile: configFile("file:///dprint.json") };
     assert.strictEqual(await approvals.request([download], { isExplicit: false }), true);
     assert.deepStrictEqual(asked, ["download", "processPlugins"]);
+  });
+
+  it("only denies what replaced a denied approval when it's some of what the user saw", async () => {
+    // a plugin was added since the prompt was shown
+    const replacement = {
+      ...approval("processPlugins"),
+      id: "replacement",
+      items: [...approval("processPlugins").items, { specifier: "https://example.com/added", kind: "plugin" }],
+    };
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "deny",
+      approve: async params => {
+        approved.push(params);
+        throw Object.assign(new Error("Changed."), {
+          code: -32803,
+          data: { kind: "approvalChanged", approvals: [replacement] },
+        });
+      },
+      pendingApprovals: async () => ({ approvals: [] }),
+    });
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
+  });
+
+  it("sends what the user decided for the session again to a dprint process that was started again", async () => {
+    const { approvals, approved } = createApprovals({ decide: () => "allow" });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    approved.length = 0;
+    await approvals.sendSessionDecisionsAgain([approval("processPlugins"), approval("other")]);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "allow" }]);
+    // a restart forgets them
+    approvals.forget();
+    approved.length = 0;
+    await approvals.sendSessionDecisionsAgain([approval("processPlugins")]);
+    assert.deepStrictEqual(approved, []);
   });
 
   it("denies what replaced an approval the user denied, but never allows it", async () => {
@@ -232,7 +268,7 @@ describe("Approvals", () => {
               data: { kind: "approvalChanged", approvals: [replacement] },
             });
           }
-          return { approvals: [], status: READY };
+          return { configFile: null, approvals: [], status: READY };
         },
         pendingApprovals: async () => ({ approvals: [] }),
       });
@@ -268,13 +304,30 @@ describe("getApprovalMessage", () => {
     const processPlugins = approval("processPlugins");
     processPlugins.items[0] = {
       ...processPlugins.items[0],
-      configKey: "exec",
+      plugin: { name: "dprint-plugin-exec", version: "0.5.0", configKey: "exec" },
       configuration: { commands: [{ command: "a" }] },
     };
     assert.strictEqual(
       getApprovalMessage(processPlugins),
       "Approve processPlugins? They run with this configuration: {\"exec\":{\"commands\":[{\"command\":\"a\"}]}}",
     );
+  });
+
+  it("has what the process plugins that weren't set up run with", () => {
+    const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
+    assert.strictEqual(
+      getApprovalMessage(processPlugins),
+      "Approve processPlugins? The plugins that weren't set up before run with this configuration: "
+        + "{\"exec\":{\"commands\":[]}}",
+    );
+  });
+
+  it("says when the config file is outside the workspace", () => {
+    const download = {
+      ...approval("download"),
+      configFile: { ...configFile("file:///tmp/dprint.json"), inWorkspace: false },
+    };
+    assert.match(getApprovalMessage(download), /The configuration file is outside the workspace: .*dprint\.json$/);
   });
 });
 
@@ -343,7 +396,11 @@ function createApprovals(options: {
     },
     approve: async params => {
       approved.push(params);
-      return { approvals: options.approvalsAfter?.[params.id] ?? [], status: options.statusAfter ?? READY };
+      return {
+        configFile: null,
+        approvals: options.approvalsAfter?.[params.id] ?? [],
+        status: options.statusAfter ?? READY,
+      };
     },
   });
   return { approvals, asked, approved };
@@ -354,8 +411,9 @@ function approval(id: string): PendingApproval {
   return {
     id,
     kind: isProcessPlugins ? "processPlugins" : "downloads",
+    title: id,
     configFile: configFile("file:///dprint.json"),
-    items: [{ specifier: `https://example.com/${id}` }],
+    items: [{ specifier: `https://example.com/${id}`, kind: "plugin" }],
     decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
       id,
       label: id,

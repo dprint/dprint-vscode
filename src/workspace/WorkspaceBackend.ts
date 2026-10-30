@@ -42,6 +42,7 @@ import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
+  type Action,
   type ConfigFileInfo,
   type ConfigInfoResult,
   type DocumentLanguage,
@@ -49,6 +50,7 @@ import {
   type MessageParams,
   MessageType,
   type NotFormattedResult,
+  type Notice,
   type PendingApproval,
   type PublishDiagnosticsParams,
   type Severity,
@@ -300,6 +302,11 @@ export class WorkspaceBackend implements vscode.Disposable {
     return this.#state?.forgetDecisions() ?? Promise.resolve();
   }
 
+  /** Shows what the user decided about what the config files need approved, which they can forget. */
+  showDecisions() {
+    return this.#state?.showDecisions() ?? Promise.resolve();
+  }
+
   dispose() {
     this.#disposed = true;
     this.#pendingState?.dispose();
@@ -429,27 +436,39 @@ export class WorkspaceBackend implements vscode.Disposable {
       showProgress,
       onDiagnostics: params => this.#setDiagnostics(connection, params),
       onConfigChanged: params => {
-        this.#logger.logDebug("Configuration changed:", params.uri ?? "(every configuration file)");
+        this.#logger.logDebug("Configuration changed:", params.configFile?.uri ?? "(every configuration file)");
         // only the schema changed (ex. a plugin's schema downloaded), which getting it again is enough for
-        if (params.changes?.length === 1 && params.changes[0] === "schema") {
+        if (params.schemaOnly) {
           this.#state?.refreshSchema();
           return;
         }
         // an error that's still there is shown again
-        if (params.uri == null) {
+        if (params.configFile == null) {
           this.#session.shownConfigErrors.clear();
         } else {
-          this.#session.shownConfigErrors.forget({ uri: params.uri, dirUri: params.dirUri });
+          this.#session.shownConfigErrors.forget(params.configFile);
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
-      // the new server doesn't know what the config files were resolved from, which getting them again tells it
+      // the new server doesn't know what the config files were resolved from, which getting them again tells
+      // it, or what the user decided for the session
       onRestart: () => {
-        this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
+        this.onConfigFileChanged()
+          .then(() => this.#sendSessionDecisionsAgain(connection))
+          .catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
     });
     return connection;
+  }
+
+  /** Sends what the user decided for the session again to a dprint process that was started again. */
+  async #sendSessionDecisionsAgain(connection: LspConnection) {
+    const service = this.#state?.services.find(service => service.connection === connection);
+    if (service == null) {
+      return;
+    }
+    service.approvals.sendSessionDecisionsAgain((await connection.pendingApprovals()).approvals);
   }
 
   #createService(key: string, connection: LspConnection): Service {
@@ -904,6 +923,34 @@ class WorkspaceState {
     return pending;
   }
 
+  /** Shows what the user decided for the config files, which they can forget. */
+  async showDecisions() {
+    const results = await Promise.all(this.#resolvedServices.map(service => service.connection.decisions()));
+    const decisions = results.flatMap(result => result.decisions);
+    const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
+      label: `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
+        decision.items.join(", ")
+      }`,
+      description: decision.configFile == null
+        ? "Every configuration file"
+        : vscode.Uri.parse(decision.configFile).fsPath,
+    }));
+    if (results.some(result => result.allowProcessPlugins)) {
+      items.unshift({ label: "Process plugins are allowed by dprint's settings file (editor.allowProcessPlugins)" });
+    }
+    if (items.length === 0) {
+      vscode.window.showInformationMessage("Nothing was decided about what the configuration files need approved.");
+      return;
+    }
+    items.push({ label: "Forget the decisions", forget: true });
+    const selection = await vscode.window.showQuickPick(items, {
+      placeHolder: "What was decided about what dprint needs approved",
+    });
+    if (selection?.forget) {
+      await this.forgetDecisions();
+    }
+  }
+
   /** Forgets what the user decided for every config file, including the "Always" decisions. */
   async forgetDecisions() {
     if (this.#resolvedServices.length === 0) {
@@ -1067,6 +1114,9 @@ class WorkspaceState {
       switch (result.kind) {
         case "formatted":
           this.#logger.logDebug("Response - Formatted:", target.uri);
+          if (result.notice != null) {
+            this.#onMessage(result.notice, result.configFile, options);
+          }
           return { edits: result.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         case "notFormatted":
           this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
@@ -1101,14 +1151,15 @@ class WorkspaceState {
             message?: string;
             show?: ShowPolicy;
             severity?: Severity;
+            actions?: Action[];
             configFile?: ConfigFileInfo | null;
           };
-          this.#onFormatFailed(
-            failed.message ?? "Formatting failed.",
-            failed.show ?? "command",
-            failed.severity ?? "warning",
-            failed.configFile ?? null,
-          );
+          this.#onFormatFailed({
+            message: `dprint failed to format the document: ${failed.message ?? "Formatting failed."}`,
+            show: failed.show ?? "command",
+            severity: failed.severity ?? "warning",
+            actions: failed.actions,
+          }, failed.configFile ?? null);
           return { notFormattedReason: "failed" };
         }
       }
@@ -1180,32 +1231,37 @@ class WorkspaceState {
         }
         break;
       default: {
-        if (options.saysWhyNotFormatted) {
-          break;
-        }
-        // dprint doesn't show these to the user because only the extension knows that the user formatted
-        switch (result.show) {
-          case "always":
-            this.#logger.logError(result.message);
-            showSeverityMessage(result.severity, result.message);
-            break;
-          case "oncePerConfigFile": {
-            this.#logger.logError(result.message);
-            const configFile = result.configFile == null
-              ? undefined
-              : { uri: result.configFile.uri, dirUri: result.configFile.dirUri };
-            if (this.#session.shownConfigErrors.shouldShow(configFile, result.message)) {
-              showSeverityMessage(result.severity, result.message);
-            }
-            break;
-          }
-          default:
-            // only for a command, which says why itself
-            this.#logger.logInfo(result.message);
-            break;
+        this.#onMessage(result, result.configFile, options);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Shows a message of dprint like it says, which dprint doesn't show to the user because only
+   * the extension knows that the user formatted.
+   */
+  #onMessage(message: Notice, configFile: ConfigFileInfo | null, options: FormatDocumentOptions) {
+    if (options.saysWhyNotFormatted) {
+      return;
+    }
+    switch (message.show) {
+      case "always":
+        this.#logger.logError(message.message);
+        showSeverityMessage(message);
+        break;
+      case "oncePerConfigFile": {
+        this.#logger.logError(message.message);
+        const identifier = configFile == null ? undefined : { uri: configFile.uri, dirUri: configFile.dirUri };
+        if (this.#session.shownConfigErrors.shouldShow(identifier, message.message)) {
+          showSeverityMessage(message);
         }
         break;
       }
+      default:
+        // only for a command, which says why itself
+        this.#logger.logInfo(message.message);
+        break;
     }
   }
 
@@ -1240,26 +1296,14 @@ class WorkspaceState {
     });
   }
 
-  #onFormatFailed(message: string, show: ShowPolicy, severity: Severity, configFile: ConfigFileInfo | null) {
-    switch (show) {
-      case "always":
-        this.#logger.logError("Error formatting text:", message);
-        showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
-        break;
-      case "oncePerConfigFile": {
-        this.#logger.logError("Error formatting text:", message);
-        const identifier = configFile == null ? undefined : { uri: configFile.uri, dirUri: configFile.dirUri };
-        if (this.#session.shownConfigErrors.shouldShow(identifier, message)) {
-          showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
-        }
-        break;
-      }
-      default:
-        // ex. a syntax error isn't shown because a format usually happens without the user doing
-        // anything (ex. on save) and the editor already shows it
-        this.#logger.logWarn("Error formatting text:", message);
-        break;
+  #onFormatFailed(message: Notice, configFile: ConfigFileInfo | null) {
+    // ex. a syntax error isn't shown because a format usually happens without the user doing
+    // anything (ex. on save) and the editor already shows it
+    if (message.show !== "always" && message.show !== "oncePerConfigFile") {
+      this.#logger.logWarn("Error formatting text:", message.message);
+      return;
     }
+    this.#onMessage(message, configFile, {});
   }
 
   /**
@@ -1766,16 +1810,21 @@ function getFileChangeType(type: ConfigFileChangeType) {
 }
 
 /** Shows the message to the user like its severity says, which is a warning for one that isn't known. */
-function showSeverityMessage(severity: Severity, message: string) {
-  switch (severity) {
-    case "error":
-      vscode.window.showErrorMessage(message);
-      break;
-    case "info":
-      vscode.window.showInformationMessage(message);
-      break;
-    default:
-      vscode.window.showWarningMessage(message);
-      break;
-  }
+function showSeverityMessage(message: Notice) {
+  // the actions that aren't known are left out
+  const actions = (message.actions ?? []).filter(
+    (action): action is { kind: "openUri"; title: string; uri: string } => action.kind === "openUri",
+  );
+  const titles = actions.map(action => action.title);
+  const show = message.severity === "error"
+    ? vscode.window.showErrorMessage
+    : message.severity === "info"
+    ? vscode.window.showInformationMessage
+    : vscode.window.showWarningMessage;
+  show(message.message, ...titles).then(selection => {
+    const action = actions.find(action => action.title === selection);
+    if (action != null) {
+      vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(action.uri));
+    }
+  });
 }

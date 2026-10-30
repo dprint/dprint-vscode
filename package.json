@@ -45,6 +45,10 @@
       {
         "command": "dprint.forgetDecisions",
         "title": "Dprint: Forget Approval Decisions"
+      },
+      {
+        "command": "dprint.showDecisions",
+        "title": "Dprint: Show Approval Decisions"
       }
     ],
     "menus": {

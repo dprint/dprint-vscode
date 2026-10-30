@@ -19,14 +19,18 @@ import {
   type ConfigInfoResult,
   type ConfigParams,
   type ConfigSchemaResult,
+  DECISIONS_METHOD,
+  type DecisionsResult,
   DPRINT_METHODS_VERSIONS,
   FILE_INFO_METHOD,
   type FileInfoParams,
   type FileInfoResult,
   FORGET_DECISIONS_METHOD,
   type ForgetDecisionsParams,
+  type ForgetDecisionsResult,
   FORMAT_METHOD,
   type FormatParams,
+  type FormatResponse,
   type FormatResult,
   type InitializeResult,
   type MessageParams,
@@ -153,7 +157,11 @@ export class LspConnection {
   }
 
   forgetDecisions(params: ForgetDecisionsParams = {}) {
-    return this.#request<object>(FORGET_DECISIONS_METHOD, params);
+    return this.#request<ForgetDecisionsResult>(FORGET_DECISIONS_METHOD, params);
+  }
+
+  decisions() {
+    return this.#request<DecisionsResult>(DECISIONS_METHOD, {});
   }
 
   configInfo(params: ConfigParams) {
@@ -169,8 +177,12 @@ export class LspConnection {
   }
 
   /** Formats the text of the document, which resolves with undefined when the format was cancelled. */
-  format(params: FormatParams, token: ConnectionCancellationToken): Promise<FormatResult | undefined> {
-    return this.#track(server => this.#sendRequest<FormatResult>(server, FORMAT_METHOD, params, token), token);
+  async format(params: FormatParams, token: ConnectionCancellationToken): Promise<FormatResult | undefined> {
+    const response = await this.#track(
+      server => this.#sendRequest<FormatResponse>(server, FORMAT_METHOD, params, token),
+      token,
+    );
+    return response == null ? undefined : { configFile: response.configFile, ...response.result };
   }
 
   /** Sends the settings to a running server. One that's started later is initialized with them. */

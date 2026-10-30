@@ -16,6 +16,7 @@ export const APPROVE_METHOD = "dprint/approve";
 export const RESET_METHOD = "dprint/reset";
 export const PENDING_APPROVALS_METHOD = "dprint/pendingApprovals";
 export const FORGET_DECISIONS_METHOD = "dprint/forgetDecisions";
+export const DECISIONS_METHOD = "dprint/decisions";
 export const CONFIG_CHANGED_NOTIFICATION = "dprint/configChanged";
 
 /** The params of the initialize request that the extension provides. */
@@ -40,9 +41,11 @@ export interface ServerCapability {
   /** The versions of the methods it supports. */
   versions?: number[];
   /** Where dprint's own files are, which are left out when their directory can't be found. */
-  files?: { settings?: string; approvals?: string; globalConfig?: string };
+  files?: { settingsUri?: string; approvalsUri?: string; globalConfigUri?: string };
   /** The globs of the config files to watch in the workspace folders. */
   configFileGlobs?: string[];
+  /** What to tell the user when there isn't a `version` (ex. that dprint or the extension needs to be updated). */
+  message?: string;
 }
 
 export interface WorkspaceFolder {
@@ -63,7 +66,7 @@ export interface DocumentParams {
   /** The language of a document that isn't a file, which dprint names the file it formats the document as after. */
   language?: DocumentLanguage;
   /** The notebook when the document is one of its cells. */
-  notebookDocument?: { uri: string };
+  notebookDocument?: { uri: string; fileUri?: string };
   /** When the global config file is used when there's no config file in an ancestor directory, which is dprint's setting when not provided. */
   globalConfig?: GlobalConfigUse;
 }
@@ -86,14 +89,13 @@ export interface FormatParams extends DocumentParams {
   overrideConfig?: { indentWidth?: number; useTabs?: boolean };
 }
 
-export type FormatResult =
-  & {
-    /** The config file that was used for the document. */
-    configFile: ConfigFileInfo | null;
-  }
-  & (
+/** What dprint responds to a format with. */
+export interface FormatResponse {
+  /** The config file that was used for the document. */
+  configFile: ConfigFileInfo | null;
+  result:
     /** The edits of the text that was sent, which are empty when it's already formatted. */
-    | { kind: "formatted"; edits: TextEdit[] }
+    | { kind: "formatted"; edits: TextEdit[]; notice?: Notice }
     | NotFormattedResult
     | {
       kind: "failed";
@@ -101,9 +103,25 @@ export type FormatResult =
       message: string;
       show: ShowPolicy;
       severity: Severity;
+      claim: boolean;
+      actions?: Action[];
       plugin?: FilePlugin;
-    }
-  );
+    };
+}
+
+/** What formatting a document did with the config file that was used. */
+export type FormatResult = { configFile: ConfigFileInfo | null } & FormatResponse["result"];
+
+/** Something to tell the user about a document that was formatted or a config file that's used. */
+export interface Notice {
+  message: string;
+  show: ShowPolicy;
+  severity: Severity;
+  actions?: Action[];
+}
+
+/** Something the user can do about a message, which may be a kind that's newer than the extension. */
+export type Action = { kind: "openUri"; title: string; uri: string } | { kind: string & {}; title: string };
 
 export interface NotFormattedResult extends NotFormatted {
   kind: "notFormatted";
@@ -122,6 +140,8 @@ export interface NotFormatted {
   claim: boolean;
   /** What the user needs to approve for the file to be formatted. */
   approvals?: PendingApproval[];
+  /** What the user can do about it. */
+  actions?: Action[];
 }
 
 /**
@@ -134,7 +154,10 @@ export type ShowPolicy = "always" | "command" | "oncePerConfigFile" | (string & 
 export type Severity = "error" | "warning" | "info" | (string & {});
 
 /** Whether a document or the documents of a config file are formatted, which may be a kind that's newer than the extension. */
-export type FormatStatus = { kind: "ready" } | ({ kind: "notFormatted" } & NotFormatted) | { kind: string & {} };
+export type FormatStatus =
+  | { kind: "ready"; notice?: Notice }
+  | ({ kind: "notFormatted" } & NotFormatted)
+  | { kind: string & {} };
 
 /** Why dprint didn't format a file, which may be a reason that's newer than the extension. */
 export type NotFormattedReason =
@@ -154,7 +177,9 @@ export type NotFormattedReason =
   /** The document isn't a file, so its language is needed. */
   | "languageRequired"
   /** The config file that was asked about doesn't exist (ex. it was deleted). */
-  | "configFileNotFound"
+  | "configFileMissing"
+  /** The config file that was asked about isn't used because another one in its directory is. */
+  | "configFileNotUsed"
   | (string & {});
 
 /**
@@ -168,6 +193,8 @@ export interface PendingApproval {
   /** Identifies exactly what's approved, which changes when it does. */
   id: string;
   kind: ApprovalKind;
+  /** A short description of what's approved. */
+  title: string;
   /** The config file that needs it. */
   configFile: ConfigFileInfo;
   /** What's downloaded or run. */
@@ -180,16 +207,16 @@ export interface PendingApproval {
   previousDecision?: ApprovalDecision;
   /** The message to show the user when asking. */
   message: string;
+  /** What the process plugins that weren't set up before run with once they're allowed, which includes what it extends. */
+  trustedConfiguration?: { [key: string]: unknown };
 }
 
 export interface ApprovalItem {
   /** The url, path, or npm specifier. */
   specifier: string;
-  kind?: "plugin" | "config" | (string & {});
-  /** The name, version, and config key of a plugin that was set up before. */
-  name?: string;
-  version?: string;
-  configKey?: string;
+  kind: "plugin" | "config" | (string & {});
+  /** The plugin when it was set up before. */
+  plugin?: FilePlugin;
   /** The configuration a process plugin that was set up before runs with. */
   configuration?: unknown;
 }
@@ -216,6 +243,8 @@ export interface ApproveParams {
 }
 
 export interface ApproveResult {
+  /** The config file the approval was for. */
+  configFile: ConfigFileInfo | null;
   /**
    * What needs to be approved now for the config file, which is empty when nothing does. It has
    * what was denied when the decision was to deny it.
@@ -228,7 +257,7 @@ export interface ApproveResult {
 /** The data of an error, which may be a kind that's newer than the extension. */
 export type ErrorData =
   /** What needs to be approved for the config file now and whether it's used when they're known. */
-  | { kind: "approvalChanged"; approvals?: PendingApproval[]; status?: FormatStatus }
+  | { kind: "approvalChanged"; configFile?: ConfigFileInfo; approvals?: PendingApproval[]; status?: FormatStatus }
   | { kind: string & {} };
 
 /** Identifies a config file, with the directory it's used for. */
@@ -251,6 +280,28 @@ export interface PendingApprovalsResult {
 export interface ForgetDecisionsParams {
   /** The config file to forget the decisions of, which is every config file when not provided. */
   configFile?: ConfigFileIdentifier;
+}
+
+export interface ForgetDecisionsResult {
+  /** The decisions that were forgotten. */
+  decisions: Decision[];
+}
+
+export interface DecisionsResult {
+  decisions: Decision[];
+  /** Whether the settings file allows every process plugin without asking. */
+  allowProcessPlugins: boolean;
+}
+
+/** Something the user decided about what a config file needs approved. */
+export interface Decision {
+  kind: ApprovalKind;
+  /** The config file it's for, which is missing for a download that's allowed for every config file. */
+  configFile?: string;
+  /** The urls, paths, or specifiers it's for. */
+  items: string[];
+  allows: boolean;
+  always: boolean;
 }
 
 /** The error code of a request for something that changed (ex. an approval that isn't pending anymore). */
@@ -333,13 +384,11 @@ export interface ConfigSchemaResult {
 }
 
 export interface ConfigChangedParams {
-  /** The canonical path of the config file, which is every config file when it's not provided. */
-  uri?: string;
-  /** The directory it's used for, which is every directory it's used for when not provided. */
-  dirUri?: string;
+  /** The config file, which is every config file when it's not provided. */
+  configFile?: ConfigFileIdentifier;
   reason?: "created" | "changed" | "deleted" | (string & {});
-  /** What changed, which is anything when it's not provided. */
-  changes?: ("schema" | (string & {}))[];
+  /** Whether only its schema changed. */
+  schemaOnly?: boolean;
 }
 
 /** A range of zero-based lines and UTF-16 characters. */

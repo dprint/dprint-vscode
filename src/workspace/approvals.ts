@@ -39,6 +39,11 @@ export class Approvals {
   readonly #asked = new Set<string>();
   /** The approvals being asked about, which the formats of the other documents of the config file share. */
   readonly #inProgress = new Map<string, Promise<boolean>>();
+  /**
+   * What the user decided for the session by approval id, which a dprint process that was started
+   * again after it exited doesn't know.
+   */
+  readonly #sessionDecisions = new Map<string, ApprovalDecision>();
 
   constructor(options: ApprovalsOptions) {
     this.#options = options;
@@ -54,6 +59,20 @@ export class Approvals {
   /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
   forget() {
     this.#asked.clear();
+    this.#sessionDecisions.clear();
+  }
+
+  /**
+   * Sends what the user decided for the session again for the approvals that are pending again,
+   * which is for a dprint process that was started again after it exited.
+   */
+  async sendSessionDecisionsAgain(pending: PendingApproval[]) {
+    for (const approval of pending) {
+      const decision = this.#sessionDecisions.get(approval.id);
+      if (decision != null && approval.decisions.some(option => option.id === decision)) {
+        await this.#options.approve({ id: approval.id, decision }).catch(() => {/* it's asked about again */});
+      }
+    }
   }
 
   request(approvals: PendingApproval[], options: { isExplicit: boolean }): Promise<boolean> {
@@ -90,6 +109,9 @@ export class Approvals {
       }
       const allows = isAllowed(approval, decision);
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
+      if (!approval.decisions.find(option => option.id === decision)?.always) {
+        this.#sessionDecisions.set(approval.id, decision);
+      }
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
         pending = result.approvals;
@@ -110,8 +132,11 @@ export class Approvals {
         // what needs to be approved changed (ex. the config file changed), so the decision wasn't used
         ({ approvals: pending, status } = getChangedResult(err) ?? await this.#options.pendingApprovals(configFile));
         if (!allows) {
-          // the user denied what replaced it too, which is never done for allowing it
-          const replacement = pending.find(other => other.kind === approval.kind && !other.denied);
+          // the user denied what replaced it too when it's some of what they saw, which is never done for allowing it
+          const deniedItems = new Set(approval.items.map(item => item.specifier));
+          const replacement = pending.find(other =>
+            other.kind === approval.kind && !other.denied && other.items.every(item => deniedItems.has(item.specifier))
+          );
           const denial = replacement?.decisions.find(option => option.id === decision);
           if (replacement != null && denial != null) {
             await this.#options.approve({ id: replacement.id, decision }).catch(() => {/* it's asked about later */});
@@ -140,11 +165,17 @@ export function getApprovalMessage(approval: PendingApproval) {
   }
   const configurations = approval.items
     .filter(item => item.configuration != null)
-    .map(item => [item.configKey ?? item.specifier, item.configuration]);
-  if (configurations.length === 0) {
-    return message;
+    .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
+  if (configurations.length > 0) {
+    message += ` They run with this configuration: ${JSON.stringify(Object.fromEntries(configurations))}`;
   }
-  return `${message} They run with this configuration: ${JSON.stringify(Object.fromEntries(configurations))}`;
+  // what a process plugin that wasn't set up before runs with, which includes what the config file extends
+  if (approval.trustedConfiguration != null) {
+    message += ` The plugins that weren't set up before run with this configuration: ${
+      JSON.stringify(approval.trustedConfiguration)
+    }`;
+  }
+  return message;
 }
 
 /** Gets the path of a file uri to show the user, which is the uri for another kind of uri (ex. https). */
