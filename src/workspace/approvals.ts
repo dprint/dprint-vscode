@@ -36,7 +36,7 @@ export interface ApprovalsOptions {
    * Shows why the config file isn't used after what the user allowed (ex. allowing a download
    * revealed an error in it).
    */
-  showNotUsed?(notFormatted: NotFormatted): void;
+  showNotUsed?(notFormatted: NotFormatted, configFile: ConfigFileIdentifier): void;
 }
 
 /**
@@ -133,6 +133,11 @@ export class Approvals {
     const sentAgain = new Set<string>();
     // whether an approval wasn't asked about, so not everything was allowed
     let isSkipped = false;
+    // the "Always" decisions, which are kept for the session when one couldn't be stored, which a
+    // later result may say (ex. allowing the download that sets up the process plugins)
+    const alwaysDecisions: [PendingApproval, ApprovalDecision][] = [];
+    // the config file of the last decision, which a status after it is for
+    let lastConfigFile: ConfigFileIdentifier | undefined;
     while (pending.length > 0) {
       const approval = pending.find(approval => !askedNow.has(approval.id));
       if (approval == null) {
@@ -174,12 +179,18 @@ export class Approvals {
       }
       const allows = isAllowed(approval, decision);
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
+      lastConfigFile = configFile;
       this.#rememberSessionDecision(approval, decision);
+      if (approval.decisions.find(option => option.id === decision)?.always) {
+        alwaysDecisions.push([approval, decision]);
+      }
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
         if (result.notice != null) {
           // ex. an "Always" decision that couldn't be stored is still used for the session
-          this.#setSessionDecision(approval, decision);
+          for (const [alwaysApproval, alwaysDecision] of alwaysDecisions) {
+            this.#setSessionDecision(alwaysApproval, alwaysDecision);
+          }
         }
         pending = result.approvals;
         status = result.status;
@@ -228,7 +239,7 @@ export class Approvals {
     // it's formatted again once the config file is used
     const notFormatted = status == null ? undefined : getNotFormatted(status);
     if (!isSkipped && notFormatted != null && (notFormatted.approvals ?? []).every(approval => approval.denied)) {
-      this.#options.showNotUsed?.(notFormatted);
+      this.#options.showNotUsed?.(notFormatted, lastConfigFile!);
     }
     return !isSkipped && notFormatted == null;
   }
@@ -259,7 +270,10 @@ export class Approvals {
   /** Remembers what the user decided for the session, which an "Always" decision replaces. */
   #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
     this.#forgetSessionDecision(approval);
-    if (!approval.decisions.find(option => option.id === decision)?.always) {
+    if (approval.decisions.find(option => option.id === decision)?.always) {
+      // it replaces what was decided before in its group too
+      this.#forgetGroup(getDecisionGroup(approval));
+    } else {
       this.#setSessionDecision(approval, decision);
     }
   }
@@ -269,12 +283,18 @@ export class Approvals {
    * denial replaces an allow of an earlier configuration of a config file's process plugins).
    */
   #setSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
+    const decisionGroup = getDecisionGroup(approval);
+    this.#forgetGroup(decisionGroup);
+    this.#sessionDecisions.set(approval.id, { decision, decisionGroup });
+  }
+
+  /** Forgets what the user decided for the session in the group. */
+  #forgetGroup(decisionGroup: string) {
     for (const [id, existing] of this.#sessionDecisions) {
-      if (existing.decisionGroup === approval.decisionGroup) {
+      if (existing.decisionGroup === decisionGroup) {
         this.#sessionDecisions.delete(id);
       }
     }
-    this.#sessionDecisions.set(approval.id, { decision, decisionGroup: approval.decisionGroup });
   }
 
   /** Forgets what the user decided for the session about the approval, including by its earlier ids. */
@@ -354,6 +374,11 @@ function toCommentLines(text: string) {
 /** Gets text as one line of a comment. */
 function toCommentLine(text: string) {
   return text.replace(/\r\n|[\r\n\u2028\u2029]/g, " ");
+}
+
+/** Gets the group of the approval's decisions, which is its own when dprint doesn't say. */
+function getDecisionGroup(approval: PendingApproval) {
+  return approval.decisionGroup ?? approval.id;
 }
 
 /** Gets the earlier ids of the approval, which are like its id. */

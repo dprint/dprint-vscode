@@ -208,7 +208,7 @@ export interface PendingApproval {
   /** Earlier ids of the same approval (ex. before its process plugins were set up), which are like `id` in that order. */
   previousIds?: string[];
   /** The decisions of the session that a decision about it replaces have the same group (ex. a config file's process plugins). */
-  decisionGroup: string;
+  decisionGroup?: string;
   /** What the process plugins that weren't set up before run with once they're allowed, which includes what it extends. */
   trustedConfiguration?: { [key: string]: unknown };
 }

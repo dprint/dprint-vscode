@@ -369,6 +369,30 @@ describe("Approvals", () => {
     assert.deepStrictEqual(shown, ["The config file has an error."]);
   });
 
+  it("keeps an \"Always\" decision for the session when a later result says it couldn't be stored", async () => {
+    const approved: ApproveParams[] = [];
+    const notice = { message: "Failed storing it.", show: "always", severity: "warning" };
+    const approvals = new Approvals({
+      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "allow",
+      approve: async params => {
+        approved.push(params);
+        // the process plugins are set up once the download is allowed, which is when it's stored
+        return params.id === "processPlugins"
+          ? { configFile: null, approvals: [approval("download")], status: READY }
+          : { configFile: null, approvals: [], status: READY, notice };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), true);
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
+    // and what it reveals that was decided for the session
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }, {
+      id: "download",
+      decision: "allow",
+    }]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

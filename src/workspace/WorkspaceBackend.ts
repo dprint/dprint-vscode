@@ -513,8 +513,12 @@ export class WorkspaceBackend implements vscode.Disposable {
       },
       // it's for one config file
       pendingApprovals: async configFile => await connection.pendingApprovals({ configFile }) as ConfigApprovals,
-      // the user is waiting on the decision they made, like for a command
-      showNotUsed: notFormatted => showSeverityMessage(notFormatted),
+      // the user is waiting on the decision they made, like for a command, and it's shown once like
+      // the errors of a config file so the next format doesn't show it again
+      showNotUsed: (notFormatted, configFile) => {
+        this.#session.shownConfigErrors.shouldShow(configFile, notFormatted.message);
+        showSeverityMessage(notFormatted);
+      },
     });
     return { key, connection, approvals };
   }
@@ -1029,9 +1033,10 @@ class WorkspaceState {
     }
     // each process forgets what was decided for its session, and the stored decisions are shared
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
-      const result = await service.connection.forgetDecisions();
-      // the user is asked again even about what they were asked about before
+      // the user is asked again even about what they were asked about before, which is forgotten first
+      // so a dprint process that's started again (ex. it exited during the request) isn't sent them again
       service.approvals.forget();
+      const result = await service.connection.forgetDecisions();
       return result.notice;
     }));
     const failure = results.find(result => result.status === "rejected");
@@ -1243,10 +1248,9 @@ class WorkspaceState {
           }
           return getFormatDocumentResult(notFormatted.reason, notFormatted.message, target.notebookUri != null);
         }
-        default: {
-          // includes the kinds that are newer than the extension without a claim, which are only shown
-          // for a command (VS Code chooses the formatter by the config file's patterns, so a failure's
-          // claim doesn't change which documents dprint formats)
+        case "failed": {
+          // VS Code chooses the formatter by the config file's patterns, so a failure's claim doesn't
+          // change which documents dprint formats
           const failed = result as {
             message?: string;
             show?: ShowPolicy;
