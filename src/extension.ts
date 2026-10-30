@@ -8,6 +8,7 @@ import { RealEnvironment } from "./environment";
 import type { ConfigFileChangeType, ExtensionBackend } from "./ExtensionBackend";
 import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
 import { Logger } from "./logger";
+import { toPlainNotificationText } from "./workspace/approvals";
 
 /** The context key for if the commands to format using the global config file are shown. */
 const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
@@ -231,13 +232,15 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   function showNotFormattedMessage(reason: NotFormattedReason, message = getNotFormattedMessage(reason)) {
+    // it may be dprint's message, which has text from a config file
+    const text = toPlainNotificationText(message);
     if (reason !== "failed") {
-      vscode.window.showInformationMessage(message);
+      vscode.window.showInformationMessage(text);
       return;
     }
     // the details were logged
     const buttonText = "Go to output";
-    vscode.window.showWarningMessage(message, buttonText).then(selection => {
+    vscode.window.showWarningMessage(text, buttonText).then(selection => {
       if (selection === buttonText) {
         globalState.outputChannel.show();
       }

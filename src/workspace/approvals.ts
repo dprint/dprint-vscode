@@ -49,6 +49,30 @@ export class Approvals {
     this.#options = options;
   }
 
+  /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
+  forget() {
+    this.#asked.clear();
+    this.#sessionDecisions.clear();
+  }
+
+  /**
+   * Sends what the user decided for the session again for the approvals that are pending again
+   * without asking (ex. for a dprint process that was started again after it exited, which doesn't
+   * know it), which resolves to whether any was sent.
+   */
+  async sendSessionDecisionsAgain(pending: PendingApproval[]) {
+    let isSent = false;
+    for (const approval of pending) {
+      const decision = this.#getSessionDecision(approval);
+      if (decision != null) {
+        await this.#options.approve({ id: approval.id, decision })
+          .then(() => isSent = true)
+          .catch(() => {/* it's asked about again */});
+      }
+    }
+    return isSent;
+  }
+
   /**
    * Asks the user about the approvals and then what else needs to be approved after them,
    * which resolves to whether it was all allowed. That's when a document is formatted again.
@@ -56,12 +80,6 @@ export class Approvals {
    * @param options.isExplicit - Whether the user asked for it (ex. with a command), which asks
    * about what they denied or were already asked about.
    */
-  /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
-  forget() {
-    this.#asked.clear();
-    this.#sessionDecisions.clear();
-  }
-
   request(approvals: PendingApproval[], options: { isExplicit: boolean }): Promise<boolean> {
     const key = approvals.map(approval => approval.id).sort().join("\n");
     const inProgress = this.#inProgress.get(key);
@@ -78,6 +96,10 @@ export class Approvals {
     // whether the config file is used now, which is only known after something was approved
     let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
+    // the decisions to send again for an approval that's pending again after it changed
+    const decisionsToSendAgain = new Map<string, ApprovalDecision>();
+    // whether an approval wasn't asked about, so not everything was allowed
+    let isSkipped = false;
     while (pending.length > 0) {
       const approval = pending.find(approval => !askedNow.has(approval.id));
       if (approval == null) {
@@ -88,13 +110,16 @@ export class Approvals {
       // what the user decided for the session is sent again (ex. to a dprint process that was
       // started again after it exited, which doesn't know it) instead of asking, except that a
       // command asks about what they denied again
-      let decision = this.#getSessionDecision(approval);
+      let decision = decisionsToSendAgain.get(approval.id) ?? this.#getSessionDecision(approval);
+      decisionsToSendAgain.delete(approval.id);
       if (options.isExplicit && decision != null && !isAllowed(approval, decision)) {
         decision = undefined;
       }
       if (decision == null) {
         if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
-          return false;
+          // the others are still asked about
+          isSkipped = true;
+          continue;
         }
         this.#asked.add(approval.id);
         decision = await this.#options.ask(approval, getApprovalChoices(approval));
@@ -125,6 +150,12 @@ export class Approvals {
         }
         // what needs to be approved changed (ex. the config file changed), so the decision wasn't used
         ({ approvals: pending, status } = getChangedResult(err) ?? await this.#options.pendingApprovals(configFile));
+        if (allows && pending.some(other => other.id === approval.id) && !decisionsToSendAgain.has(approval.id)) {
+          // the same approval is pending again, so the user's decision is sent again once
+          askedNow.delete(approval.id);
+          decisionsToSendAgain.set(approval.id, decision);
+          continue;
+        }
         if (!allows) {
           // the user denied what replaced it too when it's some of what they saw, which is never done for allowing it
           const deniedItems = new Set(approval.items.map(item => item.specifier));
@@ -146,7 +177,7 @@ export class Approvals {
       }
     }
     // it's formatted again once the config file is used
-    return status == null || status.kind === "ready";
+    return !isSkipped && (status == null || status.kind === "ready");
   }
 
   /**
@@ -183,11 +214,12 @@ export class Approvals {
  * says when the config file is outside the workspace.
  */
 export function getApprovalMessage(approval: PendingApproval) {
-  let message = approval.message;
+  // the config file is first because a notification is cut off after 1000 characters, and the
+  // message may have long urls from the config file
   const configFilePath = getDisplayPath(approval.configFile.uri);
-  message += approval.configFile.inWorkspace
-    ? ` Configuration file: ${configFilePath}`
-    : ` The configuration file is outside the workspace: ${configFilePath}`;
+  let message = approval.configFile.inWorkspace
+    ? `Configuration file: ${configFilePath}. ${approval.message}`
+    : `The configuration file is outside the workspace: ${configFilePath}. ${approval.message}`;
   // a notification is cut off after 1000 characters, so what they run with is shown on its own
   if (getApprovalConfiguration(approval) != null) {
     message += ` Choose "${SHOW_CONFIGURATION_TITLE}" to see what they run with.`;
@@ -239,7 +271,7 @@ export function toPlainNotificationText(text: string) {
 }
 
 /** Gets the path of a file uri to show the user, which is the uri for another kind of uri (ex. https). */
-function getDisplayPath(uri: string) {
+export function getDisplayPath(uri: string) {
   try {
     const url = new URL(uri);
     return url.protocol === "file:" ? fileURLToPath(url) : uri;

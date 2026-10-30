@@ -224,7 +224,11 @@ const whichEnvironment: Parameters<typeof which>[1] = {
     if (key.toUpperCase() !== "PATH" || value == null) {
       return value;
     }
-    return value.split(path.delimiter).filter(dir => path.isAbsolute(dir)).join(path.delimiter);
+    // a directory may be quoted or have whitespace around it, which `which` and the shell remove
+    return value.split(path.delimiter)
+      .map(dir => dir.trim().replace(/^"(.*)"$/, "$1"))
+      .filter(dir => path.isAbsolute(dir))
+      .join(path.delimiter);
   },
   async stat(filePath) {
     const info = await fs.promises.stat(filePath);

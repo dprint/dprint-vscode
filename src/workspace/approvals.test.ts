@@ -250,6 +250,30 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
   });
 
+  it("asks about the other approvals when one was denied", async () => {
+    const { approvals, asked } = createApprovals({ decide: () => "allow" });
+    const denied = { ...approval("download"), denied: true };
+    assert.strictEqual(await approvals.request([denied, approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+  });
+
+  it("sends what the user decided for the session again without asking", async () => {
+    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(
+      await approvals.sendSessionDecisionsAgain([approval("processPlugins"), approval("other")]),
+      true,
+    );
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "allow" }]);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    // not an allow for what was denied since
+    approved.length = 0;
+    const denied = { ...approval("processPlugins"), denied: true };
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([denied]), false);
+    assert.deepStrictEqual(approved, []);
+  });
+
   it("sends what the user decided for the session again to a dprint process that was started again", async () => {
     const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
     await approvals.request([approval("processPlugins")], { isExplicit: false });
@@ -315,7 +339,7 @@ describe("Approvals", () => {
 
 describe("getApprovalMessage", () => {
   it("has the config file", () => {
-    assert.match(getApprovalMessage(approval("download")), /^Approve download\? Configuration file: .*dprint\.json$/);
+    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\?$/);
   });
 
   it("says how to see what the process plugins run with", () => {
@@ -328,7 +352,7 @@ describe("getApprovalMessage", () => {
       ...approval("download"),
       configFile: { ...configFile("file:///tmp/dprint.json"), inWorkspace: false },
     };
-    assert.match(getApprovalMessage(download), /The configuration file is outside the workspace: .*dprint\.json$/);
+    assert.match(getApprovalMessage(download), /^The configuration file is outside the workspace: .*dprint\.json\. /);
   });
 
   it("has the descriptions of the decisions", () => {

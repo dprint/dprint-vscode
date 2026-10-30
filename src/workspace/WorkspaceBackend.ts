@@ -42,6 +42,7 @@ import {
   Approvals,
   getApprovalConfiguration,
   getApprovalMessage,
+  getDisplayPath,
   SHOW_CONFIGURATION_TITLE,
   toPlainNotificationText,
 } from "./approvals";
@@ -119,6 +120,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #restartedServices = new Set<Promise<ServiceResolution>>();
   /** The problems with the config files. */
   readonly #diagnostics: vscode.DiagnosticCollection;
+  /** Provides the read-only documents of what process plugins run with (see `askApproval`). */
+  readonly #approvalConfigurationProvider: vscode.Disposable;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
   /** What's kept across the states for the session of the extension. */
@@ -134,6 +137,10 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#logger = options.logger;
     this.#environment = new RealEnvironment(options.logger);
     this.#diagnostics = vscode.languages.createDiagnosticCollection("dprint");
+    this.#approvalConfigurationProvider = vscode.workspace.registerTextDocumentContentProvider(
+      APPROVAL_CONFIGURATION_SCHEME,
+      { provideTextDocumentContent: uri => approvalConfigurations.get(uri.path) },
+    );
   }
 
   /**
@@ -191,7 +198,7 @@ export class WorkspaceBackend implements vscode.Disposable {
           .filter(service => isUnsupportedServer(service) && service.isVersionMismatch)
           .map(service => (service as UnsupportedServer).error),
       );
-      const unsupportedError = isUnsupportedServer(defaultService) && defaultService.isVersionMismatch
+      const unsupportedError = versionMismatchErrors.size > 0
         ? undefined
         : getUnsupportedError(defaultService, configFiles.length > 0);
       if (unsupportedError != null) {
@@ -337,6 +344,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#state = undefined;
     this.#disposeUnusedServices();
     this.#diagnostics.dispose();
+    this.#approvalConfigurationProvider.dispose();
     this.#session.pendingApprovalsItem.dispose();
   }
 
@@ -475,8 +483,12 @@ export class WorkspaceBackend implements vscode.Disposable {
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
       // tells it (what the user decided for the session is sent again when it's asked about)
+      // the new server doesn't know what the user decided for the session either, which is sent
+      // again for what's pending once the config files were gotten again
       onRestart: () => {
-        this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
+        this.onConfigFileChanged()
+          .then(() => this.#sendSessionDecisionsAgain(connection))
+          .catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
     });
@@ -498,6 +510,18 @@ export class WorkspaceBackend implements vscode.Disposable {
       pendingApprovals: async configFile => await connection.pendingApprovals({ configFile }) as ConfigApprovals,
     });
     return { key, connection, approvals };
+  }
+
+  /** Sends what the user decided for the session again to a dprint process that was started again. */
+  async #sendSessionDecisionsAgain(connection: LspConnection) {
+    const service = this.#state?.services.find(service => service.connection === connection);
+    if (service == null) {
+      return;
+    }
+    const { approvals } = await connection.pendingApprovals();
+    if (await service.approvals.sendSessionDecisionsAgain(approvals)) {
+      this.#state?.scheduleRefresh();
+    }
   }
 
   /** The dprint processes the states use. */
@@ -955,9 +979,11 @@ class WorkspaceState {
         .values(),
     ];
     const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
-      label: `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
-        decision.specifiers.join(", ")
-      }`,
+      label: toPlainQuickPickText(
+        `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
+          decision.specifiers.join(", ")
+        }`,
+      ),
       detail: decision.kind === "downloads"
         ? "Downloads"
         : decision.kind === "processPlugins"
@@ -965,7 +991,7 @@ class WorkspaceState {
         : decision.kind,
       description: decision.configFile == null
         ? "Every configuration file"
-        : vscode.Uri.parse(decision.configFile.uri).fsPath,
+        : toPlainQuickPickText(getDisplayPath(decision.configFile.uri)),
     }));
     if (results.some(result => result.allowProcessPlugins)) {
       items.unshift({ label: "Process plugins are allowed by dprint's settings file (editor.allowProcessPlugins)" });
@@ -1002,7 +1028,9 @@ class WorkspaceState {
       .find(notice => notice != null);
     if (failure != null) {
       this.#logger.logError("Error forgetting the approval decisions:", failure.reason);
-      vscode.window.showErrorMessage(`dprint failed to forget the approval decisions: ${failure.reason}`);
+      vscode.window.showErrorMessage(
+        toPlainNotificationText(`dprint failed to forget the approval decisions: ${failure.reason}`),
+      );
     } else if (notice != null) {
       showSeverityMessage(notice);
     } else {
@@ -1160,8 +1188,12 @@ class WorkspaceState {
           const formatted = result as Extract<FormatResult, { kind: "formatted" }>;
           this.#logger.logDebug("Response - Formatted:", target.uri);
           if (formatted.notice != null) {
-            // a command doesn't say anything about it itself
-            this.#onMessage(formatted.notice, formatted.configFile, {});
+            if (options.saysWhyNotFormatted) {
+              // a command doesn't say anything about a document that was formatted itself
+              showSeverityMessage(formatted.notice);
+            } else {
+              this.#onMessage(formatted.notice, formatted.configFile, {});
+            }
           }
           return { edits: formatted.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         }
@@ -1712,6 +1744,11 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
 }
 
 /** Asks the user about what dprint needs approved with the message dprint provides. */
+/** The scheme of the read-only documents of what process plugins run with. */
+const APPROVAL_CONFIGURATION_SCHEME = "dprint-approval";
+/** What process plugins run with by the path of its document, which is the approval's id. */
+const approvalConfigurations = new Map<string, string>();
+
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
   const configuration = getApprovalConfiguration(approval);
   const titles = choices.map(choice => choice.title);
@@ -1724,9 +1761,11 @@ async function askApproval(approval: PendingApproval, choices: ApprovalChoice[])
     if (selection !== SHOW_CONFIGURATION_TITLE || configuration == null) {
       return choices.find(choice => choice.title === selection)?.decision;
     }
-    // it's asked about again once the user has seen what they run with
-    const document = await vscode.workspace.openTextDocument({ language: "jsonc", content: configuration });
-    await vscode.window.showTextDocument(document, { preview: true });
+    // it's asked about again once the user has seen what they run with, which is a read-only document
+    const documentPath = `/${approval.id}.jsonc`;
+    approvalConfigurations.set(documentPath, configuration);
+    const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
   }
 }
 
@@ -1878,11 +1917,18 @@ function getFileChangeType(type: ConfigFileChangeType) {
   }
 }
 
+/** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */
+function toPlainQuickPickText(text: string) {
+  return text.replace(/\$\(/g, "$\u200B(");
+}
+
 /** Shows the message to the user like its severity says, which is a warning for one that isn't known. */
 function showSeverityMessage(message: Notice) {
   // the actions that aren't known are left out
+  // the actions that aren't known are left out, and so is opening anything but a file (ex. a website)
   const actions = (message.actions ?? []).filter(
-    (action): action is { kind: "openUri"; label: string; uri: string } => action.kind === "openUri",
+    (action): action is { kind: "openUri"; label: string; uri: string } =>
+      action.kind === "openUri" && "uri" in action && vscode.Uri.parse(action.uri).scheme === "file",
   );
   const titles = actions.map(action => action.label);
   const show = message.severity === "error"
