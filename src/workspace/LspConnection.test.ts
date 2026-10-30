@@ -136,15 +136,24 @@ describe("LspConnection", () => {
   it("sends the other requests", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ uri: "file:///dprint.json", globalConfig: "never" });
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" }, globalConfig: "never" });
     const process = processes[0];
     const configInfoRequest = await process.nextRequest("dprint/configInfo");
-    assert.deepStrictEqual(configInfoRequest.params, { uri: "file:///dprint.json", globalConfig: "never" });
-    const configInfoResult = { configFile: null, plugins: null, formatsOtherFiles: false, status: { kind: "ready" } };
+    assert.deepStrictEqual(configInfoRequest.params, {
+      configFile: { uri: "file:///dprint.json" },
+      globalConfig: "never",
+    });
+    const configInfoResult = {
+      configFile: null,
+      plugins: null,
+      filePatterns: [],
+      otherFiles: [],
+      status: { kind: "ready" },
+    };
     configInfoRequest.respond(configInfoResult);
     assert.deepStrictEqual(await configInfo, configInfoResult);
 
-    const configSchema = connection.configSchema({ uri: "file:///dprint.json" });
+    const configSchema = connection.configSchema({ configFile: { uri: "file:///dprint.json" } });
     (await process.nextRequest("dprint/configSchema")).respond({ schema: { type: "object" } });
     assert.deepStrictEqual(await configSchema, { schema: { type: "object" } });
 
@@ -158,7 +167,7 @@ describe("LspConnection", () => {
   it("rejects a request with an error response", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ uri: "file:///dprint.json" });
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
     (await processes[0].nextRequest("dprint/configInfo")).fail("Error resolving the config.");
     await assert.rejects(configInfo, /Error resolving the config\./);
   });
@@ -205,7 +214,7 @@ describe("LspConnection", () => {
   it("kills the process when its output can't be read", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ uri: "file:///dprint.json" });
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
     const process = processes[0];
     await process.nextRequest("dprint/configInfo");
     process.stdout.write("Content-Length: abc\r\n\r\n");

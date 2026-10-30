@@ -413,9 +413,18 @@ export class WorkspaceBackend implements vscode.Disposable {
       showProgress,
       onDiagnostics: params => this.#setDiagnostics(connection, params),
       onConfigChanged: params => {
-        this.#logger.logDebug("Configuration changed:", params.uri);
+        this.#logger.logDebug("Configuration changed:", params.uri ?? "(every configuration file)");
+        // only the schema changed (ex. a plugin's schema downloaded), which getting it again is enough for
+        if (params.changes?.length === 1 && params.changes[0] === "schema") {
+          this.#state?.refreshSchema();
+          return;
+        }
         // an error that's still there is shown again
-        this.#session.shownConfigErrors.forget(vscode.Uri.parse(params.uri).fsPath);
+        if (params.uri == null) {
+          this.#session.shownConfigErrors.clear();
+        } else {
+          this.#session.shownConfigErrors.forget(vscode.Uri.parse(params.uri).fsPath);
+        }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again tells it
@@ -766,13 +775,17 @@ class WorkspaceState {
       this.#configs.some(config => config.info != null && getApprovals(config.info.status).length > 0),
     );
     this.#updateWatchedFiles();
-    // this also tells vscode to get the schema again
-    this.#options.configSchemaProvider.setSource({ getConfigSchema: () => this.#getConfigSchema() });
+    this.refreshSchema();
     // don't wait for this because it may need to start dprint for a config outside the workspace
     this.#scheduleUserDataFilePathsUpdate();
     if (this.#configs.length === 0) {
       this.#logger.logInfo("Configuration file not found.");
     }
+  }
+
+  /** Has vscode get the schema of the config files again. */
+  refreshSchema() {
+    this.#options.configSchemaProvider.setSource({ getConfigSchema: () => this.#getConfigSchema() });
   }
 
   /**
@@ -937,7 +950,7 @@ class WorkspaceState {
     try {
       // this also sets up the plugins that are approved, so the first format doesn't wait on it
       config.info = await config.service.connection.configInfo({
-        uri: vscode.Uri.file(config.configFilePath).toString(),
+        configFile: { uri: vscode.Uri.file(config.configFilePath).toString() },
       });
       const notFormatted = getNotFormatted(config.info.status);
       const approvals = notFormatted?.approvals ?? [];
@@ -1176,7 +1189,7 @@ class WorkspaceState {
     const schemas = await Promise.all(configs.map(async config => {
       try {
         const result = await config.service!.connection.configSchema({
-          uri: vscode.Uri.file(config.configFilePath).toString(),
+          configFile: { uri: vscode.Uri.file(config.configFilePath).toString() },
         });
         return result.schema;
       } catch (err) {

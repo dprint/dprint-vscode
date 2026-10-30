@@ -89,7 +89,7 @@ describe("Approvals", () => {
   });
 
   it("formats again when what needs to be approved changed", async () => {
-    const changedError = Object.assign(new Error("Changed."), { code: -32801 });
+    const changedError = Object.assign(new Error("Changed."), { code: -32001 });
     const allowed = new Approvals({
       ask: async () => "allow",
       approve: () => Promise.reject(changedError),
@@ -106,7 +106,10 @@ describe("Approvals", () => {
 
   it("asks about what needs to be approved now when the error says", async () => {
     const changed = approval("changed");
-    const changedError = Object.assign(new Error("Changed."), { code: -32801, data: { approvals: [changed] } });
+    const changedError = Object.assign(new Error("Changed."), {
+      code: -32001,
+      data: { kind: "approvalChanged", approvals: [changed] },
+    });
     const asked: string[] = [];
     const approvals = new Approvals({
       pendingApprovals: async () => [],
@@ -126,7 +129,7 @@ describe("Approvals", () => {
   });
 
   it("asks about what's pending for the config file when what needs to be approved changed", async () => {
-    const changedError = Object.assign(new Error("Changed."), { code: -32801 });
+    const changedError = Object.assign(new Error("Changed."), { code: -32001 });
     const changed = { ...approval("changed"), configFile: "file:///dprint.json" };
     const other = { ...approval("other"), configFile: "file:///other/dprint.json" };
     const asked: string[] = [];
@@ -178,11 +181,18 @@ describe("getApprovalMessage", () => {
 describe("getApprovalChoices", () => {
   it("offers the decisions dprint says the approval has", () => {
     assert.deepStrictEqual(
-      getApprovalChoices({ decisions: ["allow", "deny"] }).map(choice => [choice.title, choice.decision]),
+      getApprovalChoices({ decisions: [{ id: "allow", label: "Allow" }, { id: "deny", label: "Deny" }] }).map(
+        choice => [choice.title, choice.decision],
+      ),
       [["Allow", "allow"], ["Deny", "deny"]],
     );
     assert.deepStrictEqual(
-      getApprovalChoices({ decisions: ["allow", "alwaysAllow", "deny", "alwaysDeny"] }).map(choice => [
+      getApprovalChoices({
+        decisions: [{ id: "allow", label: "Allow" }, { id: "alwaysAllow", label: "Always Allow" }, {
+          id: "deny",
+          label: "Deny",
+        }, { id: "alwaysDeny", label: "Always Deny" }],
+      }).map(choice => [
         choice.title,
         choice.decision,
       ]),
@@ -190,12 +200,17 @@ describe("getApprovalChoices", () => {
     );
   });
 
-  it("shows a decision that's newer than the extension as it is", () => {
+  it("shows a decision that's newer than the extension with its label", () => {
     assert.deepStrictEqual(
-      getApprovalChoices({ decisions: ["allow", "trustDomain", "deny"] }).map(
+      getApprovalChoices({
+        decisions: [{ id: "allow", label: "Allow" }, { id: "trustDomain", label: "Trust the domain" }, {
+          id: "deny",
+          label: "Deny",
+        }],
+      }).map(
         choice => [choice.title, choice.decision],
       ),
-      [["Allow", "allow"], ["trustDomain", "trustDomain"], ["Deny", "deny"]],
+      [["Allow", "allow"], ["Trust the domain", "trustDomain"], ["Deny", "deny"]],
     );
   });
 });
@@ -226,7 +241,10 @@ function approval(id: string): PendingApproval {
     id,
     kind: isProcessPlugins ? "processPlugins" : "download",
     items: [{ specifier: `https://example.com/${id}` }],
-    decisions: isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"],
+    decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
+      id,
+      label: id,
+    })),
     denied: false,
     message: `Approve ${id}?`,
   };

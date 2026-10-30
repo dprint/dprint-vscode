@@ -1,9 +1,9 @@
 import {
-  type ApprovalChangedErrorData,
+  APPROVAL_CHANGED_ERROR_CODE,
   type ApprovalDecision,
   type ApproveParams,
   type ApproveResult,
-  CONTENT_MODIFIED_ERROR_CODE,
+  type ErrorData,
   type PendingApproval,
 } from "./messages";
 
@@ -80,7 +80,7 @@ export class Approvals {
       try {
         pending = (await this.#options.approve({ id: approval.id, decision })).approvals;
       } catch (err) {
-        if (!isContentModifiedError(err)) {
+        if (!isApprovalChangedError(err)) {
           throw err;
         }
         if (!isAllowed(decision)) {
@@ -112,27 +112,19 @@ export function getApprovalMessage(approval: PendingApproval) {
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {
-  // a decision that's newer than the extension is shown as it is
-  return approval.decisions.map(decision => ({ title: DECISION_TITLES[decision] ?? decision, decision }));
+  return approval.decisions.map(option => ({ title: option.label, decision: option.id }));
 }
 
-const DECISION_TITLES: { [decision: string]: string | undefined } = {
-  allow: "Allow",
-  alwaysAllow: "Always Allow",
-  deny: "Deny",
-  alwaysDeny: "Always Deny",
-};
-
-function isContentModifiedError(err: unknown) {
-  return typeof err === "object" && err != null && "code" in err && err.code === CONTENT_MODIFIED_ERROR_CODE;
+function isApprovalChangedError(err: unknown) {
+  return typeof err === "object" && err != null && "code" in err && err.code === APPROVAL_CHANGED_ERROR_CODE;
 }
 
 /** Gets what needs to be approved now from the error for an approval that isn't pending anymore. */
 function getChangedApprovals(err: unknown): PendingApproval[] | undefined {
-  const data = typeof err === "object" && err != null && "data" in err
-    ? err.data as Partial<ApprovalChangedErrorData>
+  const data = typeof err === "object" && err != null && "data" in err ? err.data as ErrorData | undefined : undefined;
+  return data?.kind === "approvalChanged" && "approvals" in data && Array.isArray(data.approvals)
+    ? data.approvals
     : undefined;
-  return Array.isArray(data?.approvals) ? data.approvals : undefined;
 }
 
 function isAllowed(decision: ApprovalDecision) {

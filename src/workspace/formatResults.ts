@@ -62,6 +62,12 @@ export class ShownConfigErrors {
     return true;
   }
 
+  /** Forgets every error that was shown (ex. dprint's settings file changed), so they're shown again. */
+  clear() {
+    this.#messages.clear();
+    this.#otherMessages.clear();
+  }
+
   /** Forgets the errors that were shown for the config file (ex. it changed), so they're shown again. */
   forget(configFilePath: string) {
     this.#messages.delete(configFilePath);

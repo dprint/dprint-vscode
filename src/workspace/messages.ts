@@ -130,7 +130,7 @@ export interface PendingApproval {
   /** What's downloaded or run. */
   items: ApprovalItem[];
   /** The decisions the user can make in the order to show them. */
-  decisions: ApprovalDecision[];
+  decisions: ApprovalDecisionOption[];
   /** Whether the user denied it, which is when they're only asked again when they ask for it (ex. a command). */
   denied: boolean;
   /** What the user decided before, which is "deny" or "alwaysDeny" when it's denied. */
@@ -155,6 +155,12 @@ export type ApprovalKind = "download" | "processPlugins" | (string & {});
 
 export type ApprovalDecision = "allow" | "alwaysAllow" | "deny" | "alwaysDeny" | (string & {});
 
+export interface ApprovalDecisionOption {
+  id: ApprovalDecision;
+  /** What to show the user, which is for a decision the extension doesn't know. */
+  label: string;
+}
+
 export interface ApproveParams {
   id: string;
   decision: ApprovalDecision;
@@ -168,18 +174,18 @@ export interface ApproveResult {
   approvals: PendingApproval[];
 }
 
-/** The data of the error for an approval that isn't pending anymore. */
-export interface ApprovalChangedErrorData {
-  /** What needs to be approved for the config file now. */
-  approvals: PendingApproval[];
-}
+/** The data of an error, which may be a kind that's newer than the extension. */
+export type ErrorData =
+  /** What needs to be approved for the config file now when it's known. */
+  | { kind: "approvalChanged"; approvals?: PendingApproval[] }
+  | { kind: string & {} };
 
 export interface PendingApprovalsResult {
   approvals: PendingApproval[];
 }
 
 /** The error code of a request for something that changed (ex. an approval that isn't pending anymore). */
-export const CONTENT_MODIFIED_ERROR_CODE = -32801;
+export const APPROVAL_CHANGED_ERROR_CODE = -32001;
 
 export interface FileInfoParams extends DocumentParams {
   /** The text of the document, which is otherwise read from the file when it's needed (ex. a shebang). */
@@ -201,15 +207,14 @@ export interface FilePlugin {
 
 export interface ConfigFileInfo {
   uri: string;
-  /** The directory whose files it formats, which isn't provided for a remote one. */
-  dirUri?: string;
+  /** The directory whose files it formats or that its patterns are relative to. */
+  dirUri: string;
   kind: "local" | "global" | "override" | (string & {});
 }
 
-export interface ConfigParams {
-  /** The config file or a document it's used for. */
-  uri: string;
-  globalConfig?: GlobalConfigUse;
+/** Either the config file itself or a document it's used for, and not both. */
+export interface ConfigParams extends Partial<DocumentParams> {
+  configFile?: { uri: string };
 }
 
 export interface ConfigInfoResult {
@@ -220,12 +225,19 @@ export interface ConfigInfoResult {
    */
   plugins: PluginInfo[] | null;
   /** Whether the config file formats files other than the ones of its plugins' file extensions and names (ex. associations). */
-  formatsOtherFiles: boolean;
-  /** Globs of the files the plugins may format, which are relative to the config file's directory. */
-  filePatterns?: string[];
+  /** The files the plugins may format. */
+  filePatterns: FilePattern[];
+  /** The other files the config file formats, which only fileInfo says (ex. extensionless files with a shebang). */
+  otherFiles: { kind: "shebang" | "associations" | (string & {}); values: string[] }[];
   /** The local files besides the config file that it was resolved from (ex. a config file it extends). */
   watchUris?: string[];
   status: FormatStatus;
+}
+
+export interface FilePattern {
+  /** A glob relative to the directory of the config file, which matches file extensions and names case insensitively. */
+  glob: string;
+  configKeys: string[];
 }
 
 export interface PluginInfo {
@@ -237,7 +249,7 @@ export interface PluginInfo {
   fileNames: string[];
   /** Whether it formats a file in addition to the plugin that formats it. */
   additive?: boolean;
-  supportsRangeFormatting?: boolean | null;
+  rangeFormatting?: "supported" | "wholeLines" | "unsupported" | (string & {});
   helpUrl?: string;
   updateUrl?: string;
 }
@@ -249,9 +261,11 @@ export interface ConfigSchemaResult {
 }
 
 export interface ConfigChangedParams {
-  /** The config file. */
-  uri: string;
+  /** The config file, which is every config file when it's not provided (ex. dprint's settings file changed). */
+  uri?: string;
   reason?: "created" | "changed" | "deleted" | (string & {});
+  /** What changed, which is anything when it's not provided. */
+  changes?: ("schema" | (string & {}))[];
 }
 
 /** A range of zero-based lines and UTF-16 characters. */
