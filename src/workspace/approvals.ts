@@ -86,8 +86,12 @@ export class Approvals {
       }
       askedNow.add(approval.id);
       // what the user decided for the session is sent again (ex. to a dprint process that was
-      // started again after it exited, which doesn't know it) instead of asking
-      let decision = options.isExplicit ? undefined : this.#getSessionDecision(approval);
+      // started again after it exited, which doesn't know it) instead of asking, except that a
+      // command asks about what they denied again
+      let decision = this.#getSessionDecision(approval);
+      if (options.isExplicit && decision != null && !isAllowed(approval, decision)) {
+        decision = undefined;
+      }
       if (decision == null) {
         if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
           return false;
