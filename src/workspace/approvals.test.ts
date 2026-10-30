@@ -250,6 +250,20 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
   });
 
+  it("doesn't use what the user answers once it's cancelled", async () => {
+    let approvals: Approvals;
+    const created = createApprovals({
+      decide: () => {
+        // ex. the user restarted dprint while the prompt was open
+        approvals.cancel();
+        return "allow";
+      },
+    });
+    approvals = created.approvals;
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(created.approved, []);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

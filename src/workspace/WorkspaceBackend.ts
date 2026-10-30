@@ -162,6 +162,9 @@ export class WorkspaceBackend implements vscode.Disposable {
       // the current state keeps using them until the new one replaces it
       for (const service of this.#services.values()) {
         this.#restartedServices.add(service);
+        // what the user answers to a prompt that's still open isn't used, because they restarted to forget it
+        service.then(resolution => isUnsupportedServer(resolution) ? undefined : resolution.approvals.cancel())
+          .catch(() => {/* it didn't start */});
       }
       this.#services.clear();
     }

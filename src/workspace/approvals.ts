@@ -44,9 +44,19 @@ export class Approvals {
    * again after it exited doesn't know.
    */
   readonly #sessionDecisions = new Map<string, ApprovalDecision>();
+  /** Whether what the user answers isn't used anymore (see `cancel`). */
+  #isCancelled = false;
 
   constructor(options: ApprovalsOptions) {
     this.#options = options;
+  }
+
+  /**
+   * Stops using what the user answers to the prompts that are open and asking about anything else
+   * (ex. after the restart command, which starts a new dprint process that asks again).
+   */
+  cancel() {
+    this.#isCancelled = true;
   }
 
   /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
@@ -121,9 +131,12 @@ export class Approvals {
           isSkipped = true;
           continue;
         }
+        if (this.#isCancelled) {
+          return false;
+        }
         this.#asked.add(approval.id);
         decision = await this.#options.ask(approval, getApprovalChoices(approval));
-        if (decision == null) {
+        if (decision == null || this.#isCancelled) {
           // it stays pending, so the user can still approve it with the command
           return false;
         }
