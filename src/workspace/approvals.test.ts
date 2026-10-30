@@ -4,7 +4,7 @@ import {
   type ApprovalChoice,
   Approvals,
   getApprovalChoices,
-  getApprovalConfiguration,
+  getApprovalDetails,
   getApprovalMessage,
   toPlainNotificationText,
 } from "./approvals";
@@ -377,12 +377,11 @@ describe("Approvals", () => {
 
 describe("getApprovalMessage", () => {
   it("has the config file", () => {
-    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\?$/);
+    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\? /);
   });
 
-  it("says how to see what the process plugins run with", () => {
-    const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
-    assert.match(getApprovalMessage(processPlugins), /Choose "Show Configuration" to see what they run with\.$/);
+  it("says how to see what's approved", () => {
+    assert.match(getApprovalMessage(approval("processPlugins")), /Choose "Show Details" to see what's approved\.$/);
   });
 
   it("says when the config file is outside the workspace", () => {
@@ -402,31 +401,56 @@ describe("getApprovalMessage", () => {
   });
 });
 
-describe("getApprovalConfiguration", () => {
+describe("getApprovalDetails", () => {
+  it("has what's approved and where it's from", () => {
+    const download = approval("download");
+    download.items = [
+      { specifier: "https://example.com/plugin.wasm", kind: "plugin" },
+      { specifier: "https://registry.example.com/", kind: "plugin", registry: "https://registry.example.com/" },
+      { specifier: "https://${TOKEN}@proxy.example", kind: "npmrcProxy", npmrcUri: "https://example.com/.npmrc" },
+    ];
+    assert.strictEqual(
+      getApprovalDetails(download),
+      "// download\n// Approve download?\n\n// what's approved\n"
+        + "// - https://example.com/plugin.wasm\n"
+        + "// - https://registry.example.com/ (from the npm registry https://registry.example.com/)\n"
+        + "// - the proxy https://${TOKEN}@proxy.example that https://example.com/.npmrc sets",
+    );
+  });
+
   it("has what the process plugins run with", () => {
-    assert.strictEqual(getApprovalConfiguration(approval("download")), undefined);
     const processPlugins = approval("processPlugins");
     processPlugins.items[0] = {
       ...processPlugins.items[0],
       plugin: { name: "dprint-plugin-exec", version: "0.5.0", configKey: "exec" },
       configuration: { commands: [{ command: "a" }] },
     };
-    assert.strictEqual(
-      getApprovalConfiguration(processPlugins),
-      "// what the process plugins run with\n"
-        + JSON.stringify({ exec: { commands: [{ command: "a" }] } }, undefined, 2),
+    assert.match(
+      getApprovalDetails(processPlugins),
+      new RegExp(
+        "// what the process plugins run with\n"
+          + escapeRegExp(JSON.stringify({ exec: { commands: [{ command: "a" }] } }, undefined, 2))
+          + "$",
+      ),
     );
   });
 
   it("has what the process plugins that weren't set up run with", () => {
     const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
-    assert.strictEqual(
-      getApprovalConfiguration(processPlugins),
-      "// what the process plugins that weren't set up before run with\n"
-        + JSON.stringify({ exec: { commands: [] } }, undefined, 2),
+    assert.match(
+      getApprovalDetails(processPlugins),
+      new RegExp(
+        "// what the process plugins that weren't set up before run with\n"
+          + escapeRegExp(JSON.stringify({ exec: { commands: [] } }, undefined, 2))
+          + "$",
+      ),
     );
   });
 });
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 describe("toPlainNotificationText", () => {
   it("doesn't have Markdown links", () => {

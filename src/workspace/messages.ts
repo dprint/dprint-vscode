@@ -218,8 +218,8 @@ export interface ApprovalItem {
   kind: "plugin" | "config" | "npmrcProxy" | (string & {});
   /** The npm registry of an npm plugin when it isn't the default one. */
   registry?: string;
-  /** The path of the `.npmrc` file of a proxy. */
-  npmrc?: string;
+  /** The `.npmrc` file of a proxy. */
+  npmrcUri?: string;
   /** The plugin when it was set up before. */
   plugin?: FilePlugin;
   /** The configuration a process plugin that was set up before runs with. */
@@ -316,6 +316,8 @@ export interface Decision {
   configFile?: ConfigFileIdentifier;
   /** The urls, paths, or specifiers it's for. */
   specifiers: string[];
+  /** What it's for in the order of `specifiers` when that's known (ex. a proxy of an `.npmrc` file for a download). */
+  items?: ApprovalItem[];
   allows: boolean;
   always: boolean;
 }

@@ -40,10 +40,10 @@ import { CoalescingQueue } from "../utils/CoalescingQueue";
 import {
   type ApprovalChoice,
   Approvals,
-  getApprovalConfiguration,
+  getApprovalDetails,
   getApprovalMessage,
   getDisplayPath,
-  SHOW_CONFIGURATION_TITLE,
+  SHOW_DETAILS_TITLE,
   toPlainNotificationText,
 } from "./approvals";
 import { getConfigFilePatterns } from "./documentPatterns";
@@ -984,7 +984,12 @@ class WorkspaceState {
     const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
       label: toPlainQuickPickText(
         `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
-          decision.specifiers.join(", ")
+          decision.specifiers.map((specifier, i) => {
+            const item = decision.items?.[i];
+            return item?.kind === "npmrcProxy" && item.npmrcUri != null
+              ? `the proxy ${specifier} of ${getDisplayPath(item.npmrcUri)}`
+              : specifier;
+          }).join(", ")
         }`,
       ),
       detail: decision.kind === "downloads"
@@ -1747,26 +1752,26 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
 }
 
 /** Asks the user about what dprint needs approved with the message dprint provides. */
-/** The scheme of the read-only documents of what process plugins run with. */
+/** The scheme of the read-only documents of what's approved. */
 const APPROVAL_CONFIGURATION_SCHEME = "dprint-approval";
-/** What process plugins run with by the path of its document, which is the approval's id. */
+/** What's approved by the path of its document, which is the approval's id. */
 const approvalConfigurations = new Map<string, string>();
 
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
-  const configuration = getApprovalConfiguration(approval);
+  const details = getApprovalDetails(approval);
   const titles = choices.map(choice => choice.title);
   while (true) {
     const selection = await vscode.window.showWarningMessage(
       toPlainNotificationText(getApprovalMessage(approval)),
       ...titles,
-      ...(configuration == null ? [] : [SHOW_CONFIGURATION_TITLE]),
+      SHOW_DETAILS_TITLE,
     );
-    if (selection !== SHOW_CONFIGURATION_TITLE || configuration == null) {
+    if (selection !== SHOW_DETAILS_TITLE) {
       return choices.find(choice => choice.title === selection)?.decision;
     }
-    // it's asked about again once the user has seen what they run with, which is a read-only document
+    // it's asked about again once the user has seen what's approved, which is a read-only document
     const documentPath = `/${approval.id}.jsonc`;
-    approvalConfigurations.set(documentPath, configuration);
+    approvalConfigurations.set(documentPath, details);
     const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
   }

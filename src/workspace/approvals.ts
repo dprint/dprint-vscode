@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import {
   APPROVAL_CHANGED_ERROR_CODE,
   type ApprovalDecision,
+  type ApprovalItem,
   type ApproveParams,
   type ApproveResult,
   type ConfigApprovals,
@@ -249,10 +250,8 @@ export function getApprovalMessage(approval: PendingApproval) {
   let message = approval.configFile.inWorkspace
     ? `Configuration file: ${configFilePath}. ${approval.message}`
     : `The configuration file is outside the workspace: ${configFilePath}. ${approval.message}`;
-  // a notification is cut off after 1000 characters, so what they run with is shown on its own
-  if (getApprovalConfiguration(approval) != null) {
-    message += ` Choose "${SHOW_CONFIGURATION_TITLE}" to see what they run with.`;
-  }
+  // a notification is cut off after 1000 characters, so what's approved is shown on its own
+  message += ` Choose "${SHOW_DETAILS_TITLE}" to see what's approved.`;
   // the descriptions of the decisions, which can't be tooltips of the buttons
   const descriptions = approval.decisions
     .filter(option => option.description.length > 0)
@@ -263,18 +262,19 @@ export function getApprovalMessage(approval: PendingApproval) {
   return message;
 }
 
-/** The title of the button that shows what the process plugins of an approval run with. */
-export const SHOW_CONFIGURATION_TITLE = "Show Configuration";
+/** The title of the button that shows what's approved and what the process plugins run with. */
+export const SHOW_DETAILS_TITLE = "Show Details";
 
 /**
- * Gets what the process plugins of the approval run with as text to show the user before they
- * decide, which is undefined when there's nothing to show.
+ * Gets what's approved (each item, and what the process plugins run with) as text to show the
+ * user before they decide.
  */
-export function getApprovalConfiguration(approval: PendingApproval) {
+export function getApprovalDetails(approval: PendingApproval) {
+  const sections = [`// ${approval.title}\n${approval.message.split("\n").map(line => `// ${line}`).join("\n")}`];
+  sections.push(`// what's approved\n${approval.items.map(item => `// - ${getItemText(item)}`).join("\n")}`);
   const configurations = approval.items
     .filter(item => item.configuration != null)
     .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
-  const sections: string[] = [];
   if (configurations.length > 0) {
     sections.push(
       `// what the process plugins run with\n${JSON.stringify(Object.fromEntries(configurations), undefined, 2)}`,
@@ -288,7 +288,16 @@ export function getApprovalConfiguration(approval: PendingApproval) {
       }`,
     );
   }
-  return sections.length === 0 ? undefined : sections.join("\n\n");
+  return sections.join("\n\n");
+}
+
+/** Gets the text of an approval's item, which has where it's from. */
+function getItemText(item: ApprovalItem) {
+  if (item.kind === "npmrcProxy") {
+    const npmrc = item.npmrcUri == null ? "" : ` that ${getDisplayPath(item.npmrcUri)} sets`;
+    return `the proxy ${item.specifier}${npmrc}`;
+  }
+  return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
 }
 
 /**
