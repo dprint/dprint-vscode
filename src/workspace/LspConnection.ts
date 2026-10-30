@@ -19,9 +19,9 @@ import {
   type ConfigInfoResult,
   type ConfigParams,
   type ConfigSchemaResult,
-  type DocumentParams,
   DPRINT_METHODS_VERSION,
   FILE_INFO_METHOD,
+  type FileInfoParams,
   type FileInfoResult,
   FORMAT_METHOD,
   type FormatParams,
@@ -29,6 +29,8 @@ import {
   type InitializeResult,
   type MessageParams,
   MessageType,
+  PENDING_APPROVALS_METHOD,
+  type PendingApprovalsResult,
   type ProgressParams,
   type PublishDiagnosticsParams,
   type ServerSettings,
@@ -132,8 +134,12 @@ export class LspConnection {
     return this.#track(server => server.initialized, undefined) as Promise<InitializeResult>;
   }
 
-  fileInfo(params: DocumentParams) {
+  fileInfo(params: FileInfoParams) {
     return this.#request<FileInfoResult>(FILE_INFO_METHOD, params);
+  }
+
+  pendingApprovals() {
+    return this.#request<PendingApprovalsResult>(PENDING_APPROVALS_METHOD, {});
   }
 
   configInfo(params: ConfigParams) {

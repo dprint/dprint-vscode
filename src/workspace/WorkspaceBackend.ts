@@ -43,6 +43,8 @@ import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnect
 import {
   type ConfigInfoResult,
   type DocumentLanguage,
+  getApprovals,
+  getNotFormatted,
   type MessageParams,
   MessageType,
   type NotFormattedResult,
@@ -599,6 +601,8 @@ class WorkspaceState {
   readonly #onActivate: () => void;
   readonly #session: WorkspaceSession;
   readonly #watchedDirPaths = new Set<string>();
+  /** The watchers of the files the config files were resolved from by their uri. */
+  readonly #fileWatchers = new Map<string, vscode.Disposable>();
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
   readonly #formats = new Set<Promise<unknown>>();
   /** The messages of the plugin errors that were shown, which are only shown once. */
@@ -751,8 +755,9 @@ class WorkspaceState {
     await vscode.commands.executeCommand(
       "setContext",
       HAS_PENDING_APPROVALS_CONTEXT_KEY,
-      this.#configs.some(config => config.info?.approval != null),
+      this.#configs.some(config => config.info != null && getApprovals(config.info.status).length > 0),
     );
+    this.#updateWatchedFiles();
     // this also tells vscode to get the schema again
     this.#options.configSchemaProvider.setSource({ getConfigSchema: () => this.#getConfigSchema() });
     // don't wait for this because it may need to start dprint for a config outside the workspace
@@ -792,8 +797,12 @@ class WorkspaceState {
     if (service == null) {
       return false;
     }
-    const info = await service.connection.fileInfo({ ...getDocumentParams(target), useGlobalConfig: true });
-    return info.configFile?.isGlobal === true;
+    const info = await service.connection.fileInfo({
+      ...getDocumentParams(target),
+      globalConfig: "whenNoConfigFile",
+      text: document.getText(),
+    });
+    return info.configFile?.kind === "global";
   }
 
   /**
@@ -803,7 +812,9 @@ class WorkspaceState {
   async approve() {
     // what's pending may have changed since the plugins were refreshed
     await Promise.all(this.#configs.map(config => this.#refreshConfig(config)));
-    const configs = this.#configs.filter(config => config.service != null && config.info?.approval != null);
+    const configs = this.#configs.filter(config =>
+      config.service != null && config.info != null && getApprovals(config.info.status).length > 0
+    );
     if (configs.length === 0) {
       vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");
       this.scheduleRefresh();
@@ -818,13 +829,15 @@ class WorkspaceState {
     // workspace folders may use the same config file in an ancestor directory
     const askedIds = new Set<string>();
     for (const config of orderedConfigs) {
-      const approval = config.info!.approval!;
-      if (askedIds.has(approval.id)) {
+      const approvals = getApprovals(config.info!.status).filter(approval => !askedIds.has(approval.id));
+      if (approvals.length === 0) {
         continue;
       }
-      askedIds.add(approval.id);
+      for (const approval of approvals) {
+        askedIds.add(approval.id);
+      }
       try {
-        await this.#requestApproval(config.service!, approval, { isExplicit: true });
+        await this.#requestApproval(config.service!, approvals, { isExplicit: true });
       } catch (err) {
         this.#logger.logError("Error approving:", err);
       }
@@ -864,6 +877,39 @@ class WorkspaceState {
     this.#disposables.push(watcher);
   }
 
+  /**
+   * Watches the files that the config files were resolved from (ex. a config file one extends),
+   * which dprint doesn't watch, so it's told when they change.
+   */
+  #updateWatchedFiles() {
+    const uris = new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []));
+    for (const [uri, watcher] of [...this.#fileWatchers]) {
+      if (!uris.has(uri)) {
+        watcher.dispose();
+        this.#fileWatchers.delete(uri);
+      }
+    }
+    for (const uri of uris) {
+      if (this.#fileWatchers.has(uri)) {
+        continue;
+      }
+      const filePath = vscode.Uri.parse(uri).fsPath;
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(path.dirname(filePath)), path.basename(filePath)),
+      );
+      const onChange = (type: FileChangeType) => {
+        this.#logger.logDebug("File a configuration file was resolved from changed:", filePath);
+        for (const service of this.#resolvedServices) {
+          service.connection.configFileChanged(uri, type);
+        }
+      };
+      watcher.onDidCreate(() => onChange(FileChangeType.Created));
+      watcher.onDidChange(() => onChange(FileChangeType.Changed));
+      watcher.onDidDelete(() => onChange(FileChangeType.Deleted));
+      this.#fileWatchers.set(uri, watcher);
+    }
+  }
+
   async #refreshConfig(config: Config) {
     if (config.legacyFolder != null) {
       // a running folder reloads its config itself, so only its plugins are gotten again
@@ -881,16 +927,18 @@ class WorkspaceState {
       config.info = await config.service.connection.configInfo({
         uri: vscode.Uri.file(config.configFilePath).toString(),
       });
-      if (config.info.approval != null) {
+      const notFormatted = getNotFormatted(config.info.status);
+      const approvals = notFormatted?.approvals ?? [];
+      if (approvals.length > 0) {
         this.#logger.logInfo(
           `Not formatting with ${config.configFilePath} until it's approved, which is asked when formatting `
             + "or with the \"Dprint: Approve Configuration\" command:",
-          config.info.approval.message,
+          approvals.map(approval => approval.message).join(" "),
         );
-      } else if (config.info.reason != null) {
+      } else if (notFormatted != null) {
         this.#logger.logInfo(
           `Not formatting with ${config.configFilePath}:`,
-          config.info.message ?? config.info.reason,
+          notFormatted.message ?? notFormatted.reason,
         );
       } else if (config.info.plugins?.length === 0) {
         this.#logger.logWarn("No plugins found in the configuration file:", config.configFilePath);
@@ -924,7 +972,8 @@ class WorkspaceState {
     try {
       const result = await service.connection.format({
         ...getDocumentParams(target),
-        useGlobalConfig,
+        // the setting of the extension is used instead of dprint's
+        globalConfig: useGlobalConfig ? "whenNoConfigFile" : "never",
         text: document.getText(),
         ranges: ranges?.map(toTextRange),
       }, token);
@@ -938,11 +987,11 @@ class WorkspaceState {
         case "notFormatted":
           this.#logger.logDebug(`Response - Not formatted (${result.reason}):`, target.uri);
           this.#onNotFormatted(result, { ...options, useGlobalConfig }, document.uri, config?.configFilePath ?? "");
-          if (result.approval != null && !isAfterApproval) {
+          if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
             // same as choosing to run what its config file says. The document is formatted once
             // it's approved unless the format is cancelled in the meantime.
-            const approval = this.#requestApproval(service, result.approval, { isExplicit: false }).catch(err => {
+            const approval = this.#requestApproval(service, result.approvals, { isExplicit: false }).catch(err => {
               this.#logger.logError("Error approving:", err);
               return false;
             });
@@ -1005,8 +1054,8 @@ class WorkspaceState {
   }
 
   /** Asks the user about the approval, which keeps the process running until they answered. */
-  #requestApproval(service: Service, approval: PendingApproval, options: { isExplicit: boolean }) {
-    return service.connection.trackInteraction(service.approvals.request(approval, options));
+  #requestApproval(service: Service, approvals: PendingApproval[], options: { isExplicit: boolean }) {
+    return service.connection.trackInteraction(service.approvals.request(approvals, options));
   }
 
   #onNotFormatted(
@@ -1207,6 +1256,10 @@ class WorkspaceState {
     this.#disposed = true;
     this.#registrationDisposables.dispose();
     this.#disposables.dispose();
+    for (const watcher of this.#fileWatchers.values()) {
+      watcher.dispose();
+    }
+    this.#fileWatchers.clear();
   }
 
   #disposeLegacyFolders() {
@@ -1371,9 +1424,9 @@ class WorkspaceState {
       try {
         const info = await service.connection.fileInfo({
           textDocument: { uri: vscode.Uri.file(uri.fsPath).toString() },
-          useGlobalConfig: getDprintConfig(uri).useGlobalConfig,
+          globalConfig: getDprintConfig(uri).useGlobalConfig ? "whenNoConfigFile" : "never",
         });
-        return info.canFormat;
+        return info.status.kind === "ready";
       } catch (err) {
         this.#logger.logError("Error checking if the file can be formatted.", err);
         return false;

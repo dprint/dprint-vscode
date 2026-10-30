@@ -21,6 +21,17 @@ describe("getConfigFilePatterns", () => {
     );
   });
 
+  it("uses the patterns dprint provides", () => {
+    assert.deepStrictEqual(
+      getConfigFilePatterns({
+        plugins: [plugin({ fileExtensions: ["ts"] })],
+        formatsOtherFiles: false,
+        filePatterns: ["**/*.[tT][sS]", "src/**/*.other"],
+      }),
+      ["**/*.[tT][sS]", "src/**/*.other"],
+    );
+  });
+
   it("matches every file when what's formatted can't be matched with a glob", () => {
     // ex. the associations of a plugin or a shebang
     assert.deepStrictEqual(

@@ -16,12 +16,18 @@ export const ALL_FILES_PATTERN = "**/*";
  * they aren't known (ex. something needs to be approved), so that the other formatters of
  * those files are still used.
  */
-export function getConfigFilePatterns(info: Pick<ConfigInfoResult, "plugins" | "formatsOtherFiles">): string[] {
+export function getConfigFilePatterns(
+  info: Pick<ConfigInfoResult, "plugins" | "formatsOtherFiles" | "filePatterns">,
+): string[] {
   if (info.plugins == null || info.plugins.length === 0) {
     return [];
   }
   if (info.formatsOtherFiles) {
     return [ALL_FILES_PATTERN];
+  }
+  // dprint provides them when it's a version that does
+  if (info.filePatterns != null) {
+    return info.filePatterns;
   }
   const extensions = new Set(info.plugins.flatMap(plugin => plugin.fileExtensions).map(ext => ext.toLowerCase()));
   const fileNames = new Set(info.plugins.flatMap(plugin => plugin.fileNames).map(name => name.toLowerCase()));

@@ -36,7 +36,7 @@ describe("LspConnection", () => {
     assert.strictEqual(request.method, "dprint/fileInfo");
     assert.deepStrictEqual(request.params, { textDocument: { uri: "file:///file.ts" } });
 
-    const result = { configFile: null, canFormat: false, plugins: [], reason: "noConfigFile" };
+    const result = { configFile: null, plugins: [], status: { kind: "notFormatted", reason: "noConfigFile" } };
     request.respond(result);
     assert.deepStrictEqual(await fileInfo, result);
     assert.strictEqual(connection.pendingRequestCount, 0);
@@ -126,7 +126,7 @@ describe("LspConnection", () => {
 
     // the next request gets its own response
     const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
-    const result = { configFile: null, canFormat: false, plugins: [] };
+    const result = { configFile: null, plugins: [], status: { kind: "ready" } };
     (await process.nextRequest("dprint/fileInfo")).respond(result);
     assert.deepStrictEqual(await fileInfo, result);
     assert.strictEqual(connection.pendingRequestCount, 0);
@@ -136,11 +136,11 @@ describe("LspConnection", () => {
   it("sends the other requests", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ uri: "file:///dprint.json", useGlobalConfig: false });
+    const configInfo = connection.configInfo({ uri: "file:///dprint.json", globalConfig: "never" });
     const process = processes[0];
     const configInfoRequest = await process.nextRequest("dprint/configInfo");
-    assert.deepStrictEqual(configInfoRequest.params, { uri: "file:///dprint.json", useGlobalConfig: false });
-    const configInfoResult = { configFile: null, plugins: null, formatsOtherFiles: false };
+    assert.deepStrictEqual(configInfoRequest.params, { uri: "file:///dprint.json", globalConfig: "never" });
+    const configInfoResult = { configFile: null, plugins: null, formatsOtherFiles: false, status: { kind: "ready" } };
     configInfoRequest.respond(configInfoResult);
     assert.deepStrictEqual(await configInfo, configInfoResult);
 
@@ -151,8 +151,8 @@ describe("LspConnection", () => {
     const approve = connection.approve({ id: "id", decision: "alwaysAllow" });
     const approveRequest = await process.nextRequest("dprint/approve");
     assert.deepStrictEqual(approveRequest.params, { id: "id", decision: "alwaysAllow" });
-    approveRequest.respond({ approval: null });
-    assert.deepStrictEqual(await approve, { approval: null });
+    approveRequest.respond({ approvals: [] });
+    assert.deepStrictEqual(await approve, { approvals: [] });
   });
 
   it("rejects a request with an error response", async () => {
@@ -394,7 +394,7 @@ describe("LspConnection", () => {
     await nextTick();
     assert.strictEqual(isDisposed, false);
 
-    const result = { configFile: null, canFormat: false, plugins: [] };
+    const result = { configFile: null, plugins: [], status: { kind: "ready" } };
     request.respond(result);
     assert.deepStrictEqual(await fileInfo, result);
     await disposed;
@@ -430,7 +430,7 @@ describe("LspConnection", () => {
 
     // the answer reaches the server that needed it
     answer();
-    (await process.nextRequest("dprint/approve")).respond({ approval: null });
+    (await process.nextRequest("dprint/approve")).respond({ approvals: [] });
     await disposed;
     assert.strictEqual((await process.nextRequest("shutdown")).method, "shutdown");
   });
