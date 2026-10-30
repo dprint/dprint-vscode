@@ -349,6 +349,26 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, []);
   });
 
+  it("shows why the config file isn't used after what the user allowed", async () => {
+    const shown: string[] = [];
+    const configError = {
+      kind: "notFormatted" as const,
+      reason: "configError",
+      message: "The config file has an error.",
+      show: "oncePerConfigFile",
+      severity: "error",
+      claim: true,
+    };
+    const approvals = new Approvals({
+      ask: async () => "allow",
+      approve: async () => ({ configFile: null, approvals: [], status: configError }),
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+      showNotUsed: notFormatted => shown.push(notFormatted.message),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    assert.deepStrictEqual(shown, ["The config file has an error."]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

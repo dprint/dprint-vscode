@@ -513,6 +513,8 @@ export class WorkspaceBackend implements vscode.Disposable {
       },
       // it's for one config file
       pendingApprovals: async configFile => await connection.pendingApprovals({ configFile }) as ConfigApprovals,
+      // the user is waiting on the decision they made, like for a command
+      showNotUsed: notFormatted => showSeverityMessage(notFormatted),
     });
     return { key, connection, approvals };
   }
@@ -1190,9 +1192,7 @@ class WorkspaceState {
       }
       // a kind that's newer than the extension is handled like a result that isn't formatted with
       // the fields it has (ex. its approvals), or otherwise like a failure that's shown for a command
-      const kind = result.kind === "formatted" || result.kind === "failed" || !("claim" in result)
-        ? result.kind
-        : "notFormatted";
+      const kind = result.kind === "formatted" || result.kind === "failed" ? result.kind : "notFormatted";
       switch (kind) {
         case "formatted": {
           const formatted = result as Extract<FormatResult, { kind: "formatted" }>;

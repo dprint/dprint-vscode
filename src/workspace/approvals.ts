@@ -9,6 +9,8 @@ import {
   type ConfigFileIdentifier,
   type ErrorData,
   type FormatStatus,
+  getNotFormatted,
+  type NotFormatted,
   type PendingApproval,
 } from "./messages";
 
@@ -30,6 +32,11 @@ export interface ApprovalsOptions {
   approve(params: ApproveParams, options?: { isResent?: boolean }): Promise<ApproveResult>;
   /** Gets what needs to be approved for the config file and whether it's used. */
   pendingApprovals(configFile: ConfigFileIdentifier): Promise<ConfigApprovals>;
+  /**
+   * Shows why the config file isn't used after what the user allowed (ex. allowing a download
+   * revealed an error in it).
+   */
+  showNotUsed?(notFormatted: NotFormatted): void;
 }
 
 /**
@@ -219,7 +226,11 @@ export class Approvals {
       }
     }
     // it's formatted again once the config file is used
-    return !isSkipped && (status == null || status.kind === "ready");
+    const notFormatted = status == null ? undefined : getNotFormatted(status);
+    if (!isSkipped && notFormatted != null && (notFormatted.approvals ?? []).every(approval => approval.denied)) {
+      this.#options.showNotUsed?.(notFormatted);
+    }
+    return !isSkipped && notFormatted == null;
   }
 
   /**
