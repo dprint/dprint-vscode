@@ -45,7 +45,6 @@ import {
   type ConfigFileInfo,
   type ConfigInfoResult,
   type DocumentLanguage,
-  getApprovals,
   getNotFormatted,
   type MessageParams,
   MessageType,
@@ -111,7 +110,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
   /** What's kept across the states for the session of the extension. */
-  readonly #session: WorkspaceSession = { hasNotifiedNoConfig: false, shownConfigErrors: new ShownConfigErrors() };
+  readonly #session: WorkspaceSession = {
+    hasNotifiedNoConfig: false,
+    shownConfigErrors: new ShownConfigErrors(),
+    pendingApprovalsItem: createPendingApprovalsItem(),
+  };
   #disposed = false;
 
   constructor(options: WorkspaceBackendOptions) {
@@ -178,7 +181,11 @@ export class WorkspaceBackend implements vscode.Disposable {
         this.#state = undefined;
         (retiredState?.retire() ?? Promise.resolve()).then(() => this.#disposeUnusedServices());
         // the legacy backend has nothing to approve
-        await vscode.commands.executeCommand("setContext", HAS_PENDING_APPROVALS_CONTEXT_KEY, false);
+        await setHasPendingApprovals(this.#session, false);
+        // dprint or the extension needs to be updated to use the language server
+        if (isUnsupportedServer(defaultService) && defaultService.isVersionMismatch) {
+          vscode.window.showWarningMessage(defaultService.error);
+        }
         return false;
       }
       if (this.#disposed) {
@@ -300,6 +307,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#state = undefined;
     this.#disposeUnusedServices();
     this.#diagnostics.dispose();
+    this.#session.pendingApprovalsItem.dispose();
   }
 
   /** Finds the config files in the workspace folders and the ones the workspace folders use from an ancestor directory. */
@@ -583,6 +591,11 @@ interface WorkspaceSession {
   hasNotifiedNoConfig: boolean;
   /** The errors of the config files that were shown, which dprint doesn't show for the extension. */
   shownConfigErrors: ShownConfigErrors;
+  /**
+   * Shows that something needs to be approved without interrupting the user, which asks
+   * about it when it's clicked.
+   */
+  pendingApprovalsItem: vscode.StatusBarItem;
 }
 
 /** What dprint formats a document as. */
@@ -777,11 +790,8 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    await vscode.commands.executeCommand(
-      "setContext",
-      HAS_PENDING_APPROVALS_CONTEXT_KEY,
-      this.#configs.some(config => config.info != null && getApprovals(config.info.status).length > 0),
-    );
+    // dprint may need something approved for a config file the extension didn't find (ex. the global one)
+    await setHasPendingApprovals(this.#session, (await this.#getPendingApprovals()).length > 0);
     this.#updateWatchedFiles();
     this.refreshSchema();
     // don't wait for this because it may need to start dprint for a config outside the workspace
@@ -841,32 +851,31 @@ class WorkspaceState {
   async approve() {
     // what's pending may have changed since the plugins were refreshed
     await Promise.all(this.#configs.map(config => this.#refreshConfig(config)));
-    const configs = this.#configs.filter(config =>
-      config.service != null && config.info != null && getApprovals(config.info.status).length > 0
-    );
-    if (configs.length === 0) {
+    const pending = await this.#getPendingApprovals();
+    if (pending.length === 0) {
       vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");
       this.scheduleRefresh();
       return;
     }
-    // ask about the config file of the active document first
+    // ask about each config file, starting with the one of the active document
+    const groups = new Map<string, { service: Service; approvals: PendingApproval[]; dirPath: string }>();
+    for (const { service, approval } of pending) {
+      const key = `${approval.configFile.uri}\n${approval.configFile.dirUri}`;
+      const group = groups.get(key)
+        ?? { service, approvals: [], dirPath: vscode.Uri.parse(approval.configFile.dirUri).fsPath };
+      group.approvals.push(approval);
+      groups.set(key, group);
+    }
     const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
-    const activeConfig = activePath == null
+    const activeGroup = activePath == null
       ? undefined
-      : findClosestFolder(configs, config => config.dirUri.fsPath, activePath);
-    const orderedConfigs = activeConfig == null ? configs : [activeConfig, ...configs.filter(c => c !== activeConfig)];
-    // workspace folders may use the same config file in an ancestor directory
-    const askedIds = new Set<string>();
-    for (const config of orderedConfigs) {
-      const approvals = getApprovals(config.info!.status).filter(approval => !askedIds.has(approval.id));
-      if (approvals.length === 0) {
-        continue;
-      }
-      for (const approval of approvals) {
-        askedIds.add(approval.id);
-      }
+      : findClosestFolder([...groups.values()], group => group.dirPath, activePath);
+    const orderedGroups = activeGroup == null
+      ? [...groups.values()]
+      : [activeGroup, ...[...groups.values()].filter(group => group !== activeGroup)];
+    for (const group of orderedGroups) {
       try {
-        await this.#requestApproval(config.service!, approvals, { isExplicit: true });
+        await this.#requestApproval(group.service, group.approvals, { isExplicit: true });
       } catch (err) {
         this.#logger.logError("Error approving:", err);
       }
@@ -875,12 +884,45 @@ class WorkspaceState {
     this.scheduleRefresh();
   }
 
+  /** Gets what needs to be approved for the config files dprint used, with the process that needs it. */
+  async #getPendingApprovals() {
+    const pending: { service: Service; approval: PendingApproval }[] = [];
+    const seenIds = new Set<string>();
+    for (const service of this.#resolvedServices) {
+      try {
+        // workspace folders may use the same config file in an ancestor directory
+        for (const approval of (await service.connection.pendingApprovals()).approvals) {
+          if (!seenIds.has(approval.id)) {
+            seenIds.add(approval.id);
+            pending.push({ service, approval });
+          }
+        }
+      } catch (err) {
+        this.#logger.logError("Error getting what needs to be approved:", err);
+      }
+    }
+    return pending;
+  }
+
   /** Forgets what the user decided for every config file, including the "Always" decisions. */
   async forgetDecisions() {
-    // the decisions are dprint's, so forgetting them with one process forgets them for the others
-    // except what they decided for their session
-    await Promise.all(this.#resolvedServices.map(service => service.connection.forgetDecisions()));
-    vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
+    if (this.#resolvedServices.length === 0) {
+      vscode.window.showInformationMessage("dprint isn't running, so there are no decisions to forget.");
+      return;
+    }
+    // each process forgets what was decided for its session, and the stored decisions are shared
+    const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
+      await service.connection.forgetDecisions();
+      // the user is asked again even about what they were asked about before
+      service.approvals.forget();
+    }));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure != null) {
+      this.#logger.logError("Error forgetting the approval decisions:", failure.reason);
+      vscode.window.showErrorMessage(`dprint failed to forget the approval decisions: ${failure.reason}`);
+    } else {
+      vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
+    }
     this.scheduleRefresh();
   }
 
@@ -1032,28 +1074,40 @@ class WorkspaceState {
           // only a document dprint says to claim is asked about when the user didn't run a command
           // (it isn't when what the config file formats isn't known) unless the user chose dprint
           // as the formatter of its language
-          const mayAsk = result.claim || options.saysWhyNotFormatted === true
-            || isDprintDefaultFormatter(document.languageId);
+          const mayAsk = result.claim || options.saysWhyNotFormatted === true || isDprintDefaultFormatter(document);
           if (result.approvals != null && result.approvals.length > 0 && !isAfterApproval && mayAsk) {
             // The user is asked when formatting (ex. on save) because opening a project isn't the
-            // same as choosing to run what its config file says. The document is formatted once
-            // it's approved unless the format is cancelled in the meantime.
+            // same as choosing to run what its config file says.
             const approval = this.#requestApproval(service, result.approvals, { isExplicit: false }).catch(err => {
               this.#logger.logError("Error approving:", err);
               return false;
-            });
-            if (await waitUnlessCancelled(approval, token)) {
-              return this.#formatDocument(document, ranges, options, token, true);
+            }).finally(() => this.scheduleRefresh());
+            if (options.saysWhyNotFormatted) {
+              // a command waits on it unless it's cancelled
+              if (await waitUnlessCancelled(approval, token)) {
+                return this.#formatDocument(document, ranges, options, token, true);
+              }
+            } else {
+              // a save doesn't wait on it, so the document is formatted and saved again once it's approved
+              approval.then(isApproved => isApproved ? this.#formatAfterApproval(document) : undefined).catch(err => {
+                this.#logger.logError("Error formatting after approving:", err);
+              });
             }
           }
           return getFormatDocumentResult(result.reason, result.message, target.notebookUri != null);
         default: {
           // includes the kinds that are newer than the extension, which are only shown for a command
-          const failed = result as { message?: string; show?: ShowPolicy; severity?: Severity };
+          const failed = result as {
+            message?: string;
+            show?: ShowPolicy;
+            severity?: Severity;
+            configFile?: ConfigFileInfo | null;
+          };
           this.#onFormatFailed(
             failed.message ?? "Formatting failed.",
             failed.show ?? "command",
             failed.severity ?? "warning",
+            failed.configFile ?? null,
           );
           return { notFormattedReason: "failed" };
         }
@@ -1186,17 +1240,46 @@ class WorkspaceState {
     });
   }
 
-  #onFormatFailed(message: string, show: ShowPolicy, severity: Severity) {
-    // ex. a syntax error isn't shown because a format usually happens without the user doing
-    // anything (ex. on save) and the editor already shows it
-    if (show !== "always") {
-      this.#logger.logWarn("Error formatting text:", message);
+  #onFormatFailed(message: string, show: ShowPolicy, severity: Severity, configFile: ConfigFileInfo | null) {
+    switch (show) {
+      case "always":
+        this.#logger.logError("Error formatting text:", message);
+        showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
+        break;
+      case "oncePerConfigFile": {
+        this.#logger.logError("Error formatting text:", message);
+        const identifier = configFile == null ? undefined : { uri: configFile.uri, dirUri: configFile.dirUri };
+        if (this.#session.shownConfigErrors.shouldShow(identifier, message)) {
+          showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
+        }
+        break;
+      }
+      default:
+        // ex. a syntax error isn't shown because a format usually happens without the user doing
+        // anything (ex. on save) and the editor already shows it
+        this.#logger.logWarn("Error formatting text:", message);
+        break;
+    }
+  }
+
+  /**
+   * Formats the document once what it needed was approved, which is saved again when it was
+   * saved before and didn't change in the meantime.
+   */
+  async #formatAfterApproval(document: vscode.TextDocument) {
+    if (document.isClosed) {
       return;
     }
-    this.#logger.logError("Error formatting text:", message);
-    if (!this.#shownPluginErrors.has(message)) {
-      this.#shownPluginErrors.add(message);
-      showSeverityMessage(severity, `dprint failed to format the document: ${message}`);
+    const version = document.version;
+    const wasSaved = !document.isDirty;
+    const result = await this.formatDocument(document, undefined, {}, new vscode.CancellationTokenSource().token);
+    if (result.edits == null || result.edits.length === 0 || document.isClosed || document.version !== version) {
+      return;
+    }
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(document.uri, result.edits);
+    if (await vscode.workspace.applyEdit(edit) && wasSaved) {
+      await document.save();
     }
   }
 
@@ -1604,9 +1687,29 @@ function showMessage(params: MessageParams) {
   }
 }
 
-/** Gets if the user chose dprint as the default formatter of the language. */
-function isDprintDefaultFormatter(languageId: string) {
-  return isDprintExtensionId(vscode.workspace.getConfiguration("editor", { languageId }).get("defaultFormatter"));
+/** Gets if the user chose dprint as the default formatter of the document's language. */
+function isDprintDefaultFormatter(document: vscode.TextDocument) {
+  const scope = { languageId: document.languageId, uri: document.uri };
+  return isDprintExtensionId(vscode.workspace.getConfiguration("editor", scope).get("defaultFormatter"));
+}
+
+/** Creates the status bar item that shows that something needs to be approved. */
+function createPendingApprovalsItem() {
+  const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right);
+  item.text = "$(shield) dprint";
+  item.tooltip = "dprint needs something approved before it formats with a configuration file. Click to review it.";
+  item.command = "dprint.approve";
+  return item;
+}
+
+/** Sets whether something needs to be approved, which shows the status bar item and the command. */
+async function setHasPendingApprovals(session: WorkspaceSession, hasPendingApprovals: boolean) {
+  if (hasPendingApprovals) {
+    session.pendingApprovalsItem.show();
+  } else {
+    session.pendingApprovalsItem.hide();
+  }
+  await vscode.commands.executeCommand("setContext", HAS_PENDING_APPROVALS_CONTEXT_KEY, hasPendingApprovals);
 }
 
 async function getDefaultFormatterLanguageIds() {

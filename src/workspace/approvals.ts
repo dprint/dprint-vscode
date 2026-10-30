@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
   APPROVAL_CHANGED_ERROR_CODE,
   type ApprovalDecision,
@@ -50,6 +51,11 @@ export class Approvals {
    * @param options.isExplicit - Whether the user asked for it (ex. with a command), which asks
    * about what they denied or were already asked about.
    */
+  /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
+  forget() {
+    this.#asked.clear();
+  }
+
   request(approvals: PendingApproval[], options: { isExplicit: boolean }): Promise<boolean> {
     const key = approvals.map(approval => approval.id).sort().join("\n");
     const inProgress = this.#inProgress.get(key);
@@ -130,7 +136,7 @@ export class Approvals {
 export function getApprovalMessage(approval: PendingApproval) {
   let message = approval.message;
   if (!approval.configFile.inWorkspace) {
-    message += ` The configuration file is outside the workspace: ${approval.configFile.uri}`;
+    message += ` The configuration file is outside the workspace: ${getDisplayPath(approval.configFile.uri)}`;
   }
   const configurations = approval.items
     .filter(item => item.configuration != null)
@@ -139,6 +145,16 @@ export function getApprovalMessage(approval: PendingApproval) {
     return message;
   }
   return `${message} They run with this configuration: ${JSON.stringify(Object.fromEntries(configurations))}`;
+}
+
+/** Gets the path of a file uri to show the user, which is the uri for another kind of uri (ex. https). */
+function getDisplayPath(uri: string) {
+  try {
+    const url = new URL(uri);
+    return url.protocol === "file:" ? fileURLToPath(url) : uri;
+  } catch {
+    return uri;
+  }
 }
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */

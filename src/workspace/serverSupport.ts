@@ -10,6 +10,12 @@ export interface UnsupportedServer {
    * opposed to being a version of dprint that doesn't have the `dprint/*` methods.
    */
   isUnavailable: boolean;
+  /**
+   * Whether dprint has the `dprint/*` methods but not a version of them the extension
+   * supports, which the user is told about because dprint or the extension needs to be
+   * updated.
+   */
+  isVersionMismatch?: boolean;
 }
 
 /**
@@ -33,6 +39,7 @@ export function getServerSupport(result: InitializeResult): { version: string } 
     return {
       error: `dprint ${version} doesn't support the versions of the dprint methods that the extension does. ${update}`,
       isUnavailable: false,
+      isVersionMismatch: true,
     };
   }
   return { version };

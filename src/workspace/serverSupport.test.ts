@@ -49,11 +49,13 @@ describe("getServerSupport", () => {
       error: "dprint 1.0.0 doesn't support the versions of the dprint methods that the extension does. "
         + "Update the dprint extension to use it.",
       isUnavailable: false,
+      isVersionMismatch: true,
     });
     assert.deepStrictEqual(getServerSupport(result([0])), {
       error: "dprint 1.0.0 doesn't support the versions of the dprint methods that the extension does. "
         + "Update dprint to use it with this version of the extension.",
       isUnavailable: false,
+      isVersionMismatch: true,
     });
   });
 });
