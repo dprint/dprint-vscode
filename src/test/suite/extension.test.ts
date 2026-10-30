@@ -277,7 +277,7 @@ suite("Extension Test Suite", function() {
 
       const prompts = await answerWarnings("Deny", () => context.formatCommand(doc.uri));
       assert.equal(prompts.length, 1);
-      assert.match(prompts[0].message, /download https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/);
+      assert.match(prompts[0].message, /download `?https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/);
       assert.deepStrictEqual(prompts[0].buttons, ["Allow", "Deny", "Show Details"]);
       assert.equal(doc.getText(), `{\n"test":     5\n}`);
 
