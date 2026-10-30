@@ -7,6 +7,7 @@ import {
   getApprovalDetails,
   getApprovalMessage,
   toPlainNotificationText,
+  toVisibleText,
 } from "./approvals";
 import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
 
@@ -596,6 +597,13 @@ describe("getApprovalDetails", () => {
 function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+describe("toVisibleText", () => {
+  it("escapes what changes how the text around it looks", () => {
+    assert.strictEqual(toVisibleText("a\nb\u202Ec\u2028d"), "a\\u{a}b\\u{202e}c\\u{2028}d");
+    assert.strictEqual(toVisibleText("C:\\Users\\Jörg"), "C:\\Users\\Jörg");
+  });
+});
 
 describe("toPlainNotificationText", () => {
   it("doesn't have Markdown links", () => {

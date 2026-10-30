@@ -106,7 +106,9 @@ export interface FormatResponse {
       claim: boolean;
       actions?: Action[];
       plugin?: FilePlugin;
-    };
+    }
+    /** A kind that's newer than the extension, which is handled like a status of a kind it doesn't know. */
+    | { kind: string & {} };
 }
 
 /** What formatting a document did with the config file that was used. */

@@ -1196,8 +1196,12 @@ class WorkspaceState {
         return { edits: [] }; // cancelled
       }
       // a kind that's newer than the extension is handled like a result that isn't formatted with
-      // the fields it has (ex. its approvals), or otherwise like a failure that's shown for a command
-      const kind = result.kind === "formatted" || result.kind === "failed" ? result.kind : "notFormatted";
+      // the fields it has (ex. its approvals), like a status of a kind it doesn't know
+      const kind: "formatted" | "failed" | "notFormatted" = result.kind === "formatted"
+        ? "formatted"
+        : result.kind === "failed"
+        ? "failed"
+        : "notFormatted";
       switch (kind) {
         case "formatted": {
           const formatted = result as Extract<FormatResult, { kind: "formatted" }>;
@@ -1213,7 +1217,7 @@ class WorkspaceState {
           return { edits: formatted.edits.map(edit => vscode.TextEdit.replace(toRange(edit.range), edit.newText)) };
         }
         case "notFormatted": {
-          const notFormatted = result.kind === "notFormatted" ? result : {
+          const notFormatted = {
             ...getNotFormatted(result as FormatStatus)!,
             kind: "notFormatted" as const,
             configFile: result.configFile,

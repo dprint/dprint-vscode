@@ -399,11 +399,12 @@ function getPreviousIds(approval: PendingApproval) {
 
 /** Gets the text of an approval's item, which has where it's from. */
 function getItemText(item: ApprovalItem) {
+  const specifier = toVisibleText(item.specifier);
   if (item.kind === "npmrcProxy") {
     const npmrc = item.npmrcUri == null ? "" : ` that ${getDisplayPath(item.npmrcUri)} sets`;
-    return `the proxy ${item.specifier}${npmrc}`;
+    return `the proxy ${specifier}${npmrc}`;
   }
-  return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
+  return item.registry == null ? specifier : `${specifier} (from the npm registry ${toVisibleText(item.registry)})`;
 }
 
 /**
@@ -416,12 +417,24 @@ export function toPlainNotificationText(text: string) {
 
 /** Gets the path of a file uri to show the user, which is the uri for another kind of uri (ex. https). */
 export function getDisplayPath(uri: string) {
+  let path: string;
   try {
     const url = new URL(uri);
-    return url.protocol === "file:" ? fileURLToPath(url) : uri;
+    path = url.protocol === "file:" ? fileURLToPath(url) : uri;
   } catch {
-    return uri;
+    path = uri;
   }
+  // it's from the project (ex. the name of a directory)
+  return toVisibleText(path);
+}
+
+/**
+ * Gets text from the project that's shown with the extension's own text, where the characters that
+ * change how text around them looks are escaped (ex. a line break or one that reverses the text
+ * after it) like dprint escapes them in its messages.
+ */
+export function toVisibleText(text: string) {
+  return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, char => `\\u{${char.codePointAt(0)!.toString(16)}}`);
 }
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
