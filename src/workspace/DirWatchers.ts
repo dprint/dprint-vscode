@@ -12,6 +12,8 @@ export interface PathStat {
   kind: PathKind;
   /** Identifies the file system entry (ex. its device and inode), which changes when it's replaced. */
   identity: string;
+  /** What changes when a file's contents do (ex. its modification time and size). */
+  version?: string;
 }
 
 export interface DirWatchersOptions {
@@ -54,7 +56,9 @@ export interface DirWatchersOptions {
  * update and when the parent's watcher reports the directory, and a watcher is replaced when what it
  * watches was replaced. When the watcher of a directory is replaced or removed, its files are reported
  * as created or deleted, because the files that were created with it aren't reported by the new
- * watcher. Note that vscode polls a watched directory that was deleted until it exists again and then
+ * watcher. When the parent reports a directory that kept its identity (ex. it was deleted and created
+ * again, and ext4 reused its inode), the files whose versions changed since they were last looked at
+ * are reported instead. Note that vscode polls a watched directory that was deleted until it exists again and then
  * watches it again by itself (following a symlink that replaced it), which can't be turned off, so the
  * watcher of a parent that's gone is disposed once that's noticed.
  */
@@ -106,32 +110,42 @@ export class DirWatchers {
     }
   }
 
-  /** Watches the directory and its parent while each may be watched, with a new watcher when it was replaced. */
-  async #check(dirPath: string, entry: DirEntry, statCache: StatCache) {
+  /**
+   * Watches the directory and its parent while each may be watched, with a new watcher when it was
+   * replaced, and reports the directory's files that may have changed without its watcher seeing it.
+   *
+   * @param isParentReport - Whether the parent's watcher reported the directory, which may have been
+   * deleted and created again with the same identity (ex. ext4 reuses the inode it just freed).
+   */
+  async #check(dirPath: string, entry: DirEntry, statCache: StatCache, isParentReport = false) {
     const parentPath = path.dirname(dirPath);
     if (parentPath !== dirPath) {
+      const identity = await this.#getWatchableIdentity(parentPath, statCache);
+      if (this.#isStale(dirPath, entry)) {
+        return;
+      }
       const name = this.#normalizeName(path.basename(dirPath));
-      entry.parentWatcher = await this.#replaceWatcher(
+      entry.parentWatcher = swapWatcher(
         entry.parentWatcher,
-        parentPath,
-        statCache,
-        dirPath,
-        entry,
+        identity,
         () =>
           this.#options.watchDir(parentPath, [path.basename(dirPath)], filePath => {
             if (this.#normalizeName(getFileName(filePath)) === name) {
-              this.#enqueue(() => this.#check(dirPath, entry, new Map())).catch(err => this.#options.onError(err));
+              this.#enqueue(() => this.#check(dirPath, entry, new Map(), true)).catch(err =>
+                this.#options.onError(err)
+              );
             }
           }),
       );
     }
+    const identity = await this.#getWatchableIdentity(dirPath, statCache);
+    if (this.#isStale(dirPath, entry)) {
+      return;
+    }
     const previous = entry.dirWatcher;
-    entry.dirWatcher = await this.#replaceWatcher(
+    entry.dirWatcher = swapWatcher(
       previous,
-      dirPath,
-      statCache,
-      dirPath,
-      entry,
+      identity,
       () =>
         this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
           if (entry.fileNames.has(this.#normalizeName(getFileName(filePath)))) {
@@ -139,50 +153,32 @@ export class DirWatchers {
           }
         }),
     );
-    if (entry.dirWatcher !== previous && entry.wasWatched && !this.#isStale(dirPath, entry)) {
-      await this.#reportFiles(dirPath, entry);
+    if (entry.dirWatcher !== previous) {
+      // the files of the first watcher are only noted, which the later checks compare with
+      await this.#reportFiles(dirPath, entry, entry.fileVersions == null ? "none" : "all");
+    } else if (isParentReport && entry.dirWatcher != null) {
+      await this.#reportFiles(dirPath, entry, "changed");
     }
-    entry.wasWatched ||= entry.dirWatcher != null;
   }
 
   /**
-   * Gets the watcher of a directory while it may be watched (see `#isWatchable`), which is the current
-   * one unless what it watches was replaced, and undefined otherwise.
+   * Gets the identity of a directory while it may be watched (see `#isWatchable`), which is undefined
+   * when it may not.
    */
-  async #replaceWatcher(
-    current: IdentifiedWatcher | undefined,
-    watchedPath: string,
-    statCache: StatCache,
-    entryPath: string,
-    entry: DirEntry,
-    watch: () => { dispose(): void },
-  ): Promise<IdentifiedWatcher | undefined> {
-    if (this.#isStale(entryPath, entry)) {
-      return current;
-    }
-    const result = await lstatWithoutSymlinks(watchedPath, this.#options, statCache);
-    if (this.#isStale(entryPath, entry)) {
-      return current; // it was disposed with the entry
-    }
+  async #getWatchableIdentity(dirPath: string, statCache: StatCache) {
+    const result = await lstatWithoutSymlinks(dirPath, this.#options, statCache);
     const stat = result.isReachable ? result.stat : undefined;
-    const identity = stat != null && this.#isWatchable(watchedPath, stat.kind) ? stat.identity : undefined;
-    // ex. it only changed because a file in it was saved, which is a change of it on Windows
-    if (current?.identity === identity) {
-      return current;
-    }
-    current?.dispose();
-    if (identity == null) {
-      return undefined;
-    }
-    const watcher = watch();
-    return { identity, dispose: () => watcher.dispose() };
+    return stat != null && this.#isWatchable(dirPath, stat.kind) ? stat.identity : undefined;
   }
 
   /**
-   * Reports the files of a directory whose watcher was replaced or removed as created or deleted, which
-   * dprint checks itself (ex. a package directory that `npm install` created again with its files).
+   * Notes the versions of a directory's files and reports them as created, changed, or deleted, which
+   * dprint checks itself (ex. a package directory that `npm install` created again with its files): all
+   * of them when its watcher was replaced or removed, only the ones that changed since they were noted
+   * when it's the same, and none for its first watcher.
    */
-  async #reportFiles(dirPath: string, entry: DirEntry) {
+  async #reportFiles(dirPath: string, entry: DirEntry, which: "all" | "changed" | "none") {
+    const versions = new Map<string, string | undefined>();
     for (const name of entry.originalNames) {
       const filePath = path.join(dirPath, name);
       // the directory was looked at, so its files are looked at without following a symlink
@@ -190,8 +186,16 @@ export class DirWatchers {
       if (this.#isStale(dirPath, entry)) {
         return;
       }
-      this.#options.onChange(filePath, stat == null ? "deleted" : "created");
+      const version = stat == null ? undefined : `${stat.identity}:${stat.version ?? ""}`;
+      const previousVersion = entry.fileVersions?.get(name);
+      versions.set(name, version);
+      if (which === "all") {
+        this.#options.onChange(filePath, version == null ? "deleted" : "created");
+      } else if (which === "changed" && version !== previousVersion) {
+        this.#options.onChange(filePath, version == null ? "deleted" : previousVersion == null ? "created" : "changed");
+      }
     }
+    entry.fileVersions = versions;
   }
 
   /**
@@ -261,8 +265,9 @@ export async function lstatWithoutSymlinks(
 
 /**
  * Gets what's at the path without following a symlink at the end of it. Its identity is its device and
- * inode, which a directory that replaced another may reuse, but vscode watches one that's deleted and
- * created again by itself, and one that's replaced with a symlink is told apart by its kind.
+ * inode, which a directory that replaced another may reuse (ex. on ext4), so the files of a directory
+ * that its parent's watcher reports are compared with their versions too (see `DirWatchers`), and one
+ * that's replaced with a symlink is told apart by its kind.
  */
 export async function lstatPath(filePath: string): Promise<PathStat | undefined> {
   try {
@@ -270,6 +275,7 @@ export async function lstatPath(filePath: string): Promise<PathStat | undefined>
     return {
       kind: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file",
       identity: `${stat.dev}:${stat.ino}`,
+      version: `${stat.mtimeNs}:${stat.size}`,
     };
   } catch {
     return undefined;
@@ -331,13 +337,34 @@ interface DirEntry {
   parentWatcher?: IdentifiedWatcher;
   /** Watches the directory (whose identity it has), which is undefined while it isn't watched. */
   dirWatcher?: IdentifiedWatcher;
-  /** Whether the directory was watched, after which a new or removed watcher reports its files. */
-  wasWatched?: boolean;
+  /**
+   * The versions of its files by their names when they were last looked at, which is undefined until it's
+   * watched, after which a new or removed watcher reports its files.
+   */
+  fileVersions?: Map<string, string | undefined>;
 }
 
 interface IdentifiedWatcher {
   identity: string;
   dispose(): void;
+}
+
+/** Gets the watcher of what has the identity, which is the current one when it has it, and undefined without one. */
+function swapWatcher(
+  current: IdentifiedWatcher | undefined,
+  identity: string | undefined,
+  watch: () => { dispose(): void },
+): IdentifiedWatcher | undefined {
+  // ex. it only changed because a file in it was saved, which is a change of it on Windows
+  if (current?.identity === identity) {
+    return current;
+  }
+  current?.dispose();
+  if (identity == null) {
+    return undefined;
+  }
+  const watcher = watch();
+  return { identity, dispose: () => watcher.dispose() };
 }
 
 function disposeEntry(entry: DirEntry) {

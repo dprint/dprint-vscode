@@ -209,6 +209,34 @@ describe("DirWatchers", () => {
     ]);
   });
 
+  it("reports the files that changed when the parent reports a directory with the same identity", async () => {
+    // ex. it was deleted and created again with another file, and ext4 reused its inode
+    const kinds: Record<string, PathKind | undefined> = {
+      "/p": "dir",
+      "/p/shared": "dir",
+      "/p/shared/base.json": "file",
+      "/p/shared/other.json": "file",
+    };
+    const versions: Record<string, string> = { "/p/shared/base.json": "1", "/p/shared/other.json": "1" };
+    const { watchers, watched, changes, emit } = createWatchers(kinds, { versions });
+    await watchers.update(new Map([["/p/shared", ["base.json", "other.json", "new.json"]]]));
+    versions["/p/shared/base.json"] = "2";
+    kinds["/p/shared/other.json"] = undefined;
+    kinds["/p/shared/new.json"] = "file";
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/shared").length, 1);
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/shared/base.json", "changed"],
+      ["/p/shared/other.json", "deleted"],
+      ["/p/shared/new.json", "created"],
+    ]);
+    // and nothing when they didn't change since
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    assert.strictEqual(changes.length, 3);
+  });
+
   it("reports the files of a directory that's gone as deleted", async () => {
     const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/pkg": "dir" };
     const { watchers, changes, emit } = createWatchers(kinds);
@@ -354,9 +382,15 @@ describe("lstatPath", () => {
       const before = await lstatPath(dirPath);
       assert.strictEqual(before?.kind, "dir");
       await fs.promises.writeFile(path.join(dirPath, "dprint.json"), "{}");
-      assert.deepStrictEqual(await lstatPath(dirPath), before);
+      assert.strictEqual((await lstatPath(dirPath))?.identity, before?.identity);
       assert.strictEqual((await lstatPath(path.join(dirPath, "dprint.json")))?.kind, "file");
       assert.strictEqual(await lstatPath(path.join(dirPath, "missing")), undefined);
+      // and a file's version changes with its contents
+      const fileBefore = await lstatPath(path.join(dirPath, "dprint.json"));
+      await fs.promises.writeFile(path.join(dirPath, "dprint.json"), "{ \"lineWidth\": 80 }");
+      const fileAfter = await lstatPath(path.join(dirPath, "dprint.json"));
+      assert.strictEqual(fileAfter?.identity, fileBefore?.identity);
+      assert.notStrictEqual(fileAfter?.version, fileBefore?.version);
     } finally {
       await fs.promises.rm(dirPath, { recursive: true, force: true });
     }
@@ -382,6 +416,8 @@ function createWatchers(
     onError?: (err: unknown) => void;
     /** Overrides the identity of a path (ex. a directory that was replaced with another one). */
     identities?: Record<string, string>;
+    /** The versions of the files (ex. their modification times and sizes). */
+    versions?: Record<string, string>;
   } = {},
 ) {
   // the identity of a path changes whenever its kind is seen to change (ex. it was deleted and created again)
@@ -399,7 +435,9 @@ function createWatchers(
       const last = generations.get(key);
       const generation = last == null ? 0 : last.kind === kind ? last.generation : last.generation + 1;
       generations.set(key, { kind, generation });
-      return kind == null ? undefined : { kind, identity: options.identities?.[key] ?? `${key}#${generation}` };
+      return kind == null
+        ? undefined
+        : { kind, identity: options.identities?.[key] ?? `${key}#${generation}`, version: options.versions?.[key] };
     },
     watchDir: (dirPath, fileNames, onChange) => {
       options.beforeWatch?.();
