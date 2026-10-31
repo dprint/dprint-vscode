@@ -381,7 +381,8 @@ export interface Decision {
    * without one can't be forgotten on its own (an allowed download stays allowed for the session), so don't offer to forget it,
    * and never send `dprint/forgetDecisions` without a `configFile` for it, which forgets every decision of every configuration
    * file. Its `dirUri` is missing when it's for every directory the configuration file is used for (ex. the global
-   * configuration file).
+   * configuration file). Its `uri` is an https or npm uri for a decision made by running dprint with a remote or npm
+   * configuration file (ex. `dprint fmt --config <url>`).
    */
   configFile?: ConfigFileIdentifier;
   /** The urls, paths, or specifiers it's for. */
@@ -423,13 +424,12 @@ export interface FilePlugin {
 }
 
 export interface ConfigFileInfo {
-  /** A file, https, or npm uri. */
+  /** A file uri, because the server only finds local configuration files and only starts with one (`dprint lsp --config`). */
   uri: string;
   /**
-   * The directory whose files it formats, which is the directory it's in unless that's a `.config` directory (other than the home
-   * directory's), even when it's a symlink to a file in another directory, and the directory it's used for when it's the global
-   * configuration file (ex. the root of a drive). It's the directory its patterns are relative to for a remote or npm configuration
-   * file.
+   * The directory whose files it formats, which is the directory it's in unless that's a `.config` directory (other than the
+   * home directory's), even when it's a symlink to a file in another directory, and the directory it's used for when it's the
+   * global configuration file (ex. the root of a drive).
    */
   dirUri: string;
   /**

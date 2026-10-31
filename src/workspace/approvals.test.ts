@@ -3,13 +3,22 @@ import { describe, it } from "node:test";
 import {
   type ApprovalChoice,
   Approvals,
+  combineDecisions,
   getApprovalChoices,
   getApprovalDetails,
   getApprovalMessage,
+  getForgettableConfigFiles,
   toPlainNotificationText,
   toVisibleText,
 } from "./approvals";
-import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
+import type {
+  ApprovalDecision,
+  ApproveParams,
+  ConfigFileInfo,
+  Decision,
+  FormatStatus,
+  PendingApproval,
+} from "./messages";
 
 const READY: FormatStatus = { kind: "ready" };
 describe("Approvals", () => {
@@ -651,6 +660,69 @@ describe("Approvals asked about", () => {
     approvals.forget();
     await approvals.request([approval("download")], { isExplicit: false });
     assert.deepStrictEqual(asked, ["download", "download"]);
+  });
+});
+
+describe("combineDecisions", () => {
+  const decision = (
+    uri: string | undefined,
+    always: boolean,
+    specifier = "https://plugins.dprint.dev/a.wasm",
+  ): Decision => ({
+    kind: "downloads",
+    configFile: uri == null ? undefined : { uri, dirUri: uri.replace(/\/dprint\.json$/, "") },
+    specifiers: [specifier],
+    allows: true,
+    always,
+  });
+
+  it("keeps one of each \"Always\" decision, which another process may list by another path", () => {
+    // ex. `/ws/link` is a symlink to `/ws/real`
+    const combined = combineDecisions([
+      [decision("file:///ws/link/dprint.json", true), decision("file:///ws/link/dprint.json", false, "b")],
+      [decision("file:///ws/real/dprint.json", true), decision("file:///ws/link/dprint.json", true)],
+    ]);
+    assert.deepStrictEqual(combined, [
+      {
+        decision: decision("file:///ws/link/dprint.json", true),
+        configFiles: [
+          { uri: "file:///ws/link/dprint.json", dirUri: "file:///ws/link" },
+          { uri: "file:///ws/real/dprint.json", dirUri: "file:///ws/real" },
+        ],
+      },
+      {
+        decision: decision("file:///ws/link/dprint.json", false, "b"),
+        configFiles: [{ uri: "file:///ws/link/dprint.json", dirUri: "file:///ws/link" }],
+      },
+    ]);
+  });
+
+  it("keeps the decisions of the session of each config file, and the ones without a config file", () => {
+    const combined = combineDecisions([
+      [decision("file:///a/dprint.json", false), decision(undefined, false)],
+      [decision("file:///b/dprint.json", false), decision(undefined, false)],
+    ]);
+    assert.deepStrictEqual(combined.map(listed => listed.configFiles.map(configFile => configFile.uri)), [
+      ["file:///a/dprint.json"],
+      [],
+      ["file:///b/dprint.json"],
+    ]);
+  });
+});
+
+describe("getForgettableConfigFiles", () => {
+  it("is each config file of the decisions once, which forgets each of its decisions", () => {
+    const a = { uri: "file:///a/dprint.json", dirUri: "file:///a" };
+    const global = { uri: "file:///config/dprint.json" };
+    const decision: Decision = { kind: "downloads", specifiers: ["a"], allows: true, always: true };
+    assert.deepStrictEqual(
+      getForgettableConfigFiles([
+        { decision, configFiles: [a, global] },
+        { decision, configFiles: [] },
+        { decision, configFiles: [{ ...a }, { ...global, dirUri: "file:///" }] },
+      ]),
+      [a, global, { ...global, dirUri: "file:///" }],
+    );
   });
 });
 

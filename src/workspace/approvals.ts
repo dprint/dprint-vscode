@@ -7,6 +7,7 @@ import {
   type ApproveResult,
   type ConfigApprovals,
   type ConfigFileIdentifier,
+  type Decision,
   type ErrorData,
   type FormatStatus,
   getNotFormatted,
@@ -69,8 +70,9 @@ export class Approvals {
   }
 
   /**
-   * Forgets which approvals the user was asked about, which is for every config file because the
-   * decisions are only forgotten for every one (ex. they forgot their decisions), so they're asked again.
+   * Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked
+   * again. That's every one even when the decisions of one config file were forgotten, because a config
+   * file may be asked about by another path than the one whose decisions were forgotten.
    */
   forget() {
     this.#asked.clear();
@@ -285,6 +287,53 @@ export function getApprovalDetails(approval: PendingApproval) {
   return sections.join("\n\n");
 }
 
+/** A decision that the dprint processes listed, with each config file they listed it for. */
+export interface ListedDecision {
+  decision: Decision;
+  /**
+   * The config files it's for, which are several for an "Always" decision that's listed by several paths
+   * (see `combineDecisions`), and none for a decision without one (see `Decision.configFile`).
+   */
+  configFiles: ConfigFileIdentifier[];
+}
+
+/**
+ * Combines the decisions that each dprint process listed (`dprint/decisions`), which keeps one of each "Always"
+ * decision, because they're the same stored decision, which another process may list by another path of its config
+ * file (ex. through a symlinked workspace folder). The extension doesn't map the paths (that would follow symlinks),
+ * so that's each "Always" decision with the same kind and specifiers, which lists the config file of each.
+ */
+export function combineDecisions(decisionLists: readonly (readonly Decision[])[]): ListedDecision[] {
+  const combined = new Map<string, ListedDecision>();
+  for (const decision of decisionLists.flat()) {
+    const { configFile, ...rest } = decision;
+    const key = JSON.stringify(decision.always ? { ...rest, hasConfigFile: configFile != null } : decision);
+    let listed = combined.get(key);
+    if (listed == null) {
+      listed = { decision, configFiles: [] };
+      combined.set(key, listed);
+    }
+    if (configFile != null && !listed.configFiles.some(other => isSameConfigFile(other, configFile))) {
+      listed.configFiles.push(configFile);
+    }
+  }
+  return [...combined.values()];
+}
+
+/**
+ * Gets the config files whose decisions can be forgotten, once each, because forgetting is for a config file
+ * rather than a decision (`dprint/forgetDecisions` forgets every decision of the config file it's sent).
+ */
+export function getForgettableConfigFiles(decisions: readonly ListedDecision[]) {
+  const configFiles: ConfigFileIdentifier[] = [];
+  for (const configFile of decisions.flatMap(decision => decision.configFiles)) {
+    if (!configFiles.some(other => isSameConfigFile(other, configFile))) {
+      configFiles.push(configFile);
+    }
+  }
+  return configFiles;
+}
+
 /** Gets text as lines of comments, which text from a config file can't end (ex. to add a section). */
 function toCommentLines(text: string) {
   return text.split(/\r\n|[\r\n\u2028\u2029]/).map(line => `// ${line}`).join("\n");
@@ -383,6 +432,10 @@ export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">)
  * Gets if the error is for an approval that isn't pending anymore, which is recognized by its data
  * because a language client library may use the same code for its own errors.
  */
+function isSameConfigFile(a: ConfigFileIdentifier, b: ConfigFileIdentifier) {
+  return a.uri === b.uri && a.dirUri === b.dirUri;
+}
+
 function isApprovalChangedError(err: unknown) {
   return typeof err === "object" && err != null && "code" in err && err.code === APPROVAL_CHANGED_ERROR_CODE
     && "data" in err && typeof err.data === "object" && err.data != null && "kind" in err.data
