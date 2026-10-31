@@ -2,7 +2,14 @@ import * as assert from "node:assert";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { PathKind } from "../environment";
-import { DirWatchers, getFileNamesByDir, getWatchedPathKey, type WatchedFileChange } from "./DirWatchers";
+import {
+  DirWatchers,
+  getFileNamesByDir,
+  getWatchedPathKey,
+  getWatchPattern,
+  isWorkspaceFolderPath,
+  type WatchedFileChange,
+} from "./DirWatchers";
 
 describe("DirWatchers", () => {
   it("watches the directories for the names of the files", async () => {
@@ -82,6 +89,76 @@ describe("DirWatchers", () => {
     ]);
   });
 
+  it("doesn't watch a directory again when it only changed", async () => {
+    // ex. a file in it was saved, which is a change of it in its parent's watcher on Windows
+    const { watchers, watched, disposed, emit } = createWatchers({ "/p": "dir", "/p/shared": "dir" });
+    await watchers.update(new Map([["/p/shared", ["base.json"]]]));
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    assert.deepStrictEqual(disposed, []);
+    assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/shared").length, 1);
+  });
+
+  it("stops watching a parent that's gone, and watches it again on an update once it's back", async () => {
+    // ex. a branch switch deletes the directory and its parent, which vscode would watch again by itself
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/shared": "dir", "/p/shared/configs": "dir" };
+    const { watchers, watched, disposed, emit } = createWatchers(kinds);
+    const fileNamesByDir = new Map([["/p/shared/configs", ["base.json"]]]);
+    await watchers.update(fileNamesByDir);
+    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath), ["/p/shared", "/p/shared/configs"]);
+
+    kinds["/p/shared/configs"] = undefined;
+    kinds["/p/shared"] = undefined;
+    emit("/p/shared", "/p/shared/configs", "deleted");
+    await nextTicks();
+    assert.deepStrictEqual(disposed, ["/p/shared/configs", "/p/shared"]);
+
+    // it comes back as a symlink, which isn't watched, and then as a directory, which is
+    kinds["/p/shared"] = "symlink";
+    await watchers.update(fileNamesByDir);
+    assert.strictEqual(watched.length, 2);
+    kinds["/p/shared"] = "dir";
+    kinds["/p/shared/configs"] = "dir";
+    await watchers.update(fileNamesByDir);
+    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath), [
+      "/p/shared",
+      "/p/shared/configs",
+      "/p/shared",
+      "/p/shared/configs",
+    ]);
+  });
+
+  it("watches a workspace folder that's a symlink for its directories", async () => {
+    const { watchers, watched } = createWatchers({ "/ws": "symlink", "/ws/configs": "dir" }, {
+      workspaceFolders: ["/ws"],
+    });
+    await watchers.update(new Map([["/ws/configs", ["base.json"]]]));
+    assert.deepStrictEqual(watched, [["/ws", ["configs"]], ["/ws/configs", ["base.json"]]]);
+  });
+
+  it("reports an error of a check that its parent's watcher started", async () => {
+    const errors: unknown[] = [];
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/shared": "dir" };
+    let fails = false;
+    const { watchers, emit } = createWatchers(kinds, {
+      onError: err => errors.push(err),
+      beforeWatch: () => {
+        if (fails) {
+          throw new Error("Failed.");
+        }
+      },
+    });
+    await watchers.update(new Map([["/p/shared", ["base.json"]]]));
+    fails = true;
+    kinds["/p/shared"] = undefined;
+    emit("/p", "/p/shared", "deleted");
+    await nextTicks();
+    kinds["/p/shared"] = "dir";
+    emit("/p", "/p/shared", "created");
+    await nextTicks();
+    assert.strictEqual(errors.length, 1);
+  });
+
   it("checks a watched directory again on each update", async () => {
     const kinds: Record<string, PathKind | undefined> = { "/p/a": "dir" };
     const { watchers, disposed } = createWatchers(kinds);
@@ -150,6 +227,25 @@ describe("getFileNamesByDir", () => {
   });
 });
 
+describe("getWatchPattern", () => {
+  it("has the names without a separator", () => {
+    assert.strictEqual(getWatchPattern(["dprint.json"]), "dprint.json");
+    assert.strictEqual(getWatchPattern(["dprint.json", ".config"]), "{dprint.json,.config}");
+    // a name with a glob's special characters is matched by `*`
+    assert.strictEqual(getWatchPattern(["base.json", "a{b}.json"]), "*");
+    assert.strictEqual(getWatchPattern(["[x].json"]), "*");
+  });
+});
+
+describe("isWorkspaceFolderPath", () => {
+  it("compares the paths without their case when the file system does", () => {
+    const folder = path.resolve("/ws/Project");
+    assert.strictEqual(isWorkspaceFolderPath(path.resolve("/ws/project"), [folder], true), true);
+    assert.strictEqual(isWorkspaceFolderPath(path.resolve("/ws/project"), [folder], false), false);
+    assert.strictEqual(isWorkspaceFolderPath(path.join(folder, "sub"), [folder], true), false);
+  });
+});
+
 describe("getWatchedPathKey", () => {
   it("is without the case when the file system is", () => {
     // an event's path may differ in case from the uri dprint provided
@@ -166,16 +262,23 @@ function createWatchers(
     beforeWatch?: () => void;
     /** Overrides the kind of a path, unless it's undefined. */
     pathKind?: (filePath: string) => Promise<PathKind | undefined> | undefined;
+    onError?: (err: unknown) => void;
   } = {},
 ) {
+  // the identity of a path changes whenever its kind is seen to change (ex. it was deleted and created again)
+  const generations = new Map<string, { kind: PathKind | undefined; generation: number }>();
   const watched: [string, readonly string[]][] = [];
   const disposed: string[] = [];
   const changes: [string, WatchedFileChange][] = [];
   const callbacks = new Map<string, ((filePath: string, change: WatchedFileChange) => void)[]>();
   const watchers = new DirWatchers({
-    pathKind: filePath => {
+    lstat: async filePath => {
       const key = toTestPath(filePath);
-      return options.pathKind?.(key) ?? Promise.resolve(kinds[key]);
+      const kind = await (options.pathKind?.(key) ?? Promise.resolve(kinds[key]));
+      const last = generations.get(key);
+      const generation = last == null ? 0 : last.kind === kind ? last.generation : last.generation + 1;
+      generations.set(key, { kind, generation });
+      return kind == null ? undefined : { kind, identity: `${key}#${generation}` };
     },
     watchDir: (dirPath, fileNames, onChange) => {
       options.beforeWatch?.();
@@ -190,7 +293,7 @@ function createWatchers(
       };
     },
     onChange: (filePath, change) => changes.push([filePath, change]),
-    onError: err => assert.fail(String(err)),
+    onError: options.onError ?? (err => assert.fail(String(err))),
     isCaseInsensitive: options.isCaseInsensitive ?? false,
     isWorkspaceFolder: dirPath => (options.workspaceFolders ?? []).includes(toTestPath(dirPath)),
   });

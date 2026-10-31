@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -47,7 +48,15 @@ import {
   SHOW_DETAILS_TITLE,
   toPlainNotificationText,
 } from "./approvals";
-import { DirWatchers, getFileNamesByDir, getWatchedPathKey, type WatchedFileChange } from "./DirWatchers";
+import {
+  DirWatchers,
+  getFileNamesByDir,
+  getWatchedPathKey,
+  getWatchPattern,
+  isWorkspaceFolderPath,
+  type PathStat,
+  type WatchedFileChange,
+} from "./DirWatchers";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
@@ -716,22 +725,22 @@ class WorkspaceState {
    * directories), which the workspace folders in the same directory share.
    */
   readonly #ancestorWatchers = new DirWatchers({
-    pathKind: path => this.#environment.pathKind(path),
+    lstat: lstatPath,
     watchDir,
     onChange: (filePath, change) => this.#onAncestorConfigFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
-    isWorkspaceFolder: isWorkspaceFolderPath,
+    isWorkspaceFolder: isWorkspaceFolder,
   });
   /** Watches the files the config files were resolved from (`watchUris`) by their directories. */
   readonly #fileWatchers = new DirWatchers({
-    pathKind: path => this.#environment.pathKind(path),
+    lstat: lstatPath,
     watchDir,
     onChange: (filePath, change) => this.#onResolvedFromFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
     // ex. a file a config file extends in a workspace folder opened through a symlink
-    isWorkspaceFolder: isWorkspaceFolderPath,
+    isWorkspaceFolder: isWorkspaceFolder,
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
@@ -1985,14 +1994,8 @@ function watchDir(
   fileNames: readonly string[],
   onChange: (filePath: string, change: WatchedFileChange) => void,
 ) {
-  // a name with a glob's special characters is matched by `*` instead, which `DirWatchers` filters
-  const pattern = fileNames.some(name => /[*?[\]{},/\\]/.test(name))
-    ? "*"
-    : fileNames.length === 1
-    ? fileNames[0]
-    : `{${fileNames.join(",")}}`;
   const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(vscode.Uri.file(dirPath), pattern),
+    new vscode.RelativePattern(vscode.Uri.file(dirPath), getWatchPattern(fileNames)),
   );
   watcher.onDidCreate(uri => onChange(uri.fsPath, "created"));
   watcher.onDidChange(uri => onChange(uri.fsPath, "changed"));
@@ -2001,12 +2004,24 @@ function watchDir(
 }
 
 /** Gets whether the directory is one of the workspace folders. */
-function isWorkspaceFolderPath(dirPath: string) {
-  const key = getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM);
-  return vscode.workspace.workspaceFolders?.some(folder =>
-    folder.uri.scheme === FILE_SCHEME
-    && getWatchedPathKey(path.resolve(folder.uri.fsPath), IS_CASE_INSENSITIVE_FILE_SYSTEM) === key
-  ) ?? false;
+function isWorkspaceFolder(dirPath: string) {
+  const folderPaths = (vscode.workspace.workspaceFolders ?? [])
+    .filter(folder => folder.uri.scheme === FILE_SCHEME)
+    .map(folder => folder.uri.fsPath);
+  return isWorkspaceFolderPath(dirPath, folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM);
+}
+
+/** Gets what's at the path without following a symlink at the end of it, with what identifies it. */
+async function lstatPath(filePath: string): Promise<PathStat | undefined> {
+  try {
+    const stat = await fs.promises.lstat(filePath, { bigint: true });
+    return {
+      kind: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file",
+      identity: `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */
