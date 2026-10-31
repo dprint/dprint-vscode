@@ -46,10 +46,14 @@ export interface ServerCapability {
   configFileGlobs?: string[];
   /**
    * The names of the configuration files that are looked up in a directory (ex. in the ancestor directories of the workspace
-   * folders), which may have names added later, are empty for `dprint lsp --config`, and are missing without a `version`.
+   * folders), which may have names added later, are empty for `dprint lsp --config`, and are missing without a `version`. A
+   * case insensitive file system (Windows and macOS by default) finds them in any case, which the server does too.
    */
   configFileNames?: string[];
-  /** The names of the configuration files that are looked up in the `.config` directory of a directory, like `configFileNames`. */
+  /**
+   * The names of the configuration files that are looked up in the `.config` directory of a directory, like
+   * `configFileNames`. The home directory's `.config` is an ordinary directory, which isn't looked in for them.
+   */
   dotConfigFileNames?: string[];
   /** What to tell the user when there isn't a `version` (ex. that dprint or the extension needs to be updated). */
   message?: string;
@@ -265,7 +269,7 @@ export interface ApprovalDecisionOption {
   label: string;
   /** Whether it allows what's approved, which is otherwise denied. */
   allows: boolean;
-  /** Whether it's remembered after dprint stops, which is otherwise only for the session. */
+  /** Whether it's remembered after the session ends (in the approvals file), which is otherwise only for the session. */
   always: boolean;
   /** What it does. */
   description: string;
@@ -387,6 +391,7 @@ export interface Decision {
    */
   items?: ApprovalItem[];
   allows: boolean;
+  /** Whether it's remembered after the session ends, which includes running dprint with the configuration file (ex. `dprint fmt`). */
   always: boolean;
 }
 
