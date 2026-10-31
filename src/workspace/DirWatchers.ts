@@ -207,7 +207,7 @@ export class DirWatchers {
    */
   #reportChange(dirPath: string, name: string, filePath: string, change: WatchedFileChange) {
     this.#options.onChange(filePath, change);
-    // found by its parent and name rather than by joining them, which keeps the separators of the entry's path
+    // compared by its parent and name, because joining them may use other separators than the entry's path
     const childPath = [...this.#entries.keys()].find(key =>
       path.dirname(key) === dirPath && this.#normalizeName(path.basename(key)) === this.#normalizeName(name)
     );

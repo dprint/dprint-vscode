@@ -234,7 +234,7 @@ export interface PendingApproval {
   items: ApprovalItem[];
   /** The decisions the user can make in the order to show them. */
   decisions: ApprovalDecisionOption[];
-  /** Whether the user denied it, which is when they're only asked again when they ask for it (ex. a command). */
+  /** Whether the user denied it, which means they shouldn't be asked unless they ask for it (ex. a command). */
   denied: boolean;
   /** What the user decided before, which is "deny" or "alwaysDeny" when it's denied. */
   previousDecision?: ApprovalDecision;
@@ -399,7 +399,10 @@ export interface Decision {
    * configuration file (ex. `dprint fmt --config <url>`).
    */
   configFile?: ConfigFileIdentifier;
-  /** The urls, paths, or specifiers it's for. */
+  /**
+   * The urls, paths, or specifiers it's for, like the `specifier` of an approval's items and escaped the same way (ex. the
+   * process plugins, or the setting of an `.npmrc` proxy).
+   */
   specifiers: string[];
   /**
    * What it's for, like an approval's items, with one for each of the `specifiers` in the same order. The server usually provides it for
@@ -420,7 +423,7 @@ export interface Decision {
 export const APPROVAL_CHANGED_ERROR_CODE = -32803;
 
 export interface FileInfoParams extends DocumentParams {
-  /** The text of the document, which is otherwise read from the file when it's needed (ex. a shebang). */
+  /** The text of the document, which is otherwise read from the file when it's needed (ex. the shebang of an extensionless file). */
   text?: string;
 }
 
@@ -462,8 +465,8 @@ export interface ConfigFileInfo {
    * to a share). So don't open a configuration file from an older result or action (ex. a notification's "Open Configuration
    * File") when the latest result the editor extension has for it has `onAnotherMachine`, which is the latest `configFile` with
    * its `uri` (and `dirUri`) of a `dprint/configInfo` or `dprint/fileInfo` result, because both have the server's view of the
-   * configuration file, and otherwise open it as usual. A `dprint/configChanged` that names it (or no configuration file) and
-   * a restart of the server make it unknown again. The server takes back the diagnostics it published for it then by
+   * configuration file, and otherwise open it as usual. A `dprint/configChanged` that names it (or no configuration file),
+   * other than a `schemaOnly` one, and a restart of the server make it unknown again. The server takes back the diagnostics it published for it then by
    * publishing empty ones, and the ones it published through a directory the editor knew by another path once that doesn't lead
    * where it did (when it also sends `dprint/configChanged` for the configuration files the editor knew through it, whose
    * diagnostics are published again once they're resolved again), so don't drop them for this. This is a best effort (see

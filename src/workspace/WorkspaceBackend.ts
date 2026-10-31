@@ -292,7 +292,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         };
       }));
       // the processes that are kept may have been started with other settings or workspace folders, and one
-      // that failed to start is started again now that the workspace changed (ex. its executable started now)
+      // that failed to start may start again (ex. its executable was fixed)
       for (const service of state.services) {
         service.connection.allowStart();
         service.connection.updateSettings(getSettings());
@@ -1246,7 +1246,7 @@ class WorkspaceState {
       return;
     }
     // each process forgets what was decided for its session, and the stored decisions are shared, so it's sent
-    // to each process that may have used the config file, which is any of them
+    // to each process, because any of them may have used the config file
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
       try {
         const result = await service.connection.forgetDecisions({ configFile });
@@ -1528,8 +1528,8 @@ class WorkspaceState {
           const mayAsk = notFormatted.claim || options.saysWhyNotFormatted === true
             || isDprintDefaultFormatter(document);
           if (notFormatted.approvals != null && notFormatted.approvals.length > 0 && !isAfterApproval && mayAsk) {
-            // The user is asked when formatting (ex. on save) because opening a project isn't the
-            // same as choosing to run what its config file says.
+            // the user is asked when formatting (ex. on save) because opening a project isn't the
+            // same as choosing to run what its config file says
             const approval = this.#requestApproval(service, notFormatted.approvals, { isExplicit: false }).catch(
               err => {
                 this.#logger.logError("Error approving:", err);
@@ -1985,8 +1985,8 @@ class WorkspaceState {
     return config.legacyFolder?.getEditorInfo()?.plugins ?? config.info?.plugins ?? [];
   }
 
-  // This is separate from the formatting registration update so that the workspace
-  // registration doesn't wait on starting dprint for a config outside the workspace.
+  // separate from the formatting registration update so that the workspace registration
+  // doesn't wait on starting dprint for a config outside the workspace
   #scheduleUserDataFilePathsUpdate() {
     this.#userDataFilePathsUpdate = this.#userDataFilePathsUpdate
       .then(async () => {
