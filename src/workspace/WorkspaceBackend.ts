@@ -48,14 +48,13 @@ import {
   toPlainNotificationText,
 } from "./approvals";
 import {
-  canOpenConfigFile,
   DirWatchers,
-  getFileAccess,
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
   getWorkspaceFolderAndAncestorKeys,
   lstatPath,
+  lstatWithoutSymlinks,
   type StatCache,
   type WatchedFileChange,
 } from "./DirWatchers";
@@ -603,12 +602,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         if (fileUri.scheme !== FILE_SCHEME) {
           continue;
         }
-        const access = await getFileAccess(
-          fileUri.fsPath,
-          { lstat: lstatPath, isWorkspaceFolderOrAncestor },
-          statCache,
-        );
-        if (access === "gone") {
+        if (await isFileGone(fileUri, statCache)) {
           uris.delete(uri);
           this.#diagnostics.delete(fileUri);
         }
@@ -2092,27 +2086,33 @@ function showSeverityMessage(message: Notice, isConfigFileOnAnotherMachine: (uri
 
 /**
  * Opens a file that a message offered to open (ex. its config file), which may have been shown a while ago
- * (ex. from the notification center). One that's a symlink or reached through one is only opened when
- * dprint's latest result for it says it isn't on another machine (see `canOpenConfigFile`), because the
- * symlink may lead to another machine since (ex. a `git pull` replaced the config file with a symlink to
- * a share).
+ * (ex. from the notification center), so it isn't opened when dprint's latest result for it says it's on
+ * another machine now (ex. a `git pull` replaced the config file with a symlink to a share), which is a best
+ * effort like dprint's spec says.
  */
 async function openConfigFileFromMessage(
   uri: vscode.Uri,
   isConfigFileOnAnotherMachine: (uri: string) => boolean | undefined,
 ) {
-  const access = await getFileAccess(uri.fsPath, { lstat: lstatPath, isWorkspaceFolderOrAncestor });
   const displayPath = getDisplayPath(uri.toString());
-  if (access === "gone") {
-    vscode.window.showInformationMessage(toPlainNotificationText(`${displayPath} doesn't exist anymore.`));
-  } else if (canOpenConfigFile(access, isConfigFileOnAnotherMachine(uri.toString()))) {
-    await vscode.commands.executeCommand("vscode.open", uri);
-  } else {
+  if (isConfigFileOnAnotherMachine(uri.toString()) === true) {
     vscode.window.showWarningMessage(
       toPlainNotificationText(
-        `${displayPath} wasn't opened because it's a symlink or is reached through one, which may lead to another `
-          + "machine that dprint wasn't allowed to read. Open it yourself if you know where it leads.",
+        `${displayPath} wasn't opened because it's on another machine now, which dprint wasn't allowed to read.`,
       ),
     );
+  } else if (await isFileGone(uri, new Map())) {
+    vscode.window.showInformationMessage(toPlainNotificationText(`${displayPath} doesn't exist anymore.`));
+  } else {
+    await vscode.commands.executeCommand("vscode.open", uri);
   }
+}
+
+/**
+ * Gets whether a file is gone, which is looked at without following a symlink (see `lstatWithoutSymlinks`),
+ * so one that's reached through a symlink isn't known to be gone.
+ */
+async function isFileGone(uri: vscode.Uri, statCache: StatCache) {
+  const result = await lstatWithoutSymlinks(uri.fsPath, { lstat: lstatPath, isWorkspaceFolderOrAncestor }, statCache);
+  return result.isReachable && result.stat == null;
 }

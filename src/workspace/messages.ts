@@ -316,8 +316,9 @@ export interface ConfigFileIdentifier {
   uri: string;
   /**
    * The directory it's used for (its `dirUri`), which is the root of the server's current directory for the global configuration
-   * file when not provided, and the directory to find the configuration file the server was started with from (`kind: "cli"`). For
-   * `dprint/decisions` and `dprint/forgetDecisions`, a configuration file without one is of each directory it's used for instead.
+   * file when not provided, and the directory to find the configuration file the server was started with from (`kind: "cli"`),
+   * which is the server's current directory when not provided. For `dprint/decisions` and `dprint/forgetDecisions`, a
+   * configuration file without one is of each directory it's used for instead.
    */
   dirUri?: string;
 }
@@ -429,17 +430,15 @@ export interface ConfigFileInfo {
    * that reads it from the other machine, which the approval is for. Its directory is watched like any other, which is never when
    * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
    * once it's allowed, and when a configuration file becomes one on another machine (ex. a `git pull` replaced it with a symlink
-   * to a share). So before opening a configuration file from an older result or action (ex. a notification's "Open
-   * Configuration File"), check whether its path is a symlink or is reached through one, looking at each directory of it from the
-   * workspace folder (or the root without one) down without following any (ex. with `lstat`). A path without a symlink can't lead
-   * to another machine the workspace isn't on, so open it. Otherwise, check the latest result the editor extension has for it,
-   * and don't open it when that has `onAnotherMachine` or when there's no result for it. That result only stays the latest for a
-   * configuration file whose changes reach the server (the `configFile.uri` of a `dprint/configInfo` result, see "Lifecycle"),
-   * and stops being it once `dprint/configChanged` names that configuration file (or no configuration file) or the server is
-   * started again. The server takes back the diagnostics it published for it then by publishing empty ones, and the ones it
-   * published through a directory the editor knew by another path once that doesn't lead where it did (when it also sends
-   * `dprint/configChanged` for their configuration files, which are published again once they're resolved again), so don't drop
-   * them for this. This is a best effort (see "Security").
+   * to a share). So don't open a configuration file from an older result or action (ex. a notification's "Open Configuration
+   * File") when the latest result the editor extension has for it says it's on another machine, which is the latest `configFile`
+   * with its `uri` (and `dirUri`) that a `dprint/configInfo` or `dprint/fileInfo` result had, because both have the server's
+   * view of the configuration file, and otherwise open it as usual. That result isn't known anymore once `dprint/configChanged`
+   * names that configuration file (or no configuration file) or the server is started again. The server takes back the
+   * diagnostics it published for it then by publishing empty ones, and the ones it published through a directory the editor knew
+   * by another path once that doesn't lead where it did (when it also sends `dprint/configChanged` for the configuration files the
+   * editor knew through it, whose diagnostics are published again once they're resolved again), so don't drop them for this. This
+   * is a best effort (see "Security").
    */
   onAnotherMachine?: boolean;
 }
@@ -464,9 +463,8 @@ export interface ConfigInfoResult {
    * a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), when
    * its names are in another case on disk, and when it's reached through a directory that's a symlink the editor doesn't watch
    * through. The editor watches them too, by their directories (see "Lifecycle" for when one that's a symlink isn't watched).
-   * Each is the editor's path
-   * when that's through a workspace folder or one of its ancestors that it knows by another path, and the canonical path otherwise,
-   * which the editor may watch. A file whose directory may not be read (ex. it's on another machine now) is left out.
+   * Each is the editor's path when that's through a workspace folder or one of its ancestors that it knows by another path, and
+   * the canonical path otherwise, which the editor may watch. A file whose directory may not be read (ex. it's on another machine now) is left out.
    */
   watchUris: string[];
   status: FormatStatus;

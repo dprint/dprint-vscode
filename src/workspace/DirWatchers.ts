@@ -303,40 +303,6 @@ export async function lstatWithoutSymlinks(
 }
 
 /**
- * Gets whether a file can be opened without following a symlink: it's `"symlink"`
- * when it's a symlink itself and `"unreachable"` when it's reached through one that may not be followed
- * (see `lstatWithoutSymlinks`), either of which may lead to another machine since it was provided (ex. a
- * `git pull` replaced a config file that has problems with a symlink to a share).
- */
-export async function getFileAccess(
-  filePath: string,
-  options: Pick<DirWatchersOptions, "lstat" | "isWorkspaceFolderOrAncestor">,
-  statCache: StatCache = new Map(),
-): Promise<"exists" | "symlink" | "gone" | "unreachable"> {
-  const result = await lstatWithoutSymlinks(filePath, options, statCache);
-  if (!result.isReachable) {
-    return "unreachable";
-  }
-  return result.stat == null ? "gone" : result.stat.kind === "symlink" ? "symlink" : "exists";
-}
-
-/**
- * Gets whether a config file can be opened from an older message, which is when it can be without
- * following a symlink, or when it's a symlink or reached through one and dprint's latest result for it
- * is known and doesn't say it's on another machine (ex. a config file in a dotfiles directory that a
- * symlink in the project points to). One whose path has no symlink is opened without a result too,
- * because it can't lead to another machine the workspace isn't on.
- *
- * @param isOnAnotherMachine - What dprint's latest result for it says, which is undefined when there's none.
- */
-export function canOpenConfigFile(
-  access: "exists" | "symlink" | "unreachable",
-  isOnAnotherMachine: boolean | undefined,
-) {
-  return access === "exists" || isOnAnotherMachine === false;
-}
-
-/**
  * Gets what's at the path without following a symlink at the end of it. Its identity is its device and
  * inode, which a directory that replaced another may reuse (ex. on ext4), so the files of a directory
  * that its parent's watcher reports are compared with their versions too (see `DirWatchers`), and one
