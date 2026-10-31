@@ -278,7 +278,8 @@ export interface ConfigApprovals {
   configFile: ConfigFileInfo | null;
   /**
    * What needs to be approved now for the config file, which is empty when nothing does. After a
-   * decision, it has what was denied when the decision was to deny it.
+   * decision, it has what was denied when the decision was to deny it and the denial was kept (a denial
+   * of downloads that were each allowed exactly since isn't, see `ApproveResult.notice`).
    */
   approvals: PendingApproval[];
   /** Whether the config file is used now, which isn't ready when it has an error or was deleted. */
@@ -291,8 +292,9 @@ export interface ApproveResult extends ConfigApprovals {
    * couldn't be stored, or the approvals file is from a newer version of dprint that this one can't write to, so it's only used
    * for the session). The server keeps such a decision for the session like one that isn't `always` (see "Approving"). It also says
    * when the file of the session couldn't be written or deleted, so what the user decided for the session before may come back if the
-   * server is started again, and when the session's decisions aren't kept yet because another server that's running uses the session
-   * id or its lock can't be taken (see `sessionId`).
+   * server is started again, when the session's decisions aren't kept yet because another server that's running uses the session
+   * id or its lock can't be taken (see `sessionId`), and that a denial wasn't kept because what it denied was each allowed exactly
+   * since, so it's still allowed for the session.
    */
   notice?: Notice;
 }
@@ -397,7 +399,10 @@ export interface FilePlugin {
 }
 
 export interface ConfigFileInfo {
-  /** A file, https, or npm uri, which is the path it was found at for a config file that's a symlink. */
+  /**
+   * A file, https, or npm uri, which is the path it was found at for a config file that's a symlink. On a case insensitive file
+   * system, it (and the uri its problems are published to) may differ in case from the editor's uri of the file.
+   */
   uri: string;
   /**
    * The directory whose files it formats, which is the directory it's in unless that's a `.config` directory (other than the home
