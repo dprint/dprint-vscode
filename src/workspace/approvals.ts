@@ -44,11 +44,8 @@ export interface ApprovalsOptions {
  */
 export class Approvals {
   readonly #options: ApprovalsOptions;
-  /**
-   * The config files of the approvals the user was asked about without deciding (ex. they dismissed
-   * the prompt) by what identifies them (see `getAskedKey`).
-   */
-  readonly #asked = new Map<string, ConfigFileIdentifier>();
+  /** The approvals the user was asked about without deciding (ex. they dismissed the prompt), see `getAskedKey`. */
+  readonly #asked = new Set<string>();
   /** The approvals being asked about, which the formats of the other documents of the config file share. */
   readonly #inProgress = new Map<string, Promise<boolean>>();
   /** Whether what the user answers isn't used anymore (see `cancel`). */
@@ -67,25 +64,11 @@ export class Approvals {
   }
 
   /**
-   * Forgets which approvals of the config file the user was asked about, or of every config file
-   * when not provided (ex. they forgot their decisions), so they're asked again.
-   *
-   * @param configFile - The config file, whose approvals of every directory are forgotten when it
-   * doesn't have a `dirUri`.
+   * Forgets which approvals the user was asked about, which is for every config file because the
+   * decisions are only forgotten for every one (ex. they forgot their decisions), so they're asked again.
    */
-  forget(configFile?: ConfigFileIdentifier) {
-    if (configFile == null) {
-      this.#asked.clear();
-      return;
-    }
-    for (const [key, askedConfigFile] of this.#asked) {
-      if (
-        askedConfigFile.uri === configFile.uri
-        && (configFile.dirUri == null || askedConfigFile.dirUri === configFile.dirUri)
-      ) {
-        this.#asked.delete(key);
-      }
-    }
+  forget() {
+    this.#asked.clear();
   }
 
   /**
@@ -143,7 +126,7 @@ export class Approvals {
         if (this.#isCancelled) {
           return false;
         }
-        this.#asked.set(askedKey, { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri });
+        this.#asked.add(askedKey);
         decision = await this.#options.ask(approval, getApprovalChoices(approval));
         if (decision != null) {
           // the user decided, so it's asked about again when it's pending again later whatever dprint did

@@ -244,8 +244,12 @@ describe("Approvals", () => {
       items: [...approval("processPlugins").items, { specifier: "https://example.com/added", kind: "plugin" }],
     };
     const approved: ApproveParams[] = [];
+    const asked: string[] = [];
     const approvals = new Approvals({
-      ask: async () => "deny",
+      ask: async pending => {
+        asked.push(pending.id);
+        return "deny";
+      },
       approve: async params => {
         approved.push(params);
         throw Object.assign(new Error("Changed."), {
@@ -257,6 +261,10 @@ describe("Approvals", () => {
     });
     assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
+    // what replaced it isn't asked about in the same request, but is on a later save
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    await approvals.request([replacement], { isExplicit: false });
+    assert.deepStrictEqual(asked, ["processPlugins", "replacement"]);
   });
 
   it("doesn't use what the user answers once it's cancelled", async () => {
@@ -343,9 +351,13 @@ describe("Approvals", () => {
   it("denies what replaced an approval the user denied, but never allows it", async () => {
     const replacement = { ...approval("processPlugins"), id: "replacement" };
     const approved: ApproveParams[] = [];
+    const asked: string[] = [];
     const create = (decision: ApprovalDecision) =>
       new Approvals({
-        ask: async () => decision,
+        ask: async pending => {
+          asked.push(pending.id);
+          return decision;
+        },
         approve: async params => {
           approved.push(params);
           if (params.id === "processPlugins") {
@@ -358,12 +370,22 @@ describe("Approvals", () => {
         },
         pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
       });
-    assert.strictEqual(await create("deny").request([approval("processPlugins")], { isExplicit: false }), false);
+    const denied = create("deny");
+    assert.strictEqual(await denied.request([approval("processPlugins")], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }, {
       id: "replacement",
       decision: "deny",
     }]);
+    // what replaced it isn't asked about in the same request
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    // or on a later save once dprint says it's denied, but is when it's pending without that (ex. dprint
+    // restarted without keeping the session)
+    await denied.request([{ ...replacement, denied: true }], { isExplicit: false });
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    await denied.request([replacement], { isExplicit: false });
+    assert.deepStrictEqual(asked, ["processPlugins", "replacement"]);
     approved.length = 0;
+    asked.length = 0;
     // the user is asked about what replaced it instead
     const allowed = create("allow");
     assert.strictEqual(await allowed.request([approval("processPlugins")], { isExplicit: false }), true);
@@ -371,6 +393,7 @@ describe("Approvals", () => {
       id: "replacement",
       decision: "allow",
     }]);
+    assert.deepStrictEqual(asked, ["processPlugins", "replacement"]);
   });
 
   it("doesn't ask about a denied approval after allowing one unless the user asks for it", async () => {
@@ -419,34 +442,12 @@ describe("Approvals asked about", () => {
     assert.deepStrictEqual(asked, ["processPlugins"]);
   });
 
-  it("forgets which approvals of a config file were asked about", async () => {
-    const download = (id: string, uri: string, dirUri: string) => ({
-      ...approval("download"),
-      id,
-      configFile: { ...configFile(uri), dirUri },
-    });
-    const pending = [
-      download("a", "file:///a/dprint.json", "file:///a"),
-      download("aSub", "file:///a/dprint.json", "file:///a/sub"),
-      download("b", "file:///b/dprint.json", "file:///b"),
-    ];
+  it("asks on save again about what was asked about once it's forgotten", async () => {
     const { approvals, asked } = createApprovals({ decide: () => undefined });
-    const requestEach = async () => {
-      for (const approval of pending) {
-        await approvals.request([approval], { isExplicit: false });
-      }
-      return asked.splice(0);
-    };
-    assert.deepStrictEqual(await requestEach(), ["a", "aSub", "b"]);
-
-    approvals.forget({ uri: "file:///a/dprint.json", dirUri: "file:///a/sub" });
-    assert.deepStrictEqual(await requestEach(), ["aSub"]);
-    // of every directory when it doesn't have one
-    approvals.forget({ uri: "file:///a/dprint.json" });
-    assert.deepStrictEqual(await requestEach(), ["a", "aSub"]);
-    // of every config file without one
+    await approvals.request([approval("download")], { isExplicit: false });
     approvals.forget();
-    assert.deepStrictEqual(await requestEach(), ["a", "aSub", "b"]);
+    await approvals.request([approval("download")], { isExplicit: false });
+    assert.deepStrictEqual(asked, ["download", "download"]);
   });
 });
 
