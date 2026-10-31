@@ -506,6 +506,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         this.#environment,
         folder.uri.fsPath,
         subConfigUris.map(uri => uri.fsPath),
+        // an older dprint reads a symlinked config file without the user allowing it anyway
+        { followSymlinks: true },
       );
       this.#assertNotDisposed();
       this.#assertCurrentGeneration(generation);

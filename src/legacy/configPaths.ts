@@ -30,7 +30,10 @@ export async function resolveLooseFolderConfig(
   filePath: string,
   options: ResolveLooseFolderConfigOptions,
 ): Promise<LooseFolderConfig | undefined> {
-  const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath));
+  // an older dprint reads a symlinked config file without the user allowing it anyway
+  const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath), {
+    followSymlinks: true,
+  });
   if (configFilePath != null) {
     // run in the config file's directory so the cli resolves the config
     // with the same base path as when running it from the command line

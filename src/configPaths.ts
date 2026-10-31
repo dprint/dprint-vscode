@@ -15,12 +15,23 @@ export async function findWorkspaceFolderAncestorConfigFile(
   env: Environment,
   folderPath: string,
   configFilePaths: readonly string[],
+  options: FindConfigFileOptions = {},
 ) {
   // the config file in the folder is used instead
   if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDir(env, configFilePath)) === "")) {
     return undefined;
   }
-  return findConfigFileInAncestorDirectories(env, path.dirname(folderPath));
+  return findConfigFileInAncestorDirectories(env, path.dirname(folderPath), options);
+}
+
+/** How the config file of a directory is found. */
+export interface FindConfigFileOptions {
+  /**
+   * Whether a symlink is followed, which is for an older dprint that reads a config file without the user
+   * allowing one on another machine anyway, so it's found like the CLI finds it (ex. in a symlinked `.config`
+   * directory, and not a symlink that points to nothing).
+   */
+  followSymlinks?: boolean;
 }
 
 /**
@@ -85,12 +96,16 @@ export async function filterCacheDirConfigFiles(
  * Finds the config file in the provided directory or its closest ancestor
  * directory. This mirrors how the dprint CLI discovers config files.
  */
-export async function findConfigFileInAncestorDirectories(env: Environment, dirPath: string) {
+export async function findConfigFileInAncestorDirectories(
+  env: Environment,
+  dirPath: string,
+  options: FindConfigFileOptions = {},
+) {
   let currentPath = dirPath;
   while (true) {
     // a `.config` directory is searched as part of its parent directory, which is next
     if (!isDotConfigDir(env, currentPath)) {
-      const configFilePath = await findConfigFileInDir(env, currentPath);
+      const configFilePath = await findConfigFileInDir(env, currentPath, options);
       if (configFilePath != null) {
         return configFilePath;
       }
@@ -143,7 +158,7 @@ export class AncestorConfigFileCache {
   async #find(dirPath: string): Promise<string | undefined> {
     // a `.config` directory is searched as part of its parent directory, which is next
     if (!isDotConfigDir(this.#env, dirPath)) {
-      const configFilePath = await findConfigFileInDir(this.#env, dirPath);
+      const configFilePath = await findConfigFileInDir(this.#env, dirPath, {});
       if (configFilePath != null) {
         return configFilePath;
       }
@@ -199,23 +214,29 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
 }
 
 /**
- * Finds the config file the dprint CLI uses in the directory. A symlink isn't followed, because
- * it may point to another machine, which dprint only reads once the user allows it.
+ * Finds the config file the dprint CLI uses in the directory. A symlink isn't followed unless the
+ * options say to, because it may point to another machine, which dprint only reads once the user
+ * allows it. So a symlink that points to nothing is still found, which dprint then says is missing,
+ * while the CLI would look further up for one.
  */
-async function findConfigFileInDir(env: Environment, dirPath: string) {
+async function findConfigFileInDir(env: Environment, dirPath: string, options: FindConfigFileOptions) {
+  const exists = async (filePath: string) =>
+    options.followSymlinks ? await env.fileExists(filePath) : await env.pathKind(filePath) != null;
   for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
     const configFilePath = path.join(dirPath, configFileName);
-    if (await env.pathKind(configFilePath) != null) {
+    if (await exists(configFilePath)) {
       return configFilePath;
     }
   }
   // only look in the `.config` directory when there is one, which most directories don't have
   // (a symlinked one isn't looked in, which dprint still finds for the documents it's asked about)
   const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
-  if (isDotConfigDir(env, dotConfigDirPath) && await env.pathKind(dotConfigDirPath) === "dir") {
+  const isDir = async () =>
+    options.followSymlinks ? await env.fileExists(dotConfigDirPath) : await env.pathKind(dotConfigDirPath) === "dir";
+  if (isDotConfigDir(env, dotConfigDirPath) && await isDir()) {
     for (const configFileName of DOT_CONFIG_FILE_NAMES) {
       const configFilePath = path.join(dotConfigDirPath, configFileName);
-      if (await env.pathKind(configFilePath) != null) {
+      if (await exists(configFilePath)) {
         return configFilePath;
       }
     }

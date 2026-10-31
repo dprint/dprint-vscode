@@ -179,6 +179,35 @@ describe("findConfigFileInAncestorDirectories", () => {
 
     assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), undefined);
   });
+
+  it("finds a symlink that points to nothing without following it", async () => {
+    const env = new TestEnvironment();
+    const configPath = path.resolve("/project/dprint.json");
+    env.writeFile(path.resolve("/dprint.json"), "{}");
+    env.symlink(path.resolve("/deleted/dprint.json"), configPath);
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), configPath);
+  });
+
+  it("finds a config file like the CLI when following symlinks", async () => {
+    const env = new TestEnvironment();
+    // ex. for an older dprint, which reads it anyway
+    env.writeFile(path.resolve("/shared/dprint.json"), "{}");
+    env.symlink(path.resolve("/shared"), path.resolve("/project/.config"));
+    const options = { followSymlinks: true };
+    assert.strictEqual(
+      await findConfigFileInAncestorDirectories(env, path.resolve("/project/src"), options),
+      path.resolve("/project/.config/dprint.json"),
+    );
+    // and looks further up instead of using a symlink that points to nothing
+    const rootConfigPath = path.resolve("/dprint.json");
+    env.writeFile(rootConfigPath, "{}");
+    env.symlink(path.resolve("/deleted/dprint.json"), path.resolve("/other/dprint.json"));
+    assert.strictEqual(
+      await findConfigFileInAncestorDirectories(env, path.resolve("/other/src"), options),
+      rootConfigPath,
+    );
+  });
 });
 
 describe("AncestorConfigFileCache", () => {
