@@ -40,8 +40,22 @@ export interface ServerCapability {
   version?: number;
   /** The versions of the methods it supports. */
   versions: number[];
-  /** Where dprint's own files are, which are left out when their directory can't be found. */
-  files?: { settingsUri?: string; approvalsUri?: string; globalConfigUri?: string };
+  /**
+   * Where dprint's own files are, which are left out when their directory can't be found, and which is missing without
+   * a `version`. They're from when the server started.
+   */
+  files?: {
+    settingsUri?: string;
+    approvalsUri?: string;
+    /** Where `dprint init --global` would create the global configuration file (`dprint.jsonc`) when it doesn't exist. */
+    globalConfigUri?: string;
+    /**
+     * The names of the global configuration file in the order they're looked up in the directory of `globalConfigUri`,
+     * which a newer version may add to (`dprint.jsonc` and then `dprint.json` when it's missing), so a command that
+     * opens it checks for each before offering to create it.
+     */
+    globalConfigFileNames?: string[];
+  };
   /**
    * The configuration files to watch in the workspace folders, which are empty for `dprint lsp --config` and missing
    * without a `version`.
