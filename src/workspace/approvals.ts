@@ -458,21 +458,11 @@ export function toVisibleText(text: string) {
 }
 
 /**
- * What dprint escapes in what it provides from the project: a combining mark at the start, a control
- * character, a space other than a plain one, an invisible formatting character (ex. a bidi override),
- * and a backslash followed by `u{`.
+ * What dprint escapes in what it provides from the project (see `ApprovalItem.specifier` in its spec):
+ * a combining mark at the start, a character other than a plain space that's a control, format,
+ * separator or default ignorable one (ex. a bidi override), and a backslash followed by `u{`.
  */
-const ESCAPED_TEXT_PATTERN = new RegExp(
-  [
-    "^[\\u0300-\\u036f\\u1ab0-\\u1aff\\u1dc0-\\u1dff\\u20d0-\\u20ff\\ufe20-\\ufe2f]",
-    "\\p{Cc}",
-    "[\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]",
-    "[\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\u3164"
-    + "\\ufe00-\\ufe0f\\ufeff\\uffa0\\ufff9-\\ufffb\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e0fff}]",
-    "\\\\(?=u\\{)",
-  ].join("|"),
-  "gu",
-);
+const ESCAPED_TEXT_PATTERN = /^[\p{Mn}\p{Me}]|(?! )[\p{Cc}\p{Cf}\p{Z}\p{Default_Ignorable_Code_Point}]|\\(?=u\{)/gu;
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {
