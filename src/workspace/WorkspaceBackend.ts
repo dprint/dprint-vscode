@@ -60,7 +60,7 @@ import {
 } from "./DirWatchers";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
-import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
+import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type Action,
   type ConfigApprovals,
@@ -621,8 +621,9 @@ export class WorkspaceBackend implements vscode.Disposable {
    * the processes disagree, it's on another machine.
    */
   #isConfigFileOnAnotherMachine(uri: string) {
-    const results = [...this.#runningServices()].map(service => service.connection.isConfigFileOnAnotherMachine(uri));
-    return results.includes(true) ? true : results.includes(false) ? false : undefined;
+    return combineIsOnAnotherMachine(
+      [...this.#runningServices()].map(service => service.connection.isConfigFileOnAnotherMachine(uri)),
+    );
   }
 
   /** Shows the problems with a config file, which replace the ones shown before for it. */

@@ -10,7 +10,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
-import { FileChangeType, LspConnection, type ServerProcess } from "./LspConnection";
+import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ServerProcess } from "./LspConnection";
 import type {
   ClientInitializeParams,
   ConfigChangedParams,
@@ -19,6 +19,15 @@ import type {
   MessageParams,
   PublishDiagnosticsParams,
 } from "./messages";
+
+describe("combineIsOnAnotherMachine", () => {
+  it("is on another machine when one says so, and unknown when none has a result", () => {
+    assert.strictEqual(combineIsOnAnotherMachine([false, true, undefined]), true);
+    assert.strictEqual(combineIsOnAnotherMachine([undefined, false]), false);
+    assert.strictEqual(combineIsOnAnotherMachine([undefined]), undefined);
+    assert.strictEqual(combineIsOnAnotherMachine([]), undefined);
+  });
+});
 
 describe("LspConnection", () => {
   it("initializes the server before sending a request", async () => {

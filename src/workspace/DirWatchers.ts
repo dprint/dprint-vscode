@@ -130,14 +130,12 @@ export class DirWatchers {
     entry.parentWatcher = swapWatcher(
       entry.parentWatcher,
       ancestor == null ? undefined : `${ancestor.path}\n${ancestor.identity}`,
-      () => {
-        const childName = path.relative(ancestor!.path, dirPath).split(/[\\/]/)[0];
-        return this.#options.watchDir(ancestor!.path, [childName], filePath => {
-          if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(childName)) {
+      () =>
+        this.#options.watchDir(ancestor!.path, [ancestor!.childName], filePath => {
+          if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(ancestor!.childName)) {
             this.#enqueue(() => this.#check(dirPath, entry, new Map(), true)).catch(err => this.#options.onError(err));
           }
-        });
-      },
+        }),
     );
     const identity = await this.#getWatchableIdentity(dirPath, statCache);
     if (this.#isStale(dirPath, entry)) {
@@ -155,14 +153,9 @@ export class DirWatchers {
     const hasCreatedOrDeleted = await this.#reportFiles(dirPath, entry);
     if (hasCreatedOrDeleted && entry.dirWatcher === previous && entry.dirWatcher != null) {
       // ex. it was deleted and created again with the same identity, which vscode may not watch yet
-      entry.dirWatcher = swapWatcher(
-        entry.dirWatcher,
-        entry.dirWatcher.identity,
-        () => this.#watchDir(dirPath, entry),
-        {
-          isReplaced: true,
-        },
-      );
+      const identity = entry.dirWatcher.identity;
+      entry.dirWatcher.dispose();
+      entry.dirWatcher = swapWatcher(undefined, identity, () => this.#watchDir(dirPath, entry));
     }
   }
 
@@ -187,10 +180,12 @@ export class DirWatchers {
 
   /** Gets the nearest ancestor of the directory that may be watched (see `#isWatchable`), with its identity. */
   async #findWatchableAncestor(dirPath: string, statCache: StatCache) {
-    for (let current = path.dirname(dirPath); current !== dirPath; dirPath = current, current = path.dirname(current)) {
+    let child = dirPath;
+    for (let current = path.dirname(child); current !== child; child = current, current = path.dirname(current)) {
       const identity = await this.#getWatchableIdentity(current, statCache);
       if (identity != null) {
-        return { path: current, identity };
+        // the name of the next directory toward the directory, which it's watched for
+        return { path: current, identity, childName: path.basename(child) };
       }
     }
     return undefined;
@@ -403,18 +398,14 @@ interface IdentifiedWatcher {
   dispose(): void;
 }
 
-/**
- * Gets the watcher of what has the identity, which is the current one when it has it (unless it's replaced
- * anyway), and undefined without one.
- */
+/** Gets the watcher of what has the identity, which is the current one when it has it, and undefined without one. */
 function swapWatcher(
   current: IdentifiedWatcher | undefined,
   identity: string | undefined,
   watch: () => { dispose(): void },
-  options: { isReplaced?: boolean } = {},
 ): IdentifiedWatcher | undefined {
   // ex. it only changed because a file in it was saved, which is a change of it on Windows
-  if (current?.identity === identity && !options.isReplaced) {
+  if (current?.identity === identity) {
     return current;
   }
   current?.dispose();

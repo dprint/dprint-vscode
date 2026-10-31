@@ -102,7 +102,7 @@ export interface LspConnectionOptions {
   onConfigChanged(params: ConfigChangedParams): void;
   /**
    * Gets what identifies a config file's uri (ex. its path without its case on Windows), which is undefined
-   * for one that isn't opened (ex. an https uri). Defaults to the uri.
+   * for one that isn't a file (ex. an https uri). Defaults to the uri.
    */
   getConfigFileKey?(uri: string): string | undefined;
   /**
@@ -714,6 +714,15 @@ export class LspConnection {
       listener();
     }
   }
+}
+
+/**
+ * Combines what the latest results of several connections say about whether a config file is on another
+ * machine (see `LspConnection.isConfigFileOnAnotherMachine`), which is that it is when one says so,
+ * and unknown when none has a result.
+ */
+export function combineIsOnAnotherMachine(results: readonly (boolean | undefined)[]) {
+  return results.includes(true) ? true : results.includes(false) ? false : undefined;
 }
 
 /** A started `dprint lsp` process. */

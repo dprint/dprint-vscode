@@ -103,7 +103,7 @@ describe("DirWatchers", () => {
     assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/shared").length, 1);
   });
 
-  it("stops watching a parent that's gone, and watches it again on an update once it's back", async () => {
+  it("watches the nearest ancestor for a parent that's gone, and ignores it while it's a symlink", async () => {
     // ex. a branch switch deletes the directory and its parent, which vscode would watch again by itself
     const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/shared": "dir", "/p/shared/configs": "dir" };
     const { watchers, watched, disposed, emit } = createWatchers(kinds);
