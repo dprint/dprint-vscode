@@ -99,7 +99,8 @@ export class DirWatchers {
   }
 
   async #apply(fileNamesByDir: ReadonlyMap<string, readonly string[]>) {
-    for (const [dirPath, entry] of [...this.#entries]) {
+    // deleting the current entry while iterating a map is fine
+    for (const [dirPath, entry] of this.#entries) {
       const fileNames = fileNamesByDir.get(dirPath);
       if (fileNames == null || !this.#isSameNames(entry.names, fileNames)) {
         disposeEntry(entry);
@@ -208,12 +209,12 @@ export class DirWatchers {
   #reportChange(dirPath: string, name: string, filePath: string, change: WatchedFileChange) {
     this.#options.onChange(filePath, change);
     // compared by its parent and name, because joining them may use other separators than the entry's path
-    const childPath = [...this.#entries.keys()].find(key =>
-      path.dirname(key) === dirPath && this.#normalizeName(path.basename(key)) === this.#normalizeName(name)
-    );
-    const child = childPath == null ? undefined : this.#entries.get(childPath);
-    if (childPath != null && child != null) {
-      this.#enqueue(() => this.#check(childPath, child, new Map(), true)).catch(err => this.#options.onError(err));
+    const normalizedName = this.#normalizeName(name);
+    for (const [childPath, child] of this.#entries) {
+      if (path.dirname(childPath) === dirPath && this.#normalizeName(path.basename(childPath)) === normalizedName) {
+        this.#enqueue(() => this.#check(childPath, child, new Map(), true)).catch(err => this.#options.onError(err));
+        return;
+      }
     }
   }
 
@@ -373,7 +374,12 @@ export function getFileNamesByDir(filePaths: Iterable<string>) {
   const fileNamesByDir = new Map<string, string[]>();
   for (const filePath of filePaths) {
     const dirPath = path.dirname(filePath);
-    fileNamesByDir.set(dirPath, [...fileNamesByDir.get(dirPath) ?? [], path.basename(filePath)]);
+    const fileNames = fileNamesByDir.get(dirPath);
+    if (fileNames == null) {
+      fileNamesByDir.set(dirPath, [path.basename(filePath)]);
+    } else {
+      fileNames.push(path.basename(filePath));
+    }
   }
   return fileNamesByDir;
 }

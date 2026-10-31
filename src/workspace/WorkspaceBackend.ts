@@ -154,8 +154,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #diagnostics: vscode.DiagnosticCollection;
   /** Provides the read-only documents of what process plugins run with (see `askApproval`). */
   readonly #approvalConfigurationProvider: vscode.Disposable;
-  /** What looks in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`). */
-  readonly #ancestorCheckListeners: vscode.Disposable[];
+  /**
+   * What looks in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`),
+   * and forgets the keys of the workspace folders when they change (see `isWorkspaceFolderOrAncestor`).
+   */
+  readonly #listeners: vscode.Disposable[];
   /** The check of the ancestor directories in progress, which another one doesn't start during. */
   #ancestorCheck: Promise<void> | undefined;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
@@ -180,9 +183,11 @@ export class WorkspaceBackend implements vscode.Disposable {
     );
     // the home directory and its ancestors aren't watched for config files, so they're looked in again when
     // one may have been created, deleted, or changed there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
-    this.#ancestorCheckListeners = [
+    this.#listeners = [
       onDidRegainWindowFocus(vscode.window, () => this.#checkAncestorConfigFilesAgain()),
       vscode.workspace.onDidSaveTextDocument(() => this.#checkAncestorConfigFilesAgain()),
+      // the keys are made again for the new workspace folders when they're needed
+      vscode.workspace.onDidChangeWorkspaceFolders(() => workspaceFolderAndAncestorKeys = undefined),
     ];
   }
 
@@ -390,7 +395,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#diagnostics.dispose();
     this.#approvalConfigurationProvider.dispose();
     this.#session.pendingApprovalsItem.dispose();
-    for (const listener of this.#ancestorCheckListeners) {
+    for (const listener of this.#listeners) {
       listener.dispose();
     }
   }
@@ -2272,23 +2277,16 @@ function watchDir(
   return watcher;
 }
 
-/** The keys of the workspace folders and their ancestors by the paths of the folders they were made for. */
-let workspaceFolderAndAncestorKeys: { folderPaths: string; keys: Set<string> } | undefined;
+/** The keys of the workspace folders and their ancestors, which are forgotten when the workspace folders change. */
+let workspaceFolderAndAncestorKeys: Set<string> | undefined;
 
 /** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
 function isWorkspaceFolderOrAncestor(dirPath: string) {
-  // vscode provides a new array each time, so the keys are made again only when the paths changed
-  const folderPaths = getWorkspaceFolderPaths();
-  const folderPathsKey = folderPaths.join("\n");
-  let cached = workspaceFolderAndAncestorKeys;
-  if (cached == null || cached.folderPaths !== folderPathsKey) {
-    cached = {
-      folderPaths: folderPathsKey,
-      keys: getWorkspaceFolderAndAncestorKeys(folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM),
-    };
-    workspaceFolderAndAncestorKeys = cached;
-  }
-  return cached.keys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
+  workspaceFolderAndAncestorKeys ??= getWorkspaceFolderAndAncestorKeys(
+    getWorkspaceFolderPaths(),
+    IS_CASE_INSENSITIVE_FILE_SYSTEM,
+  );
+  return workspaceFolderAndAncestorKeys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
 }
 
 /** Gets the paths of the workspace folders that are on the file system. */
