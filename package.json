@@ -37,6 +37,18 @@
       {
         "command": "dprint.formatSelectionWithGlobalConfig",
         "title": "Dprint: Format Selection (global config)"
+      },
+      {
+        "command": "dprint.approve",
+        "title": "Dprint: Approve Configuration"
+      },
+      {
+        "command": "dprint.forgetDecisions",
+        "title": "Dprint: Forget Approval Decisions"
+      },
+      {
+        "command": "dprint.showDecisions",
+        "title": "Dprint: Show Approval Decisions"
       }
     ],
     "menus": {
@@ -48,6 +60,10 @@
         {
           "command": "dprint.formatSelectionWithGlobalConfig",
           "when": "dprint.canFormatWithGlobalConfig && editorHasSelection"
+        },
+        {
+          "command": "dprint.approve",
+          "when": "dprint.hasPendingApprovals"
         }
       ]
     },
@@ -118,7 +134,8 @@
     "onFileSystem:dprint"
   ],
   "dependencies": {
-    "@dsherret/which": "^0.7.4"
+    "@dsherret/which": "^0.7.4",
+    "vscode-jsonrpc": "^8.2.1"
   },
   "devDependencies": {
     "@types/glob": "^7.1.4",

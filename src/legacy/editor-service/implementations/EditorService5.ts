@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { TextDecoder, TextEncoder } from "node:util";
 import type * as vscode from "vscode";
-import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { LegacyDprintExecutable } from "../../LegacyDprintExecutable";
 import type { ByteRange } from "../byteRange";
 import { EditorProcess, SpawnFailedError } from "../common";
 import type { EditorService } from "../EditorService";
@@ -18,7 +18,7 @@ export class EditorService5 implements EditorService {
   private _disposed = false;
   private _disposing = false;
 
-  constructor(logger: Logger, dprintExecutable: DprintExecutable) {
+  constructor(logger: Logger, dprintExecutable: LegacyDprintExecutable) {
     this._logger = logger;
     this._process = new EditorProcess(logger, dprintExecutable);
     this._process.onExit(() => {

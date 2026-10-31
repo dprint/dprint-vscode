@@ -2,7 +2,7 @@ import * as path from "node:path";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
-/** The files a plugin handles (a subset of the plugin info from `dprint editor-info`). */
+/** The files a plugin handles (a subset of the plugin info from dprint). */
 export interface PluginFileInfo {
   fileExtensions: readonly string[];
   fileNames: readonly string[];

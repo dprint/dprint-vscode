@@ -1,26 +1,17 @@
 import * as vscode from "vscode";
 import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
+import { activateBackend } from "./backend";
+import type { ReInitializeOptions } from "./BackendSwitcher";
 import { AncestorConfigFileCache } from "./configPaths";
-import { DPRINT_CONFIG_FILEPATH_GLOB, NOTEBOOK_CELL_SCHEME } from "./constants";
+import { getConfigFilePathGlob, NOTEBOOK_CELL_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
-import type { ExtensionBackend } from "./ExtensionBackend";
+import type { ConfigFileChangeType, ExtensionBackend } from "./ExtensionBackend";
 import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
-import { activateLegacy } from "./legacy/context";
 import { Logger } from "./logger";
+import { toPlainNotificationText } from "./workspace/approvals";
 
 /** The context key for if the commands to format using the global config file are shown. */
 const CAN_FORMAT_WITH_GLOBAL_CONFIG_CONTEXT_KEY = "dprint.canFormatWithGlobalConfig";
-
-/**
- * The settings that the backend is reinitialized for when they change. The other
- * settings are read when they're used (ex. `dprint.showNoConfigNotification`).
- */
-const REINITIALIZE_SETTINGS = [
-  "dprint.ensureStableFormat",
-  "dprint.path",
-  "dprint.useGlobalConfig",
-  "dprint.verbose",
-];
 
 class GlobalPluginState {
   constructor(
@@ -47,8 +38,31 @@ export async function activate(context: vscode.ExtensionContext) {
   const backend = globalState.extensionBackend;
   const logger = globalState.logger;
 
-  // reinitialize on workspace folder changes
-  context.subscriptions.push(vscode.commands.registerCommand("dprint.restart", reInitializeBackend));
+  // dprint starts its plugins again, which is for when one stopped responding or changed
+  context.subscriptions.push(
+    vscode.commands.registerCommand("dprint.restart", () => reInitializeBackend({ restart: true })),
+  );
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.approve", async () => {
+    try {
+      await backend.approve();
+    } catch (err) {
+      logger.logError("Error approving:", err);
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.showDecisions", async () => {
+    try {
+      await backend.showDecisions();
+    } catch (err) {
+      logger.logError("Error showing the approval decisions:", err);
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("dprint.forgetDecisions", async () => {
+    try {
+      await backend.forgetDecisions();
+    } catch (err) {
+      logger.logError("Error forgetting the approval decisions:", err);
+    }
+  }));
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "dprint.formatWithGlobalConfig",
@@ -66,37 +80,54 @@ export async function activate(context: vscode.ExtensionContext) {
   // cached so that changing the active editor doesn't always hit the file system
   const environment = new RealEnvironment(logger);
   const ancestorConfigFileCache = new AncestorConfigFileCache(environment);
+  // for an older dprint, which reads a symlinked config file anyway
+  const followingAncestorConfigFileCache = new AncestorConfigFileCache(environment, { followSymlinks: true });
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
   // config files outside the workspace aren't watched, so check again after the user comes back to the window
+  // (not when only whether it's active changed)
+  let isWindowFocused = vscode.window.state.focused;
   context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
-    if (state.focused) {
+    const wasFocused = isWindowFocused;
+    isWindowFocused = state.focused;
+    if (state.focused && !wasFocused) {
       onConfigFilesMaybeChanged();
     }
   }));
+  if (backend.onDidChangeConfig != null) {
+    context.subscriptions.push(backend.onDidChangeConfig(updateCanFormatWithGlobalConfig));
+  }
   updateCanFormatWithGlobalConfig();
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(reInitializeBackend));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => reInitializeBackend()));
   // untitled documents are formatted as a file in the first workspace folder
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(updateCanFormatWithGlobalConfig));
 
-  // reinitialize when a configuration file is created or deleted and let the backend handle changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
+  // reinitialize when a configuration file is created or deleted and let the backend handle changes (the
+  // watcher uses the extension's names rather than dprint's `configFileGlobs`, because it starts before dprint does)
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(getConfigFilePathGlob(process.platform));
   context.subscriptions.push(fileSystemWatcher);
-  context.subscriptions.push(fileSystemWatcher.onDidChange(async () => {
+  const onConfigFileChanged = async (uri: vscode.Uri, type: ConfigFileChangeType) => {
     try {
-      await backend.onConfigFileChanged();
+      await backend.onConfigFileChanged(uri, type);
     } catch (err) {
       logger.logError("Error handling configuration file change:", err);
     }
+  };
+  context.subscriptions.push(fileSystemWatcher.onDidChange(uri => onConfigFileChanged(uri, "changed")));
+  context.subscriptions.push(fileSystemWatcher.onDidCreate(async uri => {
+    await onConfigFileChanged(uri, "created");
+    await reInitializeBackend();
   }));
-  context.subscriptions.push(fileSystemWatcher.onDidCreate(reInitializeBackend));
-  context.subscriptions.push(fileSystemWatcher.onDidDelete(reInitializeBackend));
+  context.subscriptions.push(fileSystemWatcher.onDidDelete(async uri => {
+    await onConfigFileChanged(uri, "deleted");
+    await reInitializeBackend();
+  }));
   context.subscriptions.push(fileSystemWatcher.onDidCreate(onConfigFilesMaybeChanged));
   context.subscriptions.push(fileSystemWatcher.onDidDelete(onConfigFilesMaybeChanged));
 
   // reinitialize when the vscode configuration changes
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async evt => {
-    if (REINITIALIZE_SETTINGS.some(setting => evt.affectsConfiguration(setting))) {
+    if (backend.affectsInitialization(evt)) {
       await reInitializeBackend();
     }
   }));
@@ -115,9 +146,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  async function reInitializeBackend() {
+  async function reInitializeBackend(options?: ReInitializeOptions) {
     try {
-      await backend.reInitialize();
+      await backend.reInitialize(options);
       return true;
     } catch (err) {
       logger.logError("Error initializing:", err);
@@ -127,6 +158,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   function onConfigFilesMaybeChanged() {
     ancestorConfigFileCache.clear();
+    followingAncestorConfigFileCache.clear();
     updateCanFormatWithGlobalConfig();
   }
 
@@ -145,9 +177,14 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   /** Gets if the command would format the document using the global config file. */
-  function canFormatDocumentWithGlobalConfig(document: vscode.TextDocument | undefined) {
+  async function canFormatDocumentWithGlobalConfig(document: vscode.TextDocument | undefined) {
     if (document == null) {
       return false;
+    }
+    // dprint knows which config file it formats the document with
+    const canFormat = await backend.canFormatWithGlobalConfig(document);
+    if (canFormat != null) {
+      return canFormat;
     }
     const notebook = document.uri.scheme === NOTEBOOK_CELL_SCHEME
       ? vscode.workspace.notebookDocuments.find(notebook => notebook.getCells().some(c => c.document === document))
@@ -159,7 +196,8 @@ export async function activate(context: vscode.ExtensionContext) {
     }, {
       untitledDirPath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? environment.homeDir(),
       isRemote: vscode.env.remoteName != null,
-      findAncestorConfigFile: dirPath => ancestorConfigFileCache.find(dirPath),
+      findAncestorConfigFile: dirPath =>
+        (backend.followsConfigFileSymlinks ? followingAncestorConfigFileCache : ancestorConfigFileCache).find(dirPath),
     });
   }
 
@@ -184,7 +222,7 @@ export async function activate(context: vscode.ExtensionContext) {
       };
       const result = await backend.provideGlobalConfigFormattingEdits(document, range, options, tokenSource.token);
       if (result.edits == null) {
-        showNotFormattedMessage(result.notFormattedReason);
+        showNotFormattedMessage(result.notFormattedReason, result.notFormattedMessage);
         return;
       }
       // the edits don't apply to the document anymore when it changed while formatting
@@ -205,15 +243,16 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  function showNotFormattedMessage(reason: NotFormattedReason) {
-    const message = getNotFormattedMessage(reason);
+  function showNotFormattedMessage(reason: NotFormattedReason, message = getNotFormattedMessage(reason)) {
+    // it may be dprint's message, which has text from a config file
+    const text = toPlainNotificationText(message);
     if (reason !== "failed") {
-      vscode.window.showInformationMessage(message);
+      vscode.window.showInformationMessage(text);
       return;
     }
     // the details were logged
     const buttonText = "Go to output";
-    vscode.window.showWarningMessage(message, buttonText).then(selection => {
+    vscode.window.showWarningMessage(text, buttonText).then(selection => {
       if (selection === buttonText) {
         globalState.outputChannel.show();
       }
@@ -236,18 +275,18 @@ async function getAndSetNewGlobalState(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel("dprint");
     logger = new Logger(outputChannel);
     const approvedPaths = new ApprovedConfigPaths(context);
-    // The extension formats using dprint's editor service (`dprint editor-service`). There
-    // used to be an experimental backend that used dprint's language server (`dprint lsp`)
-    // instead, but it was removed because a language server isn't a good fit here:
-    // - It needs a copy of every open document that's kept up to date as the user types
-    //   because a format request doesn't have the document's text, whereas the editor
-    //   service is only sent a document's text when formatting it.
-    // - What the extension does on top of formatting (ex. a dprint process per config
-    //   file, only being a formatter for the files of folders with a config file, untitled
-    //   documents, notebook cells, and the global config file) is done with vscode's api,
-    //   so the language server needed its own way of doing each of those.
-    // - It required bundling a language client, which made the extension much larger.
-    backend = activateLegacy(logger, approvedPaths);
+    // The extension formats using the `dprint/*` methods of dprint's language server
+    // (`dprint lsp`) for editor extensions, or dprint's editor service (`dprint editor-service`)
+    // for older versions of dprint. It doesn't use a language client because:
+    // - The text document methods need a copy of every open document that's kept up to
+    //   date as the user types, whereas the `dprint/*` methods are only sent a document's
+    //   text when formatting it.
+    // - What the extension does on top of formatting (ex. only being a formatter for the
+    //   files of folders with a config file, untitled documents, notebook cells, the global
+    //   config file, and asking the user to approve what a config file needs) is done with
+    //   vscode's api.
+    // - A language client is much larger than the JSON-RPC connection it's built on.
+    backend = activateBackend(logger, approvedPaths, context);
   } catch (err) {
     outputChannel?.dispose();
     throw err;

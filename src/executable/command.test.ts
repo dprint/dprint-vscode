@@ -4,6 +4,11 @@ import {
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  getProcessKey,
+  getProcessTreeKill,
+  type KillableProcess,
+  killProcessTreeWith,
+  type ProcessTreeKillEnvironment,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -78,6 +83,138 @@ describe("getCommandLaunchInfo", () => {
       "\"C:\\project\\.vscode\\dprint.BAT\" \"-v\"",
     );
   });
+});
+
+describe("getProcessTreeKill", () => {
+  it("kills the process tree with taskkill by its absolute path on Windows", () => {
+    // ex. the dprint.exe that the cmd.exe of an npm `dprint.cmd` started
+    assert.deepStrictEqual(getProcessTreeKill(1234, "win32", "D:\\Windows"), {
+      kind: "command",
+      command: "D:\\Windows\\System32\\taskkill.exe",
+      args: ["/T", "/F", "/PID", "1234"],
+    });
+    assert.strictEqual(
+      (getProcessTreeKill(1234, "win32", undefined) as { command: string }).command,
+      "C:\\Windows\\System32\\taskkill.exe",
+    );
+  });
+
+  it("signals the process group elsewhere", () => {
+    // ex. the dprint that npm's Node.js wrapper started
+    assert.deepStrictEqual(getProcessTreeKill(1234, "linux", undefined), { kind: "group", pid: -1234 });
+    assert.deepStrictEqual(getProcessTreeKill(1234, "darwin", undefined), { kind: "group", pid: -1234 });
+  });
+});
+
+describe("killProcessTreeWith", () => {
+  it("runs taskkill on Windows, and kills only the process when that fails", async () => {
+    for (const succeeds of [true, false]) {
+      const { process, killed } = createProcess(1234);
+      const { env, calls } = createEnvironment("win32", { runSucceeds: succeeds });
+      await killProcessTreeWith(process, undefined, env);
+      assert.deepStrictEqual(calls, [["run", "C:\\Windows\\System32\\taskkill.exe", "/T", "/F", "/PID", "1234"]]);
+      assert.deepStrictEqual(killed, succeeds ? [] : [undefined]);
+    }
+  });
+
+  it("signals the process group elsewhere and waits for its processes to exit", async () => {
+    const { process, killed } = createProcess(1234);
+    // the group has processes for two checks
+    const { env, calls } = createEnvironment("linux", { groupChecks: 2 });
+    await killProcessTreeWith(process, "SIGKILL", env);
+    assert.deepStrictEqual(calls, [
+      ["signal", -1234, "SIGKILL"],
+      ["signal", -1234, 0],
+      ["delay"],
+      ["signal", -1234, 0],
+      ["delay"],
+      ["signal", -1234, 0],
+    ]);
+    assert.deepStrictEqual(killed, []);
+  });
+
+  it("stops waiting for the processes of the group after a timeout", async () => {
+    const { process } = createProcess(1234);
+    const { env, calls } = createEnvironment("linux", { groupChecks: Infinity });
+    await killProcessTreeWith(process, undefined, env);
+    assert.strictEqual(calls.filter(call => call[0] === "delay").length, 100);
+  });
+
+  it("kills the group with SIGKILL when its processes don't exit in time, even once its leader exited", async () => {
+    // ex. a process a plugin started ignores SIGTERM, and the group isn't reused while it has one
+    const { process } = createProcess(1234);
+    const { env, calls } = createEnvironment("linux", { groupChecks: 30 });
+    await killProcessTreeWith(process, undefined, env);
+    const signals = calls.filter(call => call[0] === "signal" && call[2] !== 0);
+    assert.deepStrictEqual(signals, [["signal", -1234, "SIGTERM"], ["signal", -1234, "SIGKILL"]]);
+    // after the grace period
+    const killIndex = calls.findIndex(call => call[2] === "SIGKILL");
+    assert.strictEqual(calls.slice(0, killIndex).filter(call => call[0] === "delay").length, 20);
+
+    // and not again when it was already
+    const killed = createEnvironment("linux", { groupChecks: 30 });
+    await killProcessTreeWith(createProcess(1234).process, "SIGKILL", killed.env);
+    assert.strictEqual(killed.calls.filter(call => call[2] === "SIGKILL").length, 1);
+  });
+
+  it("kills only the process when the group can't be signalled", async () => {
+    const { process, killed } = createProcess(1234);
+    const { env } = createEnvironment("linux", { signalThrows: true });
+    await killProcessTreeWith(process, "SIGTERM", env);
+    // and with SIGKILL when it doesn't exit in time
+    assert.deepStrictEqual(killed, ["SIGTERM", "SIGKILL"]);
+  });
+
+  it("only kills the process by its handle without a pid or once it exited", async () => {
+    // its pid may be another process's once it exited
+    for (const [pid, exitCode] of [[undefined, null], [1234, 1]] as const) {
+      const { process, killed } = createProcess(pid, exitCode);
+      const { env, calls } = createEnvironment("win32");
+      await killProcessTreeWith(process, undefined, env);
+      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(killed, [undefined]);
+    }
+  });
+
+  function createProcess(pid: number | undefined, exitCode: number | null = null) {
+    const killed: (NodeJS.Signals | undefined)[] = [];
+    const process: KillableProcess = {
+      pid,
+      exitCode,
+      signalCode: null,
+      kill: signal => {
+        killed.push(signal);
+        return true;
+      },
+    };
+    return { process, killed };
+  }
+
+  function createEnvironment(
+    platform: NodeJS.Platform,
+    options: { runSucceeds?: boolean; groupChecks?: number; signalThrows?: boolean } = {},
+  ) {
+    const calls: unknown[][] = [];
+    let groupChecks = options.groupChecks ?? 0;
+    const env: ProcessTreeKillEnvironment = {
+      platform,
+      systemRoot: undefined,
+      signal: (pid, signal) => {
+        calls.push(["signal", pid, signal]);
+        if (options.signalThrows || (signal === 0 && groupChecks-- <= 0)) {
+          throw new Error("ESRCH");
+        }
+      },
+      run: async (command, args) => {
+        calls.push(["run", command, ...args]);
+        return options.runSucceeds ?? true;
+      },
+      delay: async () => {
+        calls.push(["delay"]);
+      },
+    };
+    return { env, calls };
+  }
 });
 
 describe("expandWindowsEnvVars", () => {
@@ -183,5 +320,33 @@ describe("getCommandDisplayText", () => {
       getCommandDisplayText({ kind: "setting", path: "$HOME/dprint", cwd: "/project" }),
       "$HOME/dprint",
     );
+  });
+});
+
+describe("getProcessKey", () => {
+  const options = { cwd: "/project", env: undefined, verbose: false };
+
+  it("is the same for a path in a different cwd", () => {
+    const command = { kind: "path" as const, path: "/usr/bin/dprint" };
+    assert.strictEqual(getProcessKey(command, options), getProcessKey(command, { ...options, cwd: "/other" }));
+  });
+
+  it("differs for a setting with a path relative to the cwd", () => {
+    const command = { kind: "setting" as const, path: "bin/dprint", cwd: undefined };
+    assert.notStrictEqual(getProcessKey(command, options), getProcessKey(command, { ...options, cwd: "/other" }));
+    // a command name is found on the PATH instead
+    const commandName = { kind: "setting" as const, path: "dprint", cwd: undefined };
+    assert.strictEqual(
+      getProcessKey(commandName, options),
+      getProcessKey(commandName, { ...options, cwd: "/other" }),
+    );
+  });
+
+  it("differs for the environment and verbosity", () => {
+    const command = { kind: "path" as const, path: "/usr/bin/dprint" };
+    const key = getProcessKey(command, options);
+    assert.notStrictEqual(key, getProcessKey(command, { ...options, env: { DPRINT_CACHE_DIR: "/cache" } }));
+    assert.notStrictEqual(key, getProcessKey(command, { ...options, verbose: true }));
+    assert.notStrictEqual(key, getProcessKey({ kind: "path", path: "/other/dprint" }, options));
   });
 });

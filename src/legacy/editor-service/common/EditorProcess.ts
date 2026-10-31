@@ -1,8 +1,8 @@
 import type { ChildProcessByStdio } from "child_process";
 import type { Readable, Writable } from "stream";
 import { TextDecoder } from "util";
-import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { LegacyDprintExecutable } from "../../LegacyDprintExecutable";
 
 const textDecoder = new TextDecoder();
 
@@ -22,7 +22,7 @@ export class EditorProcess {
   private _onStartListeners: (() => void)[] = [];
   private _hasSpawnFailed = false;
 
-  constructor(private readonly logger: Logger, private readonly dprintExecutable: DprintExecutable) {
+  constructor(private readonly logger: Logger, private readonly dprintExecutable: LegacyDprintExecutable) {
   }
 
   get isRunning() {

@@ -1,6 +1,21 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { getNotebookCellFileNames, getUntitledFileNames } from "./languageFileNames";
+import { getLanguageFiles, getNotebookCellFileNames, getUntitledFileNames } from "./languageFileNames";
+
+describe("getLanguageFiles", () => {
+  it("gets the file extensions and file names from every contribution for the language", () => {
+    const contributions = [
+      { id: "json", extensions: [".code-profile", "json", "."] },
+      { id: "typescript", extensions: [".ts"] },
+      { id: "json", extensions: [".json", ".code-profile"], filenames: ["composer.lock"] },
+    ];
+    assert.deepStrictEqual(getLanguageFiles(contributions, "json"), {
+      fileExtensions: [".code-profile", ".json"],
+      fileNames: ["composer.lock"],
+    });
+    assert.deepStrictEqual(getLanguageFiles(contributions, "other"), { fileExtensions: [], fileNames: [] });
+  });
+});
 
 describe("getUntitledFileNames", () => {
   it("uses the language's file extensions in order", () => {

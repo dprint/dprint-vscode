@@ -10,8 +10,15 @@ import { Instant, type Logger } from "./logger";
 
 export type LinuxFamily = "musl" | "glibc";
 
+export type PathKind = "symlink" | "dir" | "file";
+
 export interface Environment {
   fileExists(path: string): Promise<boolean>;
+  /**
+   * Gets what's at the path without following a symlink at the end of it, which would read
+   * what it points to (ex. a file on another machine).
+   */
+  pathKind(path: string): Promise<PathKind | undefined>;
   readTextFile(path: string): Promise<string | undefined>;
   realPath(path: string): Promise<string | undefined>;
   atomicCopyFile(from: string, to: string): Promise<void>;
@@ -58,6 +65,16 @@ export class RealEnvironment implements Environment {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async pathKind(path: string) {
+    // vscode.workspace.fs has no lstat api
+    try {
+      const stat = await fs.promises.lstat(path);
+      return stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file";
+    } catch {
+      return undefined;
     }
   }
 

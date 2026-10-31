@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import type { Environment, LinuxFamily } from "./environment";
+import type { Environment, LinuxFamily, PathKind } from "./environment";
 
 // note: this file should not import "vscode" so that it can be used in unit tests
 
@@ -61,6 +61,13 @@ export class TestEnvironment implements Environment {
 
   fileExists(filePath: string) {
     return Promise.resolve(this.#realPath(filePath) != null);
+  }
+
+  pathKind(filePath: string): Promise<PathKind | undefined> {
+    const resolvedPath = path.resolve(filePath);
+    const realParentPath = this.#realPath(path.dirname(resolvedPath));
+    const childPath = realParentPath == null ? undefined : path.join(realParentPath, path.basename(resolvedPath));
+    return Promise.resolve(childPath == null ? undefined : this.#entries.get(childPath)?.kind);
   }
 
   readTextFile(filePath: string) {

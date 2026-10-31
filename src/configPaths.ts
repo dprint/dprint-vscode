@@ -1,49 +1,13 @@
 import * as path from "node:path";
-import { DPRINT_CONFIG_FILE_NAMES } from "./constants";
+import {
+  DOT_CONFIG_DIR_NAME,
+  DOT_CONFIG_FILE_NAMES,
+  DPRINT_CONFIG_FILE_NAMES,
+  isCaseInsensitivePlatform,
+} from "./constants";
 import type { Environment } from "./environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
-
-const GLOBAL_CONFIG_FILE_NAMES = ["dprint.jsonc", "dprint.json"];
-
-export interface ResolveLooseFolderConfigOptions {
-  /** Whether to fall back to the global config file. */
-  useGlobalConfig: boolean;
-}
-
-export interface LooseFolderConfig {
-  /** The directory to run dprint in. */
-  cwd: string;
-  /** The config file the cli will use. */
-  configFilePath: string;
-  /** Whether the config file is the global config file. */
-  isGlobalConfig: boolean;
-}
-
-/**
- * Resolves the config file to use and the directory to run dprint in to format
- * a file that's not in a workspace folder with a config file, or undefined when
- * there's no config file to use.
- */
-export async function resolveLooseFolderConfig(
-  env: Environment,
-  filePath: string,
-  options: ResolveLooseFolderConfigOptions,
-): Promise<LooseFolderConfig | undefined> {
-  const configFilePath = await findConfigFileInAncestorDirectories(env, path.dirname(filePath));
-  if (configFilePath != null) {
-    // run in the config file's directory so the cli resolves the config
-    // with the same base path as when running it from the command line
-    return { cwd: path.dirname(configFilePath), configFilePath, isGlobalConfig: false };
-  }
-  const globalConfigFilePath = options.useGlobalConfig ? await findGlobalConfigFile(env) : undefined;
-  if (globalConfigFilePath != null) {
-    // the cli uses the global config file with its cwd as the base path, so run
-    // it at the file system root to allow formatting any file on that drive
-    return { cwd: path.parse(filePath).root, configFilePath: globalConfigFilePath, isGlobalConfig: true };
-  }
-  return undefined;
-}
 
 /**
  * Finds the config file in an ancestor directory to use for a workspace folder
@@ -56,18 +20,54 @@ export async function findWorkspaceFolderAncestorConfigFile(
   env: Environment,
   folderPath: string,
   configFilePaths: readonly string[],
+  options: FindConfigFileOptions = {},
 ) {
   // the config file in the folder is used instead
-  if (configFilePaths.some(configFilePath => path.relative(folderPath, path.dirname(configFilePath)) === "")) {
+  if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDir(env, configFilePath)) === "")) {
     return undefined;
   }
-  return findConfigFileInAncestorDirectories(env, path.dirname(folderPath));
+  // the folder may be the root of a share (ex. `/net/host`), above which isn't looked in
+  const parentPath = getSearchParent(env, folderPath);
+  return parentPath == null ? undefined : findConfigFileInAncestorDirectories(env, parentPath, options);
+}
+
+/** How the config file of a directory is found. */
+export interface FindConfigFileOptions {
+  /**
+   * Whether a symlink is followed, which is for an older dprint that reads a config file without the user
+   * allowing one on another machine anyway, so it's found like the CLI finds it (ex. in a symlinked `.config`
+   * directory, and not a symlink that points to nothing).
+   */
+  followSymlinks?: boolean;
+}
+
+/**
+ * Removes the config files the cli doesn't use because there's another config file
+ * for the same directory that it uses instead (ex. a `.config/dprint.json` when
+ * there's a `dprint.json` beside the `.config` directory) or because it doesn't
+ * search for the config file's name in a `.config` directory (ex. `.config/.dprint.json`).
+ *
+ * @param configFilePaths - The config files found in the folder.
+ */
+export function filterUnusedConfigFiles(env: Environment, configFilePaths: readonly string[]) {
+  const bestConfigFileByDir = new Map<string, { configFilePath: string; rank: number }>();
+  for (const configFilePath of configFilePaths) {
+    const rank = getConfigFileRank(env, configFilePath);
+    const dirPath = getConfigFileDir(env, configFilePath);
+    const best = bestConfigFileByDir.get(dirPath);
+    if (rank != null && (best == null || rank < best.rank)) {
+      bestConfigFileByDir.set(dirPath, { configFilePath, rank });
+    }
+  }
+  const usedConfigFilePaths = new Set(Array.from(bestConfigFileByDir.values(), best => best.configFilePath));
+  return configFilePaths.filter(configFilePath => usedConfigFilePaths.has(configFilePath));
 }
 
 /**
  * Removes the config files that are in a cache directory within the folder, such
  * as the config files of the packages Cargo copies into its target directory. Cache
- * directories are identified by a CACHEDIR.TAG file (https://bford.info/cachedir/).
+ * directories are identified by a CACHEDIR.TAG file (https://bford.info/cachedir/),
+ * which is looked up without following a symlink (one isn't a cache tag).
  *
  * @param configFilePaths - The config files found in the folder.
  */
@@ -93,7 +93,7 @@ export async function filterCacheDirConfigFiles(
   function isCacheDir(dirPath: string) {
     let isCacheDir = isCacheDirByPath.get(dirPath);
     if (isCacheDir == null) {
-      isCacheDir = env.fileExists(path.join(dirPath, "CACHEDIR.TAG"));
+      isCacheDir = env.pathKind(path.join(dirPath, "CACHEDIR.TAG")).then(kind => kind === "file");
       isCacheDirByPath.set(dirPath, isCacheDir);
     }
     return isCacheDir;
@@ -104,18 +104,23 @@ export async function filterCacheDirConfigFiles(
  * Finds the config file in the provided directory or its closest ancestor
  * directory. This mirrors how the dprint CLI discovers config files.
  */
-export async function findConfigFileInAncestorDirectories(env: Environment, dirPath: string) {
+export async function findConfigFileInAncestorDirectories(
+  env: Environment,
+  dirPath: string,
+  options: FindConfigFileOptions = {},
+) {
   let currentPath = dirPath;
   while (true) {
-    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
-      const configFilePath = path.join(currentPath, configFileName);
-      if (await env.fileExists(configFilePath)) {
+    // a `.config` directory is searched as part of its parent directory, which is next
+    if (!isDotConfigDir(env, currentPath)) {
+      const configFilePath = await findConfigFileInDir(env, currentPath, options);
+      if (configFilePath != null) {
         return configFilePath;
       }
     }
 
-    const parentPath = path.dirname(currentPath);
-    if (parentPath === currentPath) {
+    const parentPath = getSearchParent(env, currentPath);
+    if (parentPath == null) {
       return undefined;
     }
     currentPath = parentPath;
@@ -132,10 +137,12 @@ export async function findConfigFileInAncestorDirectories(env: Environment, dirP
  */
 export class AncestorConfigFileCache {
   readonly #env: Environment;
+  readonly #options: FindConfigFileOptions;
   readonly #configFilePathsByDir = new Map<string, Promise<string | undefined>>();
 
-  constructor(env: Environment) {
+  constructor(env: Environment, options: FindConfigFileOptions = {}) {
     this.#env = env;
+    this.#options = options;
   }
 
   find(dirPath: string): Promise<string | undefined> {
@@ -159,33 +166,173 @@ export class AncestorConfigFileCache {
   }
 
   async #find(dirPath: string): Promise<string | undefined> {
-    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
-      const configFilePath = path.join(dirPath, configFileName);
-      if (await this.#env.fileExists(configFilePath)) {
+    // a `.config` directory is searched as part of its parent directory, which is next
+    if (!isDotConfigDir(this.#env, dirPath)) {
+      const configFilePath = await findConfigFileInDir(this.#env, dirPath, this.#options);
+      if (configFilePath != null) {
         return configFilePath;
       }
     }
-    const parentPath = path.dirname(dirPath);
-    return parentPath === dirPath ? undefined : this.find(parentPath);
+    const parentPath = getSearchParent(this.#env, dirPath);
+    return parentPath == null ? undefined : this.find(parentPath);
   }
 }
 
 /**
- * Finds the user's global config file. This mirrors how the dprint CLI
- * resolves the global config file.
+ * Gets the directory a config file applies to, which is the directory it's in
+ * except for a config file in a `.config` directory, which applies to the parent
+ * of that directory. This mirrors the dprint CLI.
  */
-export async function findGlobalConfigFile(env: Environment) {
-  const globalConfigDir = await resolveGlobalConfigDir(env);
-  if (globalConfigDir == null) {
-    return undefined;
-  }
-  for (const configFileName of GLOBAL_CONFIG_FILE_NAMES) {
-    const configFilePath = path.join(globalConfigDir, configFileName);
-    if (await env.fileExists(configFilePath)) {
-      return configFilePath;
+export function getConfigFileDir(env: Environment, configFilePath: string) {
+  const dirPath = path.dirname(configFilePath);
+  return isDotConfigFile(env, configFilePath) ? path.dirname(dirPath) : dirPath;
+}
+
+/**
+ * Gets if the directory is a `.config` directory, which the dprint CLI treats as
+ * part of its parent directory. The exception is the home directory's `.config`,
+ * which is where the user's configuration goes (ex. `XDG_CONFIG_HOME`) and so is
+ * an ordinary directory.
+ */
+export function isDotConfigDir(env: Environment, dirPath: string) {
+  const parentPath = path.dirname(dirPath);
+  return toFileNameKey(env, path.basename(dirPath)) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath
+    && !isHomeDir(env, parentPath);
+}
+
+/** The names of the config files that dprint looks up in a directory and in its `.config` directory. */
+export interface ConfigFileNames {
+  configFileNames: readonly string[];
+  dotConfigFileNames: readonly string[];
+}
+
+/** A config file the extension found for a workspace folder (see `getWorkspaceFolderAncestorWatchDirs`). */
+export interface WorkspaceFolderConfigFile {
+  folderPath: string;
+  configFilePath: string;
+  /** Whether it's in an ancestor directory of the workspace folder. */
+  isAncestor: boolean;
+  /** The names its dprint process looks up, which are the extension's when there's none. */
+  names?: ConfigFileNames;
+}
+
+/**
+ * Gets the ancestor directories of the workspace folders to watch for a config file that's created there,
+ * for each workspace folder without a config file of its own: the ones above it up to the one with the config
+ * file it uses (ex. a config file that's created closer to it), or up to where the search stops (ex. one that
+ * uses the global config file), apart from the ones in a workspace folder, which the extension watches anyway.
+ *
+ * The home directory and its ancestors aren't watched, because a watcher of one on macOS gets each event of
+ * everything below it (ex. what every program writes in `~/Library`), so those are looked in again instead
+ * (see `getWorkspaceFolderUnwatchedAncestors`). A directory below the home directory gets the events of what's
+ * below it too, but that's usually a project or a directory of projects, whose events are the user's own work.
+ *
+ * @param defaultNames - The names that the dprint process of a workspace folder without a config file looks up.
+ */
+export function getWorkspaceFolderAncestorWatchDirs(
+  env: Environment,
+  folderPaths: readonly string[],
+  configFiles: readonly WorkspaceFolderConfigFile[],
+  defaultNames: ConfigFileNames | undefined,
+) {
+  const dirs: { dirPath: string; names?: ConfigFileNames }[] = [];
+  for (const folderPath of folderPaths) {
+    const ancestors = getUsedAncestors(env, folderPath, configFiles);
+    if (ancestors == null) {
+      continue;
+    }
+    const { dirPaths, ancestorConfigFile } = ancestors;
+    for (const dirPath of dirPaths) {
+      if (!isHomeDirOrAncestor(env, dirPath) && !folderPaths.some(otherPath => isPathWithin(otherPath, dirPath))) {
+        dirs.push({ dirPath, names: ancestorConfigFile == null ? defaultNames : ancestorConfigFile.names });
+      }
     }
   }
-  return undefined;
+  return dirs;
+}
+
+/**
+ * Gets where to look again for a config file in the ancestor directories of the workspace folders that aren't
+ * watched (the home directory and its ancestors, see `getWorkspaceFolderAncestorWatchDirs`), for each workspace
+ * folder without a config file of its own whose config file isn't below the home directory: the first of its
+ * ancestor directories that isn't watched, where the search starts, and the config file it uses now, which is
+ * in one of them or undefined (ex. it uses the global config file).
+ */
+export function getWorkspaceFolderUnwatchedAncestors(
+  env: Environment,
+  folderPaths: readonly string[],
+  configFiles: readonly WorkspaceFolderConfigFile[],
+) {
+  const unwatched: { folderPath: string; dirPath: string; configFilePath: string | undefined }[] = [];
+  for (const folderPath of folderPaths) {
+    const ancestors = getUsedAncestors(env, folderPath, configFiles);
+    // the directories up to a config file below the home directory are all watched
+    const dirPath = ancestors?.dirPaths.find(dirPath => isHomeDirOrAncestor(env, dirPath));
+    if (ancestors != null && dirPath != null) {
+      unwatched.push({ folderPath, dirPath, configFilePath: ancestors.ancestorConfigFile?.configFilePath });
+    }
+  }
+  return unwatched;
+}
+
+/**
+ * Gets the ancestor directories of a workspace folder to look in for a config file that's created there,
+ * which are the ones above it up to the one that has the config file the folder uses, or up to where the
+ * search of the ancestor directories stops without one (ex. it uses the global config file).
+ */
+export function getWorkspaceFolderAncestorDirs(
+  env: Environment,
+  folderPath: string,
+  configDirPath: string | undefined,
+) {
+  const dirPaths: string[] = [];
+  for (let dirPath = getSearchParent(env, folderPath); dirPath != null; dirPath = getSearchParent(env, dirPath)) {
+    dirPaths.push(dirPath);
+    if (configDirPath != null && path.relative(dirPath, configDirPath) === "") {
+      break;
+    }
+  }
+  return dirPaths;
+}
+
+/**
+ * Gets the names of the config files to watch in each of the directories, which are the names dprint looks
+ * up in a directory, and in its `.config` directory, which is watched on its own because a watcher of a
+ * directory doesn't watch its subdirectories. The home directory's `.config` isn't one (see `isDotConfigDir`).
+ */
+export function getConfigFileNamesByDir(
+  env: Environment,
+  dirs: Iterable<{ dirPath: string; names?: ConfigFileNames }>,
+) {
+  const fileNamesByDir = new Map<string, readonly string[]>();
+  for (const { dirPath, names } of dirs) {
+    // the names that its dprint process looks up, which are the extension's without one
+    const configFileNames = names?.configFileNames ?? DPRINT_CONFIG_FILE_NAMES;
+    const dotConfigFileNames = names?.dotConfigFileNames ?? DOT_CONFIG_FILE_NAMES;
+    const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
+    if (isDotConfigDir(env, dotConfigDirPath)) {
+      // creating or deleting the `.config` directory is a change of the directory
+      fileNamesByDir.set(dirPath, [...configFileNames, DOT_CONFIG_DIR_NAME]);
+      fileNamesByDir.set(dotConfigDirPath, dotConfigFileNames);
+    } else {
+      fileNamesByDir.set(dirPath, configFileNames);
+    }
+  }
+  return fileNamesByDir;
+}
+
+/**
+ * Gets what to do for a change of a file that a config file in an ancestor directory is watched for:
+ * tell dprint about a config file that was created, changed, or deleted (not a `.config` directory),
+ * and find the config files again when one was created or deleted (including a `.config` directory).
+ */
+export function getAncestorConfigFileChangeActions(
+  env: Environment,
+  filePath: string,
+  change: "created" | "changed" | "deleted",
+): { tellDprint: boolean; findAgain: boolean } {
+  const isDotConfigDir = toFileNameKey(env, path.basename(filePath)) === DOT_CONFIG_DIR_NAME;
+  return { tellDprint: !isDotConfigDir, findAgain: change !== "changed" };
 }
 
 /**
@@ -212,54 +359,116 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
     || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
 }
 
-async function resolveGlobalConfigDir(env: Environment) {
-  const dprintConfigDir = getNonEmptyEnvVar(env, "DPRINT_CONFIG_DIR");
-  if (dprintConfigDir != null) {
-    // The cli resolves a relative directory against its cwd, which differs from
-    // the extension's, so don't guess where it is in that case.
-    return path.isAbsolute(dprintConfigDir) ? dprintConfigDir : undefined;
-  }
-  const systemConfigDir = await resolveSystemConfigDir(env);
-  return systemConfigDir == null ? undefined : path.join(systemConfigDir, "dprint");
-}
-
-async function resolveSystemConfigDir(env: Environment) {
-  switch (env.platform()) {
-    case "darwin":
-      return resolveMacSystemConfigDir(env);
-    case "win32":
-      // the cli uses the roaming app data known folder, which this environment variable points to
-      return getNonEmptyEnvVar(env, "APPDATA");
-    default: {
-      // the cli only uses XDG_CONFIG_HOME on linux when it's an absolute path
-      const xdgConfigHome = getNonEmptyEnvVar(env, "XDG_CONFIG_HOME");
-      if (xdgConfigHome != null && path.isAbsolute(xdgConfigHome)) {
-        return xdgConfigHome;
-      }
-      const homeDir = env.homeDir();
-      return homeDir == null ? undefined : path.join(homeDir, ".config");
+/**
+ * Finds the config file the dprint CLI uses in the directory. A symlink isn't followed unless the
+ * options say to, because it may point to another machine, which dprint only reads once the user
+ * allows it. So a symlink that points to nothing is still found, which dprint then says is missing,
+ * while the CLI would look further up for one. It looks for the extension's names, not the ones a dprint
+ * process says it looks up (`ServerCapability.configFileNames`), because it decides which one to start.
+ */
+async function findConfigFileInDir(env: Environment, dirPath: string, options: FindConfigFileOptions) {
+  const exists = async (filePath: string) =>
+    options.followSymlinks ? await env.fileExists(filePath) : await env.pathKind(filePath) != null;
+  for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
+    const configFilePath = path.join(dirPath, configFileName);
+    if (await exists(configFilePath)) {
+      return configFilePath;
     }
   }
+  // only look in the `.config` directory when there is one, which most directories don't have
+  // (a symlinked one is only looked in when following symlinks, and dprint still finds it for the
+  // documents it's asked about)
+  const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
+  const isDir = async () =>
+    options.followSymlinks ? await env.fileExists(dotConfigDirPath) : await env.pathKind(dotConfigDirPath) === "dir";
+  if (isDotConfigDir(env, dotConfigDirPath) && await isDir()) {
+    for (const configFileName of DOT_CONFIG_FILE_NAMES) {
+      const configFilePath = path.join(dotConfigDirPath, configFileName);
+      if (await exists(configFilePath)) {
+        return configFilePath;
+      }
+    }
+  }
+  return undefined;
 }
 
-async function resolveMacSystemConfigDir(env: Environment) {
-  const xdgConfigHome = getNonEmptyEnvVar(env, "XDG_CONFIG_HOME");
-  if (xdgConfigHome != null) {
-    return xdgConfigHome;
-  }
-  const homeDir = env.homeDir();
-  if (homeDir == null) {
+/**
+ * Gets the directory to look in for a config file after the directory, which is undefined at the root
+ * of the file system and at the root of a network share like dprint does, because what's above it
+ * isn't on the share (ex. `/net/host/dprint.json` is looked for, but not `/net/dprint.json`, which
+ * the automounter would look up as a host named `dprint.json`). The root of a UNC path on Windows
+ * (`\\server\share\`) is a root of the file system.
+ *
+ * Note that this only knows the shares in `/net` (and where macOS has it on the data volume), not the
+ * root of a share that an automounter mounts elsewhere (ex. `/home/me` when `/home` is an `autofs`
+ * directory), which the server stops at too. That's an accepted limitation of this search.
+ */
+function getSearchParent(env: Environment, dirPath: string) {
+  const parentPath = path.dirname(dirPath);
+  if (parentPath === dirPath) {
     return undefined;
   }
-  // use the system config directory when a dprint directory already exists in it
-  const systemConfigDir = path.join(homeDir, "Library", "Application Support");
-  if (await env.fileExists(path.join(systemConfigDir, "dprint"))) {
-    return systemConfigDir;
+  // the directory of a host in `/net` (or where macOS has it on the data volume), whose case doesn't matter
+  if (env.platform() !== "win32" && /^\/(System\/Volumes\/Data\/)?net\/[^/]+\/?$/i.test(dirPath)) {
+    return undefined;
   }
-  return path.join(homeDir, ".config");
+  return parentPath;
 }
 
-function getNonEmptyEnvVar(env: Environment, name: string) {
-  const value = env.envVar(name);
-  return value == null || value.length === 0 ? undefined : value;
+/**
+ * Gets the ancestor directories of a workspace folder up to the config file it uses, and that config file, which
+ * is undefined when the workspace folder has a config file of its own.
+ */
+function getUsedAncestors(env: Environment, folderPath: string, configFiles: readonly WorkspaceFolderConfigFile[]) {
+  const folderConfigFiles = configFiles.filter(configFile => path.relative(configFile.folderPath, folderPath) === "");
+  const hasOwnConfigFile = folderConfigFiles.some(configFile =>
+    !configFile.isAncestor && path.relative(getConfigFileDir(env, configFile.configFilePath), folderPath) === ""
+  );
+  if (hasOwnConfigFile) {
+    return undefined;
+  }
+  const ancestorConfigFile = folderConfigFiles.find(configFile => configFile.isAncestor);
+  const configDirPath = ancestorConfigFile == null
+    ? undefined
+    : getConfigFileDir(env, ancestorConfigFile.configFilePath);
+  return { dirPaths: getWorkspaceFolderAncestorDirs(env, folderPath, configDirPath), ancestorConfigFile };
+}
+
+/** Gets whether the directory is the home directory or one of its ancestors. */
+function isHomeDirOrAncestor(env: Environment, dirPath: string) {
+  const homeDir = env.homeDir();
+  return homeDir != null && isPathWithin(dirPath, homeDir);
+}
+
+/**
+ * Gets where the config file is in the order the dprint CLI searches a directory
+ * for its config file, or undefined when it's not a name the CLI searches for.
+ */
+function getConfigFileRank(env: Environment, configFilePath: string) {
+  const fileName = toFileNameKey(env, path.basename(configFilePath));
+  if (isDotConfigDir(env, path.dirname(configFilePath))) {
+    const index = DOT_CONFIG_FILE_NAMES.indexOf(fileName);
+    return index === -1 ? undefined : DPRINT_CONFIG_FILE_NAMES.length + index;
+  }
+  const index = DPRINT_CONFIG_FILE_NAMES.indexOf(fileName);
+  return index === -1 ? undefined : index;
+}
+
+function isDotConfigFile(env: Environment, configFilePath: string) {
+  return DOT_CONFIG_FILE_NAMES.includes(toFileNameKey(env, path.basename(configFilePath)))
+    && isDotConfigDir(env, path.dirname(configFilePath));
+}
+
+/**
+ * Gets a file name to compare with the names dprint looks up, which is without its case on a case
+ * insensitive file system (Windows and macOS by default), where dprint finds them in another case too.
+ */
+function toFileNameKey(env: Environment, fileName: string) {
+  return isCaseInsensitivePlatform(env.platform()) ? fileName.toLowerCase() : fileName;
+}
+
+function isHomeDir(env: Environment, dirPath: string) {
+  const homeDir = env.homeDir();
+  // without its case on a case insensitive file system (ex. `/users/david` on macOS), like dprint compares it
+  return homeDir != null && toFileNameKey(env, path.resolve(homeDir)) === toFileNameKey(env, path.resolve(dirPath));
 }
