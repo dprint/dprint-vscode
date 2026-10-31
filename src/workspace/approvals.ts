@@ -298,10 +298,11 @@ export interface ListedDecision {
 }
 
 /**
- * Combines the decisions that each dprint process listed (`dprint/decisions`), which keeps one of each "Always"
- * decision, because they're the same stored decision, which another process may list by another path of its config
- * file (ex. through a symlinked workspace folder). The extension doesn't map the paths (that would follow symlinks),
- * so that's each "Always" decision with the same kind and specifiers, which lists the config file of each.
+ * Combines the decisions that each dprint process listed (`dprint/decisions`), where the "Always" decisions are
+ * combined by their kind, specifiers, and what was decided, listing each config file they're for. That covers the
+ * same stored decision that another process lists by another path of its config file (ex. through a symlinked
+ * workspace folder), which the extension can't tell apart otherwise, because it doesn't map the paths (that would
+ * follow symlinks). The same decision of two config files is one row then, which lists both of them.
  */
 export function combineDecisions(decisionLists: readonly (readonly Decision[])[]): ListedDecision[] {
   const combined = new Map<string, ListedDecision>();
@@ -432,14 +433,15 @@ export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">)
  * Gets if the error is for an approval that isn't pending anymore, which is recognized by its data
  * because a language client library may use the same code for its own errors.
  */
-function isSameConfigFile(a: ConfigFileIdentifier, b: ConfigFileIdentifier) {
-  return a.uri === b.uri && a.dirUri === b.dirUri;
-}
-
 function isApprovalChangedError(err: unknown) {
   return typeof err === "object" && err != null && "code" in err && err.code === APPROVAL_CHANGED_ERROR_CODE
     && "data" in err && typeof err.data === "object" && err.data != null && "kind" in err.data
     && err.data.kind === "approvalChanged";
+}
+
+/** Gets whether two config files are the same, which is the same uri for the same directory. */
+function isSameConfigFile(a: ConfigFileIdentifier, b: ConfigFileIdentifier) {
+  return a.uri === b.uri && a.dirUri === b.dirUri;
 }
 
 /** Gets what needs to be approved now from the error for an approval that isn't pending anymore. */

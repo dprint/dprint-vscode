@@ -39,7 +39,8 @@ export interface DirWatchersOptions {
    * Gets whether the directory is a workspace folder or one of its ancestor directories, which is
    * watched even when it's a symlink because the user opened the workspace folder through it (ex. a
    * workspace folder opened through a symlink, or macOS's `/tmp`, which is `/private/tmp`), where
-   * dprint provides the paths the editor knows.
+   * dprint provides the paths the editor knows. Its parent isn't watched for it either, because it
+   * isn't replaced while it's open (ex. watching `/` for `Users` gets every event of the system on macOS).
    */
   isWorkspaceFolderOrAncestor(dirPath: string): boolean;
 }
@@ -64,6 +65,10 @@ export interface DirWatchersOptions {
  * that was deleted until it exists again and then watches it again by itself (following a symlink that
  * replaced it), which can't be turned off, so the watcher of a parent that's gone is disposed once that's
  * noticed.
+ *
+ * The parent of a workspace folder or one of its ancestors isn't watched for it (see
+ * `isWorkspaceFolderOrAncestor`), and neither is the parent of a directory whose parent is watched for its
+ * name already (ex. a `.config` directory), whose watcher reports it instead.
  */
 export class DirWatchers {
   readonly #options: DirWatchersOptions;
@@ -202,6 +207,7 @@ export class DirWatchers {
    */
   #reportChange(dirPath: string, name: string, filePath: string, change: WatchedFileChange) {
     this.#options.onChange(filePath, change);
+    // found by its parent and name rather than by joining them, which keeps the separators of the entry's path
     const childPath = [...this.#entries.keys()].find(key =>
       path.dirname(key) === dirPath && this.#normalizeName(path.basename(key)) === this.#normalizeName(name)
     );
