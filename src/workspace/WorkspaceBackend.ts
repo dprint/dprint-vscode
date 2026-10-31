@@ -17,10 +17,12 @@ import {
   getWorkspaceFolderAncestorWatchDirs,
   getWorkspaceFolderUnwatchedAncestors,
   isPathWithin,
+  type WorkspaceFolderConfigFile,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
 import {
   FILE_SCHEME,
+  isCaseInsensitivePlatform,
   isDprintExtensionId,
   JUPYTER_NOTEBOOK_TYPE,
   NOTEBOOK_CELL_SCHEME,
@@ -1323,12 +1325,7 @@ class WorkspaceState {
     const dirs = getWorkspaceFolderAncestorWatchDirs(
       this.#environment,
       getWorkspaceFolderPaths(),
-      this.#configs.map(config => ({
-        folderPath: config.folderUri.fsPath,
-        configFilePath: config.configFilePath,
-        isAncestor: config.isAncestor,
-        names: config.service?.configFileNames,
-      })),
+      this.#getFolderConfigFiles(),
       this.#defaultConfigFileNames,
     );
     this.#ancestorWatchers.update(getConfigFileNamesByDir(this.#environment, dirs))
@@ -1340,12 +1337,18 @@ class WorkspaceState {
     return getWorkspaceFolderUnwatchedAncestors(
       this.#environment,
       getWorkspaceFolderPaths(),
-      this.#configs.map(config => ({
-        folderPath: config.folderUri.fsPath,
-        configFilePath: config.configFilePath,
-        isAncestor: config.isAncestor,
-      })),
+      this.#getFolderConfigFiles(),
     );
+  }
+
+  /** Gets the config files of the workspace folders with the names their dprint processes look up. */
+  #getFolderConfigFiles(): WorkspaceFolderConfigFile[] {
+    return this.#configs.map(config => ({
+      folderPath: config.folderUri.fsPath,
+      configFilePath: config.configFilePath,
+      isAncestor: config.isAncestor,
+      names: config.service?.configFileNames,
+    }));
   }
 
   /**
@@ -2074,36 +2077,25 @@ const approvalConfigurations = new Map<string, string>();
 
 /** Asks the user about what dprint needs approved with the message dprint provides. */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
-  const details = getApprovalDetails(approval);
   const titles = choices.map(choice => choice.title);
   const documentPath = `/${approval.id}.jsonc`;
   try {
-    return await askApprovalShowingDetails(approval, choices, titles, details, documentPath);
+    while (true) {
+      const selection = await vscode.window.showWarningMessage(
+        toPlainNotificationText(getApprovalMessage(approval)),
+        ...titles,
+        SHOW_DETAILS_TITLE,
+      );
+      if (selection !== SHOW_DETAILS_TITLE) {
+        return choices.find(choice => choice.title === selection)?.decision;
+      }
+      // it's asked about again once the user has seen what's approved, which is a read-only document
+      approvalConfigurations.set(documentPath, getApprovalDetails(approval));
+      const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
+    }
   } finally {
     approvalConfigurations.delete(documentPath);
-  }
-}
-
-async function askApprovalShowingDetails(
-  approval: PendingApproval,
-  choices: ApprovalChoice[],
-  titles: string[],
-  details: string,
-  documentPath: string,
-) {
-  while (true) {
-    const selection = await vscode.window.showWarningMessage(
-      toPlainNotificationText(getApprovalMessage(approval)),
-      ...titles,
-      SHOW_DETAILS_TITLE,
-    );
-    if (selection !== SHOW_DETAILS_TITLE) {
-      return choices.find(choice => choice.title === selection)?.decision;
-    }
-    // it's asked about again once the user has seen what's approved, which is a read-only document
-    approvalConfigurations.set(documentPath, details);
-    const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
   }
 }
 
@@ -2256,7 +2248,7 @@ function getFileChangeType(type: ConfigFileChangeType) {
 }
 
 /** Whether file names are compared without their case, which is the default of Windows and macOS. */
-const IS_CASE_INSENSITIVE_FILE_SYSTEM = process.platform === "win32" || process.platform === "darwin";
+const IS_CASE_INSENSITIVE_FILE_SYSTEM = isCaseInsensitivePlatform(process.platform);
 
 /**
  * Watches the files with the names in the directory without its subdirectories, which a pattern without

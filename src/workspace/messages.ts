@@ -13,7 +13,6 @@ export const FILE_INFO_METHOD = "dprint/fileInfo";
 export const CONFIG_INFO_METHOD = "dprint/configInfo";
 export const CONFIG_SCHEMA_METHOD = "dprint/configSchema";
 export const APPROVE_METHOD = "dprint/approve";
-export const RESET_METHOD = "dprint/reset";
 export const PENDING_APPROVALS_METHOD = "dprint/pendingApprovals";
 export const FORGET_DECISIONS_METHOD = "dprint/forgetDecisions";
 export const DECISIONS_METHOD = "dprint/decisions";
@@ -609,9 +608,4 @@ export function getNotFormatted(status: FormatStatus): NotFormatted | undefined 
     approvals: fields.approvals,
     actions: fields.actions,
   };
-}
-
-/** Gets what needs to be approved for the status. */
-export function getApprovals(status: FormatStatus): PendingApproval[] {
-  return getNotFormatted(status)?.approvals ?? [];
 }

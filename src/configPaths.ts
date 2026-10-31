@@ -194,7 +194,7 @@ export function getConfigFileDir(env: Environment, configFilePath: string) {
  * which is where the user's configuration goes (ex. `XDG_CONFIG_HOME`) and so is
  * an ordinary directory.
  */
-export function isDotConfigDir(env: Environment, dirPath: string) {
+function isDotConfigDir(env: Environment, dirPath: string) {
   const parentPath = path.dirname(dirPath);
   return toFileNameKey(env, path.basename(dirPath)) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath
     && !isHomeDir(env, parentPath);
