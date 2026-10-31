@@ -264,6 +264,24 @@ export async function lstatWithoutSymlinks(
 }
 
 /**
+ * Gets whether a file can be opened (or its problems kept) without following a symlink: it's `"symlink"`
+ * when it's a symlink itself and `"unreachable"` when it's reached through one that may not be followed
+ * (see `lstatWithoutSymlinks`), either of which may lead to another machine since it was provided (ex. a
+ * `git pull` replaced a config file that has problems with a symlink to a share).
+ */
+export async function getFileAccess(
+  filePath: string,
+  options: Pick<DirWatchersOptions, "lstat" | "isWorkspaceFolderOrAncestor">,
+  statCache: StatCache = new Map(),
+): Promise<"exists" | "symlink" | "gone" | "unreachable"> {
+  const result = await lstatWithoutSymlinks(filePath, options, statCache);
+  if (!result.isReachable) {
+    return "unreachable";
+  }
+  return result.stat == null ? "gone" : result.stat.kind === "symlink" ? "symlink" : "exists";
+}
+
+/**
  * Gets what's at the path without following a symlink at the end of it. Its identity is its device and
  * inode, which a directory that replaced another may reuse (ex. on ext4), so the files of a directory
  * that its parent's watcher reports are compared with their versions too (see `DirWatchers`), and one

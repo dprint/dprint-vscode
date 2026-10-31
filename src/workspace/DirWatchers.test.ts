@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { PathKind } from "../environment";
 import {
   DirWatchers,
+  getFileAccess,
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
@@ -342,6 +343,29 @@ describe("getWorkspaceFolderAndAncestorKeys", () => {
   it("has the keys without their case when the file system does", () => {
     const keys = getWorkspaceFolderAndAncestorKeys([path.resolve("/ws/Project")], true);
     assert.ok(keys.has(getWatchedPathKey(path.resolve("/ws/project"), true)));
+  });
+});
+
+describe("getFileAccess", () => {
+  it("is whether a file can be opened without following a symlink", async () => {
+    // ex. a config file with problems that a `git pull` replaced with a symlink to a share, or a directory above it
+    const kinds: Record<string, PathKind> = {
+      "/p/dprint.json": "file",
+      "/p/linked.json": "symlink",
+      "/p/link": "symlink",
+      "/p/link/dprint.json": "file",
+    };
+    const options = {
+      lstat: async (filePath: string) => {
+        const kind = kinds[toTestPath(filePath)];
+        return kind == null ? undefined : { kind, identity: filePath };
+      },
+      isWorkspaceFolderOrAncestor: (dirPath: string) => toTestPath(dirPath) === "/p" || toTestPath(dirPath) === "/",
+    };
+    assert.strictEqual(await getFileAccess("/p/dprint.json", options), "exists");
+    assert.strictEqual(await getFileAccess("/p/linked.json", options), "symlink");
+    assert.strictEqual(await getFileAccess("/p/link/dprint.json", options), "unreachable");
+    assert.strictEqual(await getFileAccess("/p/missing.json", options), "gone");
   });
 });
 
