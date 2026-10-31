@@ -463,6 +463,45 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
   });
 
+  it("doesn't send an \"Always\" decision again once dprint says it stored it", async () => {
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "alwaysDeny",
+      approve: async params => {
+        approved.push(params);
+        return {
+          configFile: null,
+          approvals: [],
+          status: APPROVAL_REQUIRED,
+          storedDecisionGroups: [approval("processPlugins").decisionGroup!],
+        };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), false);
+    assert.deepStrictEqual(approved, []);
+  });
+
+  it("replaces an \"Always\" decision that isn't known to be stored with a newer decision in its group", async () => {
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "deny",
+      approve: async params => {
+        approved.push(params);
+        return { configFile: null, approvals: [], status: APPROVAL_REQUIRED };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    // ex. the configuration of the process plugins changed since
+    await approvals.request([{ ...approval("processPlugins"), id: "changed" }], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), false);
+    assert.deepStrictEqual(approved, []);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };

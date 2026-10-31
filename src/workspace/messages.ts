@@ -278,6 +278,8 @@ export interface ApproveResult extends ConfigApprovals {
    * plugins that's stored once they're set up, which may be when approving something else).
    */
   unstoredDecisionGroups?: string[];
+  /** The groups of the "Always" decisions that were stored, which may be ones decided before like `unstoredDecisionGroups`. */
+  storedDecisionGroups?: string[];
   /** What to tell the user about the decision (ex. it couldn't be stored). */
   notice?: Notice;
 }

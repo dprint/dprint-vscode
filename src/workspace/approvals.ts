@@ -56,11 +56,11 @@ export class Approvals {
    */
   readonly #sessionDecisions = new Map<string, SessionDecision>();
   /**
-   * The "Always" decisions by config file that aren't known to be stored yet, which are kept for the
-   * session when a later result for the config file says one couldn't be stored (ex. after allowing
-   * the download that sets up the process plugins, which may be asked about on its own).
+   * The "Always" decisions that dprint didn't say were stored or not yet, which a later result says
+   * (ex. an "Always Allow" of process plugins that's stored once allowing the download sets them up,
+   * which may be asked about on its own).
    */
-  readonly #unstoredAlwaysDecisions = new Map<string, [PendingApproval, ApprovalDecision][]>();
+  #pendingAlwaysDecisions: [PendingApproval, ApprovalDecision][] = [];
   /** Whether what the user answers isn't used anymore (see `cancel`). */
   #isCancelled = false;
 
@@ -80,7 +80,7 @@ export class Approvals {
   forget() {
     this.#asked.clear();
     this.#sessionDecisions.clear();
-    this.#unstoredAlwaysDecisions.clear();
+    this.#pendingAlwaysDecisions = [];
   }
 
   /**
@@ -101,6 +101,7 @@ export class Approvals {
       sent.add(approval.id);
       try {
         const result = await this.#options.approve({ id: approval.id, decision }, { isResent: true });
+        this.#onDecisionGroups(result);
         isSent = true;
         // what a decision that was sent again reveals may have a decision for the session too
         queue.push(...result.approvals);
@@ -185,31 +186,9 @@ export class Approvals {
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
       lastConfigFile = configFile;
       this.#rememberSessionDecision(approval, decision);
-      const configFileKey = `${configFile.uri}\n${configFile.dirUri}`;
-      if (approval.decisions.find(option => option.decision === decision)?.always) {
-        const unstored = this.#unstoredAlwaysDecisions.get(configFileKey) ?? [];
-        unstored.push([approval, decision]);
-        this.#unstoredAlwaysDecisions.set(configFileKey, unstored);
-      }
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
-        // an "Always" decision that couldn't be stored is still used for the session
-        const unstoredGroups = new Set(result.unstoredDecisionGroups ?? []);
-        const pendingAlways = this.#unstoredAlwaysDecisions.get(configFileKey) ?? [];
-        for (const [alwaysApproval, alwaysDecision] of pendingAlways) {
-          if (unstoredGroups.has(getDecisionGroup(alwaysApproval))) {
-            this.#setSessionDecision(alwaysApproval, alwaysDecision);
-          }
-        }
-        const stillPending = pendingAlways.filter(([alwaysApproval]) =>
-          !unstoredGroups.has(getDecisionGroup(alwaysApproval))
-        );
-        if (result.status.kind === "ready" || stillPending.length === 0) {
-          // dprint stored the others once the config file is used
-          this.#unstoredAlwaysDecisions.delete(configFileKey);
-        } else {
-          this.#unstoredAlwaysDecisions.set(configFileKey, stillPending);
-        }
+        this.#onDecisionGroups(result);
         pending = result.approvals;
         status = result.status;
       } catch (err) {
@@ -245,10 +224,7 @@ export class Approvals {
             await this.#options.approve({ id: replacement.id, decision })
               .then(result => {
                 this.#rememberSessionDecision(replacement, decision);
-                // an "Always" denial that couldn't be stored is still used for the session
-                if (result.unstoredDecisionGroups?.includes(getDecisionGroup(replacement))) {
-                  this.#setSessionDecision(replacement, decision);
-                }
+                this.#onDecisionGroups(result);
               })
               .catch(() => {/* it's asked about later */});
           }
@@ -279,8 +255,7 @@ export class Approvals {
     // an "Always" decision that isn't known to be stored yet is sent again like one for the session
     // (ex. dprint exited before it set up the process plugins, which is when it's stored)
     const decision = ids.map(id => this.#sessionDecisions.get(id)).find(decision => decision != null)?.decision
-      ?? [...this.#unstoredAlwaysDecisions.values()].flat()
-        .find(([unstored]) => ids.includes(unstored.id))?.[1];
+      ?? this.#pendingAlwaysDecisions.find(([pending]) => ids.includes(pending.id))?.[1];
     if (decision == null || !approval.decisions.some(option => option.decision === decision)) {
       return undefined;
     }
@@ -294,14 +269,34 @@ export class Approvals {
     return decision;
   }
 
-  /** Remembers what the user decided for the session, which an "Always" decision replaces. */
+  /**
+   * Remembers what the user decided for the session, which replaces what was decided before in its
+   * group. An "Always" decision is pending until dprint says whether it stored it.
+   */
   #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
     this.#forgetSessionDecision(approval);
     if (approval.decisions.find(option => option.decision === decision)?.always) {
-      // it replaces what was decided before in its group too
       this.#forgetGroup(getDecisionGroup(approval));
+      this.#pendingAlwaysDecisions.push([approval, decision]);
     } else {
       this.#setSessionDecision(approval, decision);
+    }
+  }
+
+  /**
+   * Stops waiting on the "Always" decisions dprint says it stored, and uses the ones it says it
+   * couldn't store for the session.
+   */
+  #onDecisionGroups(result: ApproveResult) {
+    const stored = new Set(result.storedDecisionGroups ?? []);
+    const unstored = new Set(result.unstoredDecisionGroups ?? []);
+    for (const [approval, decision] of [...this.#pendingAlwaysDecisions]) {
+      const decisionGroup = getDecisionGroup(approval);
+      if (unstored.has(decisionGroup)) {
+        this.#setSessionDecision(approval, decision);
+      } else if (stored.has(decisionGroup)) {
+        this.#pendingAlwaysDecisions = this.#pendingAlwaysDecisions.filter(([pending]) => pending !== approval);
+      }
     }
   }
 
@@ -315,13 +310,16 @@ export class Approvals {
     this.#sessionDecisions.set(approval.id, { decision, decisionGroup });
   }
 
-  /** Forgets what the user decided for the session in the group. */
+  /** Forgets what the user decided for the session in the group, including the pending "Always" decisions. */
   #forgetGroup(decisionGroup: string) {
     for (const [id, existing] of this.#sessionDecisions) {
       if (existing.decisionGroup === decisionGroup) {
         this.#sessionDecisions.delete(id);
       }
     }
+    this.#pendingAlwaysDecisions = this.#pendingAlwaysDecisions.filter(([pending]) =>
+      getDecisionGroup(pending) !== decisionGroup
+    );
   }
 
   /** Forgets what the user decided for the session about the approval, including by its earlier ids. */

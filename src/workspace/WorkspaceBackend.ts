@@ -994,9 +994,14 @@ class WorkspaceState {
         `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
           decision.specifiers.map((specifier, i) => {
             const item = decision.items?.[i];
-            return item?.kind === "npmrcProxy" && item.npmrcUri != null
-              ? `the proxy ${specifier} of ${getDisplayPath(item.npmrcUri)}`
-              : specifier;
+            if (item?.kind === "npmrcProxy" && item.npmrcUri != null) {
+              return `the proxy ${specifier} of ${getDisplayPath(item.npmrcUri)}`;
+            }
+            if (item?.kind === "networkPath") {
+              const reachedFrom = item.uri == null ? "" : `, which ${getDisplayPath(item.uri)} reaches`;
+              return `${specifier} (on another machine${reachedFrom})`;
+            }
+            return specifier;
           }).join(", ")
         }`,
       ),
