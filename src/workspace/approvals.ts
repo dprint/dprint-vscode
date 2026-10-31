@@ -94,16 +94,19 @@ export class Approvals {
     // whether the config file is used now, which is only known after something was approved
     let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
-    // the decisions to send again for an approval that's pending again after it changed, which is
-    // only done once for an approval
+    // the decisions to send again for an approval that's still pending after sending one failed
     const decisionsToSendAgain = new Map<string, ApprovalDecision>();
+    // the approvals a decision was sent again to (or a denial was forwarded to), which is only done once
+    // for an approval so the user's decision is sent at most twice
     const sentAgain = new Set<string>();
     // whether an approval wasn't asked about, so not everything was allowed
     let isSkipped = false;
     // the config file of the last decision, which a status after it is for
     let lastConfigFile: ConfigFileIdentifier | undefined;
     while (pending.length > 0) {
-      const approval = pending.find(approval => !askedNow.has(approval.id));
+      // a decision is sent again before anything else is asked about
+      const approval = pending.find(approval => decisionsToSendAgain.has(approval.id))
+        ?? pending.find(approval => !askedNow.has(approval.id));
       if (approval == null) {
         // what's left was denied
         return false;
@@ -147,45 +150,33 @@ export class Approvals {
         pending = result.approvals;
         status = result.status;
       } catch (err) {
-        if (!isApprovalChangedError(err)) {
-          if (!allows) {
-            throw err;
-          }
-          // the decision may still have been used, so what's pending is gotten again
-          ({ approvals: pending, status } = await this.#options.pendingApprovals(configFile));
-          if (pending.some(pending => pending.id === approval.id)) {
-            // it wasn't used
-            throw err;
-          }
-          continue;
+        // what's pending is gotten again whatever the failure was, because the decision may not have been
+        // used (ex. dprint was started again before it received it, or what needs to be approved changed)
+        // or may have been (ex. only the response was lost)
+        try {
+          ({ approvals: pending, status } = (isApprovalChangedError(err) ? getChangedResult(err) : undefined)
+            ?? await this.#options.pendingApprovals(configFile));
+        } catch {
+          throw err;
         }
-        // what needs to be approved changed (ex. the config file changed), so the decision wasn't used
-        ({ approvals: pending, status } = getChangedResult(err) ?? await this.#options.pendingApprovals(configFile));
-        if (allows && pending.some(other => other.id === approval.id) && !sentAgain.has(approval.id)) {
+        const same = pending.find(other => other.id === approval.id && !other.denied);
+        if (same != null && !sentAgain.has(approval.id)) {
           // the same approval is pending again, which is exactly what the user saw, so the decision is sent again
-          // once instead of asking (ex. dprint was started again before it received it)
+          // once instead of asking
           askedNow.delete(approval.id);
           sentAgain.add(approval.id);
           decisionsToSendAgain.set(approval.id, decision);
           continue;
         }
         if (!allows) {
-          // the user denied what replaced it too when it's some of what they saw for the same config file, which is
-          // never done for allowing it (the same approval is sent the denial again once)
-          const deniedItems = new Set(approval.items.map(item => item.specifier));
-          const replacements = pending.filter(other =>
-            other.kind === approval.kind
-            && other.configFile.uri === approval.configFile.uri
-            && other.configFile.dirUri === approval.configFile.dirUri
-            && !other.denied
-            && other.items.every(item => deniedItems.has(item.specifier))
-          );
-          const replacement = replacements.find(other => other.id === approval.id) ?? replacements[0];
-          const denial = replacement?.decisions.find(option => option.decision === decision);
-          if (replacement != null && denial != null) {
-            await this.#options.approve({ id: replacement.id, decision })
-              .catch(() => {/* it's asked about later */});
-          }
+          await this.#forwardDenial(approval, decision, pending, sentAgain);
+        }
+        if (same != null) {
+          // it still wasn't used after it was sent again
+          throw err;
+        }
+        if (!allows) {
+          // what replaced it isn't asked about right after the user denied it
           return false;
         }
         continue;
@@ -200,6 +191,35 @@ export class Approvals {
       this.#options.showNotUsed?.(notFormatted, lastConfigFile!);
     }
     return !isSkipped && notFormatted == null;
+  }
+
+  /**
+   * Denies what replaced an approval the user denied when it's some of what they saw for the same config
+   * file, which is never done for allowing it. The same approval is preferred, and the denial isn't sent
+   * to an approval that was sent a decision again in the request, so it's sent at most twice.
+   */
+  async #forwardDenial(
+    approval: PendingApproval,
+    decision: ApprovalDecision,
+    pending: PendingApproval[],
+    sentAgain: Set<string>,
+  ) {
+    const deniedItems = new Set(approval.items.map(item => item.specifier));
+    const replacements = pending.filter(other =>
+      other.kind === approval.kind
+      && other.configFile.uri === approval.configFile.uri
+      && other.configFile.dirUri === approval.configFile.dirUri
+      && !other.denied
+      && !sentAgain.has(other.id)
+      && other.items.every(item => deniedItems.has(item.specifier))
+    );
+    const replacement = replacements.find(other => other.id === approval.id) ?? replacements[0];
+    if (replacement == null || !replacement.decisions.some(option => option.decision === decision)) {
+      return;
+    }
+    sentAgain.add(replacement.id);
+    await this.#options.approve({ id: replacement.id, decision })
+      .catch(() => {/* it's asked about later */});
   }
 }
 

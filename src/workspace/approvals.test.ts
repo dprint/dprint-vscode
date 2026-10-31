@@ -97,27 +97,99 @@ describe("Approvals", () => {
     assert.deepStrictEqual(asked, ["download"]);
   });
 
-  it("rejects when approving fails and it's still pending", async () => {
+  it("rejects when approving fails and it's still pending after it was sent again", async () => {
+    for (const decision of ["allow", "deny"]) {
+      const approved: ApproveParams[] = [];
+      const approvals = new Approvals({
+        pendingApprovals: async () => ({ configFile: null, approvals: [approval("download")], status: READY }),
+        ask: async () => decision,
+        approve: params => {
+          approved.push(params);
+          return Promise.reject(new Error("Failed."));
+        },
+      });
+      await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Failed/);
+      assert.deepStrictEqual(approved, [{ id: "download", decision }, { id: "download", decision }]);
+    }
+  });
+
+  it("uses a decision that isn't pending anymore after approving fails", async () => {
+    // ex. only the response was lost
+    for (const [decision, expected] of [["allow", true], ["deny", false]] as const) {
+      const approved: ApproveParams[] = [];
+      const approvals = new Approvals({
+        pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+        ask: async () => decision,
+        approve: params => {
+          approved.push(params);
+          return Promise.reject(new Error("Failed."));
+        },
+      });
+      assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), expected);
+      assert.deepStrictEqual(approved, [{ id: "download", decision }]);
+    }
+  });
+
+  it("sends a decision again once when approving fails and the same approval is still pending", async () => {
+    // ex. dprint was killed before it received it and is started again
+    for (const [decision, expected] of [["allow", true], ["deny", false]] as const) {
+      const asked: string[] = [];
+      const approved: ApproveParams[] = [];
+      const approvals = new Approvals({
+        pendingApprovals: async () => ({ configFile: null, approvals: [approval("download")], status: READY }),
+        ask: async pending => {
+          asked.push(pending.id);
+          return decision;
+        },
+        approve: async params => {
+          approved.push(params);
+          if (approved.length === 1) {
+            throw new Error("The dprint language server was stopped while the request was in progress.");
+          }
+          return { configFile: null, approvals: [], status: READY };
+        },
+      });
+      assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), expected);
+      assert.deepStrictEqual(asked, ["download"]);
+      assert.deepStrictEqual(approved, [{ id: "download", decision }, { id: "download", decision }]);
+    }
+  });
+
+  it("denies what replaced a denied approval when approving fails, without asking about it", async () => {
+    const replacement = { ...approval("processPlugins"), id: "replacement" };
+    const asked: string[] = [];
+    const approved: ApproveParams[] = [];
     const approvals = new Approvals({
-      pendingApprovals: async () => ({ configFile: null, approvals: [approval("download")], status: READY }),
-      ask: async () => "allow",
-      approve: () => Promise.reject(new Error("Failed.")),
+      pendingApprovals: async () => ({ configFile: null, approvals: [replacement], status: READY }),
+      ask: async pending => {
+        asked.push(pending.id);
+        return "deny";
+      },
+      approve: async params => {
+        approved.push(params);
+        if (params.id === "processPlugins") {
+          throw new Error("Failed.");
+        }
+        return { configFile: null, approvals: [], status: READY };
+      },
     });
-    await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Failed/);
-    // the decision was used when it isn't pending anymore (ex. only the response was lost)
-    const used = new Approvals({
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-      ask: async () => "allow",
-      approve: () => Promise.reject(new Error("Failed.")),
-    });
-    assert.strictEqual(await used.request([approval("download")], { isExplicit: false }), true);
-    // a denial that fails is said
-    const denied = new Approvals({
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-      ask: async () => "deny",
-      approve: () => Promise.reject(new Error("Failed.")),
-    });
-    await assert.rejects(denied.request([approval("download")], { isExplicit: false }), /Failed/);
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }, {
+      id: "replacement",
+      decision: "deny",
+    }]);
+  });
+
+  it("rejects with the error of approving when getting what's pending fails", async () => {
+    for (const decision of ["allow", "deny"]) {
+      const approvals = new Approvals({
+        pendingApprovals: () => Promise.reject(new Error("Not running.")),
+        ask: async () => decision,
+        approve: () => Promise.reject(new Error("Failed.")),
+      });
+      await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Failed/);
+    }
   });
 
   it("formats again when what needs to be approved changed", async () => {
@@ -252,10 +324,13 @@ describe("Approvals", () => {
       },
       approve: async params => {
         approved.push(params);
-        throw Object.assign(new Error("Changed."), {
-          code: -32803,
-          data: { kind: "approvalChanged", current: { configFile: null, approvals: [replacement], status: READY } },
-        });
+        if (params.id === "processPlugins") {
+          throw Object.assign(new Error("Changed."), {
+            code: -32803,
+            data: { kind: "approvalChanged", current: { configFile: null, approvals: [replacement], status: READY } },
+          });
+        }
+        return { configFile: null, approvals: [], status: READY };
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
@@ -365,23 +440,26 @@ describe("Approvals", () => {
   });
 
   it("sends a decision again only once when its approval keeps being pending again", async () => {
-    let sends = 0;
-    const approvals = new Approvals({
-      ask: async () => "allow",
-      approve: async () => {
-        sends++;
-        throw Object.assign(new Error("Changed."), {
-          code: -32803,
-          data: {
-            kind: "approvalChanged",
-            current: { configFile: null, approvals: [approval("download")], status: READY },
-          },
-        });
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
-    assert.strictEqual(sends, 2);
+    // a denial isn't forwarded to the same approval a third time either
+    for (const decision of ["allow", "deny"]) {
+      let sends = 0;
+      const approvals = new Approvals({
+        ask: async () => decision,
+        approve: async () => {
+          sends++;
+          throw Object.assign(new Error("Changed."), {
+            code: -32803,
+            data: {
+              kind: "approvalChanged",
+              current: { configFile: null, approvals: [approval("download")], status: READY },
+            },
+          });
+        },
+        pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+      });
+      await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Changed/);
+      assert.strictEqual(sends, 2);
+    }
   });
 
   it("doesn't send an allow again for an approval that was denied since", async () => {
