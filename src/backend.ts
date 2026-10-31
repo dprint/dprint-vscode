@@ -25,6 +25,8 @@ export function activateBackend(
   disposables.push(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
+  const onDidChangeConfig = new vscode.EventEmitter<void>();
+  disposables.push(onDidChangeConfig);
   const workspaceBackend = new WorkspaceBackend({
     approvedPaths,
     configSchemaProvider,
@@ -33,6 +35,7 @@ export function activateBackend(
     onAncestorConfigFileCreatedOrDeleted: () => {
       switcher.reInitialize().catch(err => logger.logError("Error initializing:", err));
     },
+    onConfigChanged: () => onDidChangeConfig.fire(),
   });
   disposables.push(workspaceBackend);
   const switcher = new BackendSwitcher<ExtensionBackend>({
@@ -41,6 +44,7 @@ export function activateBackend(
   });
 
   return {
+    onDidChangeConfig: onDidChangeConfig.event,
     reInitialize(options) {
       return switcher.reInitialize(options);
     },

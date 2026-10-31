@@ -3,10 +3,16 @@ import type { ReInitializeOptions } from "./BackendSwitcher";
 import type { NotFormattedReason } from "./globalConfigCommand";
 
 export interface ExtensionBackend extends vscode.Disposable {
+  /**
+   * Fired when dprint says what a config file formats may have changed, which may change whether any open document
+   * is formatted with the global config file, so that's gotten again. It's for any config file, because the extension
+   * doesn't map the paths of a directory it knows by several (ex. through a symlink) to find the documents in it.
+   * The legacy backend doesn't have it.
+   */
+  readonly onDidChangeConfig?: vscode.Event<void>;
   reInitialize(options?: ReInitializeOptions): Promise<void>;
   /** Gets if a change to the settings needs the backend to be initialized again. */
   affectsInitialization(evt: vscode.ConfigurationChangeEvent): boolean;
-  /** Called when a config file's contents change (not when one is created or deleted). */
   /** Called when a config file in the workspace was created, changed, or deleted. */
   onConfigFileChanged(uri: vscode.Uri, type: ConfigFileChangeType): Promise<void>;
   /**

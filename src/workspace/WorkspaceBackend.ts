@@ -43,9 +43,11 @@ import { CoalescingQueue } from "../utils/CoalescingQueue";
 import {
   type ApprovalChoice,
   Approvals,
+  combineDecisions,
   getApprovalDetails,
   getApprovalMessage,
   getDisplayPath,
+  getForgettableConfigFiles,
   SHOW_DETAILS_TITLE,
   toPlainNotificationText,
 } from "./approvals";
@@ -66,6 +68,7 @@ import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type Progress
 import {
   type Action,
   type ConfigApprovals,
+  type ConfigFileIdentifier,
   type ConfigFileInfo,
   type ConfigInfoResult,
   type DocumentLanguage,
@@ -111,6 +114,12 @@ export interface WorkspaceBackendOptions {
    * ancestor directory of a workspace folder, which the extension's watcher of the workspace doesn't see).
    */
   onAncestorConfigFileCreatedOrDeleted(): void;
+  /**
+   * Called when dprint says what a config file formats may have changed (`dprint/configChanged`), including one the
+   * extension doesn't know about, which may change what's known about any open document (ex. one the extension
+   * knows by another path of the config file's directory, see `ExtensionBackend.onDidChangeConfig`).
+   */
+  onConfigChanged(): void;
 }
 
 /**
@@ -526,6 +535,7 @@ export class WorkspaceBackend implements vscode.Disposable {
           this.#state?.refreshSchema();
           return;
         }
+        this.#options.onConfigChanged();
         // an error that's still there is shown again
         if (params.configFile == null) {
           this.#session.shownConfigErrors.clear();
@@ -1147,11 +1157,10 @@ class WorkspaceState {
   async showDecisions() {
     const results = await Promise.all(this.#resolvedServices.map(service => service.connection.decisions()));
     // the "Always" decisions are shared by the processes
-    const decisions = [
-      ...new Map(results.flatMap(result => result.decisions).map(decision => [JSON.stringify(decision), decision]))
-        .values(),
-    ];
-    const items: (vscode.QuickPickItem & { forget?: boolean })[] = decisions.map(decision => ({
+    const decisions = combineDecisions(results.map(result => result.decisions));
+    const items: (vscode.QuickPickItem & { forget?: { configFile?: ConfigFileIdentifier } })[] = decisions.map((
+      { decision, configFiles },
+    ) => ({
       label: toPlainQuickPickText(
         `${decision.allows ? "Allowed" : "Denied"}${decision.always ? " (always)" : ""}: ${
           decision.specifiers.map((specifier, i) => {
@@ -1172,9 +1181,9 @@ class WorkspaceState {
         : decision.kind === "processPlugins"
         ? "Process plugins"
         : decision.kind,
-      description: decision.configFile == null
+      description: configFiles.length === 0
         ? "Every configuration file"
-        : toPlainQuickPickText(getDisplayPath(decision.configFile.uri)),
+        : toPlainQuickPickText(configFiles.map(configFile => getDisplayPath(configFile.uri)).join(", ")),
     }));
     if (results.some(result => result.allowProcessPlugins)) {
       items.unshift({ label: "Process plugins are allowed by dprint's settings file (editor.allowProcessPlugins)" });
@@ -1183,29 +1192,46 @@ class WorkspaceState {
       vscode.window.showInformationMessage("Nothing was decided about what the configuration files need approved.");
       return;
     }
-    items.push({ label: "Forget the decisions", forget: true });
+    // forgetting is for a config file rather than a decision, which forgets each of its decisions
+    const configFiles = getForgettableConfigFiles(decisions);
+    for (const configFile of configFiles) {
+      const hasSameUri = configFiles.some(other => other !== configFile && other.uri === configFile.uri);
+      items.push({
+        label: toPlainQuickPickText(`Forget the decisions of ${getDisplayPath(configFile.uri)}`),
+        // ex. the global config file for every directory and for one
+        description: hasSameUri
+          ? configFile.dirUri == null ? "for every directory" : `for ${getDisplayPath(configFile.dirUri)}`
+          : undefined,
+        forget: { configFile },
+      });
+    }
+    items.push({ label: "Forget every decision", forget: {} });
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: "What was decided about what dprint needs approved",
     });
-    if (selection?.forget) {
-      await this.forgetDecisions();
+    if (selection?.forget != null) {
+      await this.forgetDecisions(selection.forget.configFile);
     }
   }
 
-  /** Forgets what the user decided for every config file, including the "Always" decisions. */
-  async forgetDecisions() {
+  /**
+   * Forgets what the user decided for the config file, or every config file when not provided, including
+   * the "Always" decisions.
+   */
+  async forgetDecisions(configFile?: ConfigFileIdentifier) {
     if (this.#resolvedServices.length === 0) {
       vscode.window.showInformationMessage("dprint isn't running, so there are no decisions to forget.");
       return;
     }
-    // each process forgets what was decided for its session, and the stored decisions are shared
+    // each process forgets what was decided for its session, and the stored decisions are shared, so it's sent
+    // to each process that may have used the config file, which is any of them
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
       try {
-        const result = await service.connection.forgetDecisions();
+        const result = await service.connection.forgetDecisions({ configFile });
         return result.notice;
       } finally {
-        // the user is asked again even about what they were asked about before once dprint responds, which
-        // is for every config file because it's sent without one (a failure may have forgotten them too)
+        // the user is asked again even about what they were asked about before once dprint responds (a
+        // failure may have forgotten them too)
         service.approvals.forget();
       }
     }));
@@ -1221,7 +1247,11 @@ class WorkspaceState {
     } else if (notice != null) {
       showSeverityMessage(notice, this.#isConfigFileOnAnotherMachine);
     } else {
-      vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
+      vscode.window.showInformationMessage(
+        configFile == null
+          ? "dprint will ask to approve what the configuration files need again."
+          : toPlainNotificationText(`dprint will ask to approve what ${getDisplayPath(configFile.uri)} needs again.`),
+      );
     }
     this.scheduleRefresh();
   }

@@ -90,6 +90,9 @@ export async function activate(context: vscode.ExtensionContext) {
       onConfigFilesMaybeChanged();
     }
   }));
+  if (backend.onDidChangeConfig != null) {
+    context.subscriptions.push(backend.onDidChangeConfig(updateCanFormatWithGlobalConfig));
+  }
   updateCanFormatWithGlobalConfig();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => reInitializeBackend()));
   // untitled documents are formatted as a file in the first workspace folder
