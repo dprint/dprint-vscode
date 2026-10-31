@@ -101,10 +101,10 @@ export interface LspConnectionOptions {
   /** Called when what a config file formats may have changed in a way the editor can't see. */
   onConfigChanged(params: ConfigChangedParams): void;
   /**
-   * Called with the config file of each `dprint/configInfo` result, which is the latest result about it,
-   * because the changes of the config files of those results reach dprint (see "Lifecycle" in its spec).
+   * Gets what identifies a config file's uri (ex. its path without its case on Windows), which is undefined
+   * for one that isn't opened (ex. an https uri). Defaults to the uri.
    */
-  onConfigFile?(configFile: ConfigFileInfo): void;
+  getConfigFileKey?(uri: string): string | undefined;
   /**
    * Called when a server is started again after one exited (ex. it crashed), which doesn't know
    * what the one before it was told (ex. the files the config files were resolved from).
@@ -161,6 +161,14 @@ export class LspConnection {
    * killed or sent only `exit`.
    */
   readonly #sessionId = randomUUID();
+  /**
+   * Whether dprint's latest `dprint/configInfo` or `dprint/fileInfo` result for each config file said it's
+   * on another machine, by its key (see `getConfigFileKey`), which stops being the latest once
+   * `dprint/configChanged` names it (or no config file) or the server is started again.
+   */
+  readonly #configFilesOnAnotherMachine = new Map<string, boolean>();
+  /** Increases when the latest results are forgotten, so the result of a request that was sent before isn't kept. */
+  #configFilesEpoch = 0;
 
   constructor(options: LspConnectionOptions) {
     this.#options = options;
@@ -176,8 +184,11 @@ export class LspConnection {
     return this.#track(server => server.initialized, undefined) as Promise<InitializeResult>;
   }
 
-  fileInfo(params: FileInfoParams) {
-    return this.#request<FileInfoResult>(FILE_INFO_METHOD, params);
+  async fileInfo(params: FileInfoParams) {
+    const epoch = this.#configFilesEpoch;
+    const result = await this.#request<FileInfoResult>(FILE_INFO_METHOD, params);
+    this.#noteConfigFile(result.configFile, epoch);
+    return result;
   }
 
   pendingApprovals(params: PendingApprovalsParams = {}) {
@@ -193,11 +204,19 @@ export class LspConnection {
   }
 
   async configInfo(params: ConfigParams) {
+    const epoch = this.#configFilesEpoch;
     const result = await this.#request<ConfigInfoResult>(CONFIG_INFO_METHOD, params);
-    if (result.configFile != null) {
-      this.#options.onConfigFile?.(result.configFile);
-    }
+    this.#noteConfigFile(result.configFile, epoch);
     return result;
+  }
+
+  /**
+   * Gets whether dprint's latest `dprint/configInfo` or `dprint/fileInfo` result for the config file says
+   * it's on another machine, which is undefined when there's no result for it (see `#configFilesOnAnotherMachine`).
+   */
+  isConfigFileOnAnotherMachine(uri: string): boolean | undefined {
+    const key = this.#getConfigFileKey(uri);
+    return key == null ? undefined : this.#configFilesOnAnotherMachine.get(key);
   }
 
   configSchema(params: ConfigParams) {
@@ -363,6 +382,29 @@ export class LspConnection {
     }
   }
 
+  /** Keeps a result's config file as the latest unless the latest results were forgotten since the request was sent. */
+  #noteConfigFile(configFile: ConfigFileInfo | null, epoch: number) {
+    const key = configFile == null ? undefined : this.#getConfigFileKey(configFile.uri);
+    if (key != null && epoch === this.#configFilesEpoch) {
+      this.#configFilesOnAnotherMachine.set(key, configFile!.onAnotherMachine === true);
+    }
+  }
+
+  /** Forgets the latest result of the config file, or of every config file when not provided. */
+  #forgetConfigFiles(uri: string | undefined) {
+    this.#configFilesEpoch++;
+    const key = uri == null ? undefined : this.#getConfigFileKey(uri);
+    if (uri == null) {
+      this.#configFilesOnAnotherMachine.clear();
+    } else if (key != null) {
+      this.#configFilesOnAnotherMachine.delete(key);
+    }
+  }
+
+  #getConfigFileKey(uri: string) {
+    return this.#options.getConfigFileKey == null ? uri : this.#options.getConfigFileKey(uri);
+  }
+
   /** Sends the notification once the server is initialized. */
   #notify(server: Server, method: string, params: unknown) {
     server.initialized
@@ -383,6 +425,8 @@ export class LspConnection {
       this.#hasStarted = true;
       this.#server = this.#startServer();
       if (isRestart) {
+        // the new server's results replace the ones from before
+        this.#forgetConfigFiles(undefined);
         this.#server.initialized.then(() => this.#options.onRestart?.(), () => {/* the requests fail too */});
       }
     }
@@ -428,7 +472,12 @@ export class LspConnection {
     );
     connection.onNotification(
       CONFIG_CHANGED_NOTIFICATION,
-      (params: ConfigChangedParams) => this.#options.onConfigChanged(params),
+      (params: ConfigChangedParams) => {
+        if (!params.schemaOnly) {
+          this.#forgetConfigFiles(params.configFile?.uri);
+        }
+        this.#options.onConfigChanged(params);
+      },
     );
     // the progress is shown once it begins
     connection.onRequest("window/workDoneProgress/create", () => null);

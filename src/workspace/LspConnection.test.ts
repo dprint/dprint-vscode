@@ -170,31 +170,80 @@ describe("LspConnection", () => {
     assert.deepStrictEqual(await approve, { approvals: [] });
   });
 
-  it("provides the config file of each configInfo result, but not of the other results", async () => {
-    // only the changes of the config files of configInfo results reach dprint, so only they're kept as the latest
-    const configFiles: string[] = [];
-    const { connection, processes } = createConnection({
-      onConfigFile: configFile => configFiles.push(configFile.uri),
-    });
-    const configFile = { uri: "file:///dprint.json", dirUri: "file:///", kind: "local", inWorkspace: true };
+  it("keeps whether the latest configInfo or fileInfo result of a config file says it's on another machine", async () => {
+    const { connection, processes } = createConnection();
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), undefined);
 
-    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///a/dprint.json" } });
     const process = processes[0];
-    (await process.nextRequest("dprint/fileInfo")).respond({ configFile, plugins: [], status: { kind: "ready" } });
-    await fileInfo;
-    assert.deepStrictEqual(configFiles, []);
+    (await process.nextRequest("dprint/configInfo")).respond(
+      configInfoResult(configFile("file:///a/dprint.json", false)),
+    );
+    await configInfo;
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), false);
 
-    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
-    (await process.nextRequest("dprint/configInfo")).respond({
-      configFile,
+    // a fileInfo result is the server's view of it too
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///a/file.ts" } });
+    (await process.nextRequest("dprint/fileInfo")).respond({
+      configFile: configFile("file:///a/dprint.json", true),
       plugins: [],
-      filePatterns: [],
-      otherFiles: [],
-      watchUris: [],
       status: { kind: "ready" },
     });
+    await fileInfo;
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), true);
+  });
+
+  it("forgets the latest result of a config file once configChanged names it, or no config file", async () => {
+    const { connection, processes } = createConnection();
+    const getConfigInfo = async (uri: string) => {
+      const configInfo = connection.configInfo({ configFile: { uri } });
+      (await processes[0].nextRequest("dprint/configInfo")).respond(configInfoResult(configFile(uri, false)));
+      await configInfo;
+    };
+    await getConfigInfo("file:///a/dprint.json");
+    await getConfigInfo("file:///b/dprint.json");
+
+    const process = processes[0];
+    // not when only the schema changed
+    process.peer.sendNotification("dprint/configChanged", {
+      configFile: { uri: "file:///a/dprint.json" },
+      schemaOnly: true,
+    });
+    await nextTick();
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), false);
+    process.peer.sendNotification("dprint/configChanged", { configFile: { uri: "file:///a/dprint.json" } });
+    await waitUntil(() => connection.isConfigFileOnAnotherMachine("file:///a/dprint.json") == null);
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), undefined);
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///b/dprint.json"), false);
+    process.peer.sendNotification("dprint/configChanged", {});
+    await waitUntil(() => connection.isConfigFileOnAnotherMachine("file:///b/dprint.json") == null);
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///b/dprint.json"), undefined);
+  });
+
+  it("doesn't keep the result of a request that was sent before configChanged", async () => {
+    // ex. it said it isn't on another machine right before it became a symlink to a share
+    const { connection, processes } = createConnection();
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///a/dprint.json" } });
+    const process = processes[0];
+    const request = await process.nextRequest("dprint/configInfo");
+    process.peer.sendNotification("dprint/configChanged", { configFile: { uri: "file:///a/dprint.json" } });
+    await nextTick();
+    request.respond(configInfoResult(configFile("file:///a/dprint.json", false)));
     await configInfo;
-    assert.deepStrictEqual(configFiles, ["file:///dprint.json"]);
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), undefined);
+  });
+
+  it("forgets the latest results when the server is started again", async () => {
+    const { connection, processes } = createConnection();
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///a/dprint.json" } });
+    (await processes[0].nextRequest("dprint/configInfo")).respond(
+      configInfoResult(configFile("file:///a/dprint.json", false)),
+    );
+    await configInfo;
+    processes[0].exit();
+    connection.fileInfo({ textDocument: { uri: "file:///a/file.ts" } }).catch(() => {/* ignore */});
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), undefined);
   });
 
   it("rejects a request with an error response", async () => {
@@ -665,7 +714,6 @@ function createConnection(options: {
   onDiagnostics?: (params: PublishDiagnosticsParams) => void;
   onConfigChanged?: (params: ConfigChangedParams) => void;
   killProcess?: (process: ServerProcess, signal: NodeJS.Signals | undefined) => Promise<void> | void;
-  onConfigFile?: (configFile: ConfigFileInfo) => void;
 } = {}) {
   const processes: FakeProcess[] = [];
   const logs: [string, string][] = [];
@@ -679,7 +727,6 @@ function createConnection(options: {
       return process as unknown as ServerProcess;
     },
     killProcess: options.killProcess,
-    onConfigFile: options.onConfigFile,
     getInitializeParams: () => INITIALIZE_PARAMS,
     showMessage: options.showMessage ?? (() => {}),
     showProgress(title, percentage) {
@@ -833,6 +880,20 @@ async function killWithUnreadableOutput(connection: LspConnection, processes: Fa
   process.stdout.write("Content-Length: abc\r\n\r\n");
   await assert.rejects(configInfo, /stopped while the request was in progress/);
   return process;
+}
+
+function configFile(uri: string, onAnotherMachine: boolean): ConfigFileInfo {
+  return {
+    uri,
+    dirUri: uri.slice(0, uri.lastIndexOf("/")),
+    kind: "local",
+    inWorkspace: true,
+    ...(onAnotherMachine ? { onAnotherMachine } : {}),
+  };
+}
+
+function configInfoResult(configFile: ConfigFileInfo) {
+  return { configFile, plugins: [], filePatterns: [], otherFiles: [], watchUris: [], status: { kind: "ready" } };
 }
 
 /** Waits for the pending promise callbacks and immediates to run. */

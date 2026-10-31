@@ -137,11 +137,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #approvalConfigurationProvider: vscode.Disposable;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
-  /**
-   * Whether dprint's latest result for each config file it provided said it's on another machine, by its
-   * path (see `getConfigFileKey`), which decides whether it's opened from an older message.
-   */
-  readonly #configFilesOnAnotherMachine = new Map<string, boolean>();
   /** What's kept across the states for the session of the extension. */
   readonly #session: WorkspaceSession = {
     hasNotifiedNoConfig: false,
@@ -177,8 +172,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   async initialize(onSupported: () => void, options: { restart?: boolean } = {}): Promise<boolean> {
     this.#logger.setDebug(getDprintConfig(vscode.workspace.workspaceFolders?.[0]?.uri).verbose);
     if (options.restart) {
-      // a new session asks again about reading what's on another machine
-      this.#configFilesOnAnotherMachine.clear();
       // the current state keeps using them until the new one replaces it
       for (const service of this.#services.values()) {
         this.#restartedServices.add(service);
@@ -490,7 +483,7 @@ export class WorkspaceBackend implements vscode.Disposable {
       showMessage,
       showProgress,
       onDiagnostics: params => this.#setDiagnostics(connection, params),
-      onConfigFile: configFile => this.#noteConfigFile(configFile),
+      getConfigFileKey,
       onConfigChanged: params => {
         this.#logger.logDebug("Configuration changed:", params.configFile?.uri ?? "(every configuration file)");
         // only the schema changed (ex. a plugin's schema downloaded), which getting it again is enough for
@@ -498,22 +491,17 @@ export class WorkspaceBackend implements vscode.Disposable {
           this.#state?.refreshSchema();
           return;
         }
-        // an error that's still there is shown again, and what's known about whether it's on another machine
-        // isn't anymore, which the results that are gotten again say (ex. one that's a symlink to a share now)
+        // an error that's still there is shown again
         if (params.configFile == null) {
           this.#session.shownConfigErrors.clear();
-          this.#configFilesOnAnotherMachine.clear();
         } else {
           this.#session.shownConfigErrors.forget(params.configFile);
-          this.#configFilesOnAnotherMachine.delete(getConfigFileKey(params.configFile.uri));
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
       // tells it (it keeps what the user decided for the session by the connection's session id)
       onRestart: () => {
-        // the new server's results say again whether the config files are on another machine
-        this.#configFilesOnAnotherMachine.clear();
         this.onConfigFileChanged()
           .catch(err => this.#logger.logError("Error refreshing:", err));
       },
@@ -629,21 +617,13 @@ export class WorkspaceBackend implements vscode.Disposable {
   }
 
   /**
-   * Notes what dprint's latest `dprint/configInfo` result for a config file says, which is used to open
-   * it from an older message.
-   */
-  #noteConfigFile(configFile: ConfigFileInfo) {
-    if (vscode.Uri.parse(configFile.uri).scheme === FILE_SCHEME) {
-      this.#configFilesOnAnotherMachine.set(getConfigFileKey(configFile.uri), configFile.onAnotherMachine === true);
-    }
-  }
-
-  /**
    * Gets whether dprint's latest result for the config file says it's on another machine, which is
-   * undefined when there's no result for it.
+   * undefined when there's no result for it (see `LspConnection.isConfigFileOnAnotherMachine`). When
+   * the processes disagree, it's on another machine.
    */
   #isConfigFileOnAnotherMachine(uri: string) {
-    return this.#configFilesOnAnotherMachine.get(getConfigFileKey(uri));
+    const results = [...this.#runningServices()].map(service => service.connection.isConfigFileOnAnotherMachine(uri));
+    return results.includes(true) ? true : results.includes(false) ? false : undefined;
   }
 
   /** Shows the problems with a config file, which replace the ones shown before for it. */
@@ -2073,9 +2053,13 @@ function isWorkspaceFolderOrAncestor(dirPath: string) {
   return cached.keys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
 }
 
-/** Gets what identifies a config file's uri, which is its path, without its case when the file system is. */
+/**
+ * Gets what identifies a config file's uri, which is its path, without its case when the file system is,
+ * and undefined when it isn't a file.
+ */
 function getConfigFileKey(uri: string) {
-  return getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM);
+  const parsed = vscode.Uri.parse(uri);
+  return parsed.scheme === FILE_SCHEME ? getWatchedPathKey(parsed.fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM) : undefined;
 }
 
 /** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */
