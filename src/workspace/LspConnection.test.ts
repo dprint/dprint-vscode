@@ -207,6 +207,7 @@ describe("LspConnection", () => {
     const { connection, processes } = createConnection({ initializeResult: null });
 
     const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    processes[0].pid = undefined;
     processes[0].emit("error", new Error("spawn dprint ENOENT"));
     await assert.rejects(fileInfo, /failed to start\. Error: spawn dprint ENOENT/);
     assert.strictEqual(connection.pendingRequestCount, 0);
@@ -232,11 +233,7 @@ describe("LspConnection", () => {
   it("starts the server again only once the one that was killed exited", async () => {
     const { connection, processes } = createConnection();
 
-    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
-    const process = processes[0];
-    await process.nextRequest("dprint/configInfo");
-    process.stdout.write("Content-Length: abc\r\n\r\n");
-    await assert.rejects(configInfo, /stopped while the request was in progress/);
+    const process = await killWithUnreadableOutput(connection, processes);
 
     const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
     await nextTick();
@@ -254,11 +251,7 @@ describe("LspConnection", () => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { connection, processes, logs } = createConnection();
 
-    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
-    const process = processes[0];
-    await process.nextRequest("dprint/configInfo");
-    process.stdout.write("Content-Length: abc\r\n\r\n");
-    await assert.rejects(configInfo, /stopped while the request was in progress/);
+    const process = await killWithUnreadableOutput(connection, processes);
     connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
 
     t.mock.timers.tick(999);
@@ -273,6 +266,34 @@ describe("LspConnection", () => {
     await waitUntil(() => processes.length === 2);
     assert.strictEqual(processes.length, 2);
     assert.ok(logs.some(([level, message]) => level === "warn" && /didn't exit after it was killed/.test(message)));
+  });
+
+  it("doesn't start the server again while the one that couldn't be killed is running", async () => {
+    const { connection, processes } = createConnection();
+
+    const process = await killWithUnreadableOutput(connection, processes);
+    // ex. killing it failed with EPERM
+    process.emit("error", new Error("kill EPERM"));
+    connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+    process.exit();
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+  });
+
+  it("doesn't start the server again when disposed while the one that was killed exits", async () => {
+    for (const dispose of [(c: LspConnection) => c.dispose(), (c: LspConnection) => c.disposeWhenIdle()]) {
+      const { connection, processes } = createConnection();
+
+      const process = await killWithUnreadableOutput(connection, processes);
+      const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+      await nextTick();
+      dispose(connection);
+      process.exit();
+      await assert.rejects(fileInfo, /not running/);
+      assert.strictEqual(processes.length, 1);
+    }
   });
 
   it("shows the messages from the server", async () => {
@@ -589,6 +610,8 @@ class FakeProcess extends EventEmitter {
   readonly #waiters: ((message: ReceivedMessage) => void)[] = [];
   /** The signals it was killed with, which is undefined for the default one. */
   readonly killSignals: (NodeJS.Signals | undefined)[] = [];
+  /** The process id, which is undefined when it failed to spawn. */
+  pid: number | undefined = 1234;
 
   constructor(initializeResult: InitializeResult | null) {
     super();
@@ -680,6 +703,16 @@ class FakeCancellationToken {
       listener();
     }
   }
+}
+
+/** Kills the process a request starts by having it write what can't be read, which resolves with the process. */
+async function killWithUnreadableOutput(connection: LspConnection, processes: FakeProcess[]) {
+  const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
+  const process = processes[processes.length - 1];
+  await process.nextRequest("dprint/configInfo");
+  process.stdout.write("Content-Length: abc\r\n\r\n");
+  await assert.rejects(configInfo, /stopped while the request was in progress/);
+  return process;
 }
 
 /** Waits for the pending promise callbacks and immediates to run. */
