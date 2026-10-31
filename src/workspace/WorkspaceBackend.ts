@@ -693,7 +693,8 @@ class WorkspaceState {
   readonly #getServiceForExecutable: (executable: DprintExecutable) => Promise<ServiceResolution>;
   readonly #onActivate: () => void;
   readonly #session: WorkspaceSession;
-  readonly #watchedDirPaths = new Set<string>();
+  /** The watchers of the directories of the config files in ancestor directories of the workspace folders by their path. */
+  readonly #ancestorWatchers = new Map<string, vscode.Disposable>();
   /** The watchers of the files the config files were resolved from by their uri. */
   readonly #fileWatchers = new Map<string, vscode.Disposable>();
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
@@ -1058,11 +1059,17 @@ class WorkspaceState {
       return;
     }
     for (const config of this.#configs) {
+      if (!config.isAncestor || config.service == null || config.info == null) {
+        continue;
+      }
       // one on another machine isn't watched until it's allowed because watching it follows its symlink like
-      // reading it does, and dprint sends dprint/configChanged once it's allowed, which refreshes it
-      if (
-        config.isAncestor && config.service != null && config.info != null && !config.info.configFile?.onAnotherMachine
-      ) {
+      // reading it does, and dprint sends dprint/configChanged once it's allowed, which refreshes it (ex. a
+      // watched one that was replaced with a symlink, which vscode says was changed rather than created)
+      if (config.info.configFile?.onAnotherMachine) {
+        const dirPath = getConfigFileDir(this.#environment, config.configFilePath);
+        this.#ancestorWatchers.get(dirPath)?.dispose();
+        this.#ancestorWatchers.delete(dirPath);
+      } else {
         this.#watchAncestorConfigFile(config.configFilePath);
       }
     }
@@ -1096,16 +1103,19 @@ class WorkspaceState {
 
   /** Watches the directory of a config file in an ancestor directory of a workspace folder for its changes. */
   #watchAncestorConfigFile(configFilePath: string) {
+    // a state that was stopped disposed its watchers
+    if (this.#disposed) {
+      return;
+    }
     const dirPath = getConfigFileDir(this.#environment, configFilePath);
     // config files in workspace folders are already watched by the extension
     if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
       return;
     }
     // workspace folders in the same directory use the same config file
-    if (this.#watchedDirPaths.has(dirPath)) {
+    if (this.#ancestorWatchers.has(dirPath)) {
       return;
     }
-    this.#watchedDirPaths.add(dirPath);
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_DIR_CONFIG_FILE_GLOB),
     );
@@ -1123,7 +1133,7 @@ class WorkspaceState {
       }
     });
     watcher.onDidDelete(onCreateOrDelete);
-    this.#disposables.push(watcher);
+    this.#ancestorWatchers.set(dirPath, watcher);
   }
 
   async #refreshConfig(config: Config) {
@@ -1560,10 +1570,11 @@ class WorkspaceState {
     this.#disposed = true;
     this.#registrationDisposables.dispose();
     this.#disposables.dispose();
-    for (const watcher of this.#fileWatchers.values()) {
+    for (const watcher of [...this.#fileWatchers.values(), ...this.#ancestorWatchers.values()]) {
       watcher.dispose();
     }
     this.#fileWatchers.clear();
+    this.#ancestorWatchers.clear();
   }
 
   #disposeLegacyFolders() {
