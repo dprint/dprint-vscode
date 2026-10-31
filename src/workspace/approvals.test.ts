@@ -477,6 +477,35 @@ describe("Approvals", () => {
     assert.deepStrictEqual(deniedSince, ["download"]);
   });
 
+  it("doesn't ask about anything or format after a denial that wasn't kept", async () => {
+    // ex. what it denied was each allowed exactly for another config file since, which the notice says
+    const asked: string[] = [];
+    const notices: string[] = [];
+    const shownNotUsed: string[] = [];
+    const approvals = new Approvals({
+      ask: async pending => {
+        asked.push(pending.id);
+        return "deny";
+      },
+      approve: async () => {
+        const result = {
+          configFile: null,
+          approvals: [approval("processPlugins")],
+          status: READY,
+          notice: { message: "It was allowed since.", show: "always", severity: "info" } as const,
+        };
+        notices.push(result.notice.message);
+        return result;
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+      showNotUsed: notFormatted => shownNotUsed.push(notFormatted.message),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["download"]);
+    assert.deepStrictEqual(notices, ["It was allowed since."]);
+    assert.deepStrictEqual(shownNotUsed, []);
+  });
+
   it("doesn't say a denial failed when its approval is denied afterwards", async () => {
     const approved: ApproveParams[] = [];
     const approvals = new Approvals({
