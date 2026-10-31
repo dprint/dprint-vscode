@@ -381,6 +381,14 @@ describe("AncestorConfigFileCache", () => {
 describe("getConfigFileDir", () => {
   const env = new TestEnvironment({ homeDir });
 
+  it("gets the parent of a .config directory in another case on a case insensitive file system", () => {
+    // ex. `.Config/Dprint.json` on Windows or macOS, which dprint finds there
+    const caseInsensitiveEnv = new TestEnvironment({ homeDir, platform: "win32" });
+    const configPath = path.resolve("/project/.Config/Dprint.json");
+    assert.strictEqual(getConfigFileDir(caseInsensitiveEnv, configPath), path.resolve("/project"));
+    assert.strictEqual(getConfigFileDir(env, configPath), path.resolve("/project/.Config"));
+  });
+
   it("gets the config file's directory", () => {
     assert.strictEqual(getConfigFileDir(env, path.resolve("/project/dprint.json")), path.resolve("/project"));
   });
@@ -404,6 +412,15 @@ describe("getConfigFileDir", () => {
 
 describe("filterUnusedConfigFiles", () => {
   const env = new TestEnvironment({ homeDir });
+
+  it("keeps a config file in another case on a case insensitive file system", () => {
+    const configPath = path.resolve("/project/Dprint.json");
+    assert.deepStrictEqual(
+      filterUnusedConfigFiles(new TestEnvironment({ homeDir, platform: "darwin" }), [configPath]),
+      [configPath],
+    );
+    assert.deepStrictEqual(filterUnusedConfigFiles(env, [configPath]), []);
+  });
 
   it("keeps the config files the cli uses", () => {
     const configPaths = [

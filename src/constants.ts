@@ -1,5 +1,26 @@
 export const DPRINT_CONFIG_FILE_NAME_GLOB = "{dprint,.dprint}.{json,jsonc}";
 export const DPRINT_CONFIG_FILEPATH_GLOB = `**/${DPRINT_CONFIG_FILE_NAME_GLOB}`;
+
+/**
+ * Gets the glob of the config files in the workspace, which matches their names case insensitively on
+ * a case insensitive file system (Windows and macOS by default) like dprint finds them there (ex.
+ * `Dprint.json`), which vscode's globs don't do by themselves.
+ */
+export function getConfigFilePathGlob(platform: NodeJS.Platform) {
+  return isCaseInsensitivePlatform(platform)
+    ? toCaseInsensitiveGlob(DPRINT_CONFIG_FILEPATH_GLOB)
+    : DPRINT_CONFIG_FILEPATH_GLOB;
+}
+
+/** Gets whether the platform's file system is case insensitive by default. */
+export function isCaseInsensitivePlatform(platform: NodeJS.Platform) {
+  return platform === "win32" || platform === "darwin";
+}
+
+/** Gets a glob whose letters match in either case, with a class of both cases (ex. `[jJ][sS]`). */
+export function toCaseInsensitiveGlob(glob: string) {
+  return glob.replace(/[a-z]/gi, char => `[${char.toLowerCase()}${char.toUpperCase()}]`);
+}
 export const DPRINT_CONFIG_FILE_NAMES = ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"];
 /**
  * The directory a config file may be put in instead of the directory it applies to

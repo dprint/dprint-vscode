@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import { discoverConfigFiles } from "./configFileDiscovery";
-import { DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
+import { getConfigFilePathGlob } from "./constants";
 import { Logger } from "./logger";
 import { delay } from "./utils";
 
@@ -21,7 +21,7 @@ export function discoverWorkspaceConfigFiles(opts: { logger: Logger }) {
     // no option to turn that off (`findFiles2` with `followSymlinks` is a proposed api there, which a published
     // extension can't use), and the spec only asks for it where the editor's api allows it.
     return vscode.workspace.findFiles(
-      /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
+      /* include */ getConfigFilePathGlob(process.platform),
       /* exclude */ "**/node_modules/**",
     );
   }

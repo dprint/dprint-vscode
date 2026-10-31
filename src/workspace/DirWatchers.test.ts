@@ -321,11 +321,16 @@ describe("getFileNamesByDir", () => {
 
 describe("getWatchPattern", () => {
   it("has the names without a separator", () => {
-    assert.strictEqual(getWatchPattern(["dprint.json"]), "dprint.json");
-    assert.strictEqual(getWatchPattern(["dprint.json", ".config"]), "{dprint.json,.config}");
+    assert.strictEqual(getWatchPattern(["dprint.json"], false), "dprint.json");
+    assert.strictEqual(getWatchPattern(["dprint.json", ".config"], false), "{dprint.json,.config}");
     // a name with a glob's special characters is matched by `*`
-    assert.strictEqual(getWatchPattern(["base.json", "a{b}.json"]), "*");
-    assert.strictEqual(getWatchPattern(["[x].json"]), "*");
+    assert.strictEqual(getWatchPattern(["base.json", "a{b}.json"], false), "*");
+    assert.strictEqual(getWatchPattern(["[x].json"], true), "*");
+  });
+
+  it("matches the names in either case when the file system does", () => {
+    // ex. `Dprint.json` on Windows or macOS
+    assert.strictEqual(getWatchPattern(["a.json", ".c"], true), "{[aA].[jJ][sS][oO][nN],.[cC]}");
   });
 });
 

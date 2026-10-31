@@ -1,5 +1,10 @@
 import * as path from "node:path";
-import { DOT_CONFIG_DIR_NAME, DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "./constants";
+import {
+  DOT_CONFIG_DIR_NAME,
+  DOT_CONFIG_FILE_NAMES,
+  DPRINT_CONFIG_FILE_NAMES,
+  isCaseInsensitivePlatform,
+} from "./constants";
 import type { Environment } from "./environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -191,7 +196,8 @@ export function getConfigFileDir(env: Environment, configFilePath: string) {
  */
 export function isDotConfigDir(env: Environment, dirPath: string) {
   const parentPath = path.dirname(dirPath);
-  return path.basename(dirPath) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath && !isHomeDir(env, parentPath);
+  return toFileNameKey(env, path.basename(dirPath)) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath
+    && !isHomeDir(env, parentPath);
 }
 
 /**
@@ -228,7 +234,8 @@ export function getAncestorConfigFileChangeAction(
   if (change !== "changed") {
     return "findAgain";
   }
-  return path.basename(filePath) === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
+  // a `.Config` directory is only reported where the file system is case insensitive, which it is then
+  return path.basename(filePath).toLowerCase() === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
 }
 
 /**
@@ -315,7 +322,7 @@ function getSearchParent(env: Environment, dirPath: string) {
  * for its config file, or undefined when it's not a name the CLI searches for.
  */
 function getConfigFileRank(env: Environment, configFilePath: string) {
-  const fileName = path.basename(configFilePath);
+  const fileName = toFileNameKey(env, path.basename(configFilePath));
   if (isDotConfigDir(env, path.dirname(configFilePath))) {
     const index = DOT_CONFIG_FILE_NAMES.indexOf(fileName);
     return index === -1 ? undefined : DPRINT_CONFIG_FILE_NAMES.length + index;
@@ -325,8 +332,16 @@ function getConfigFileRank(env: Environment, configFilePath: string) {
 }
 
 function isDotConfigFile(env: Environment, configFilePath: string) {
-  return DOT_CONFIG_FILE_NAMES.includes(path.basename(configFilePath))
+  return DOT_CONFIG_FILE_NAMES.includes(toFileNameKey(env, path.basename(configFilePath)))
     && isDotConfigDir(env, path.dirname(configFilePath));
+}
+
+/**
+ * Gets a file name to compare with the names dprint looks up, which is without its case on a case
+ * insensitive file system (Windows and macOS by default), where dprint finds them in another case too.
+ */
+function toFileNameKey(env: Environment, fileName: string) {
+  return isCaseInsensitivePlatform(env.platform()) ? fileName.toLowerCase() : fileName;
 }
 
 function isHomeDir(env: Environment, dirPath: string) {

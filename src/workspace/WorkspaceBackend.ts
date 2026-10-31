@@ -2088,7 +2088,7 @@ function watchDir(
   onChange: (filePath: string, change: WatchedFileChange) => void,
 ) {
   const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(vscode.Uri.file(dirPath), getWatchPattern(fileNames)),
+    new vscode.RelativePattern(vscode.Uri.file(dirPath), getWatchPattern(fileNames, IS_CASE_INSENSITIVE_FILE_SYSTEM)),
   );
   watcher.onDidCreate(uri => onChange(uri.fsPath, "created"));
   watcher.onDidChange(uri => onChange(uri.fsPath, "changed"));

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { toCaseInsensitiveGlob } from "../constants";
 import type { PathKind } from "../environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -331,13 +332,15 @@ export function getFileNamesByDir(filePaths: Iterable<string>) {
 /**
  * Gets the glob of a watcher of the files with the names in a directory, which has no separator so
  * the watcher doesn't watch the subdirectories. A name with a glob's special characters is matched by
- * `*` instead, which `DirWatchers` filters.
+ * `*` instead, which `DirWatchers` filters. The names match in either case on a case insensitive file
+ * system, because vscode's globs don't.
  */
-export function getWatchPattern(fileNames: readonly string[]) {
+export function getWatchPattern(fileNames: readonly string[], isCaseInsensitive: boolean) {
   if (fileNames.some(name => /[*?[\]{},/\\]/.test(name))) {
     return "*";
   }
-  return fileNames.length === 1 ? fileNames[0] : `{${fileNames.join(",")}}`;
+  const names = isCaseInsensitive ? fileNames.map(toCaseInsensitiveGlob) : fileNames;
+  return names.length === 1 ? names[0] : `{${names.join(",")}}`;
 }
 
 /**

@@ -3,7 +3,7 @@ import { ApprovedConfigPaths } from "./ApprovedConfigPaths";
 import { activateBackend } from "./backend";
 import type { ReInitializeOptions } from "./BackendSwitcher";
 import { AncestorConfigFileCache } from "./configPaths";
-import { DPRINT_CONFIG_FILEPATH_GLOB, NOTEBOOK_CELL_SCHEME } from "./constants";
+import { getConfigFilePathGlob, NOTEBOOK_CELL_SCHEME } from "./constants";
 import { RealEnvironment } from "./environment";
 import type { ConfigFileChangeType, ExtensionBackend } from "./ExtensionBackend";
 import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
@@ -96,7 +96,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(updateCanFormatWithGlobalConfig));
 
   // reinitialize when a configuration file is created or deleted and let the backend handle changes
-  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(DPRINT_CONFIG_FILEPATH_GLOB);
+  const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(getConfigFilePathGlob(process.platform));
   context.subscriptions.push(fileSystemWatcher);
   const onConfigFileChanged = async (uri: vscode.Uri, type: ConfigFileChangeType) => {
     try {
