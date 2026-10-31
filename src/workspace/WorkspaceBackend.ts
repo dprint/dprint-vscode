@@ -2012,21 +2012,22 @@ function watchDir(
   return watcher;
 }
 
-/** The keys of the workspace folders and their ancestors, which are made again when the workspace folders change. */
-let workspaceFolderAndAncestorKeys:
-  | { folders: readonly vscode.WorkspaceFolder[] | undefined; keys: Set<string> }
-  | undefined;
+/** The keys of the workspace folders and their ancestors by the paths of the folders they were made for. */
+let workspaceFolderAndAncestorKeys: { folderPaths: string; keys: Set<string> } | undefined;
 
 /** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
 function isWorkspaceFolderOrAncestor(dirPath: string) {
-  // vscode provides another array once the workspace folders changed
-  const folders = vscode.workspace.workspaceFolders;
+  // vscode provides a new array each time, so the keys are made again only when the paths changed
+  const folderPaths = (vscode.workspace.workspaceFolders ?? [])
+    .filter(folder => folder.uri.scheme === FILE_SCHEME)
+    .map(folder => folder.uri.fsPath);
+  const folderPathsKey = folderPaths.join("\n");
   let cached = workspaceFolderAndAncestorKeys;
-  if (cached == null || cached.folders !== folders) {
-    const folderPaths = (folders ?? []).filter(folder => folder.uri.scheme === FILE_SCHEME).map(folder =>
-      folder.uri.fsPath
-    );
-    cached = { folders, keys: getWorkspaceFolderAndAncestorKeys(folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM) };
+  if (cached == null || cached.folderPaths !== folderPathsKey) {
+    cached = {
+      folderPaths: folderPathsKey,
+      keys: getWorkspaceFolderAndAncestorKeys(folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM),
+    };
     workspaceFolderAndAncestorKeys = cached;
   }
   return cached.keys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
