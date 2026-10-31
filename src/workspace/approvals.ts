@@ -162,18 +162,25 @@ export class Approvals {
         // what needs to be approved changed (ex. the config file changed), so the decision wasn't used
         ({ approvals: pending, status } = getChangedResult(err) ?? await this.#options.pendingApprovals(configFile));
         if (allows && pending.some(other => other.id === approval.id) && !sentAgain.has(approval.id)) {
-          // the same approval is pending again, so the user's decision is sent again once
+          // the same approval is pending again, which is exactly what the user saw, so the decision is sent again
+          // once instead of asking (ex. dprint was started again before it received it)
           askedNow.delete(approval.id);
           sentAgain.add(approval.id);
           decisionsToSendAgain.set(approval.id, decision);
           continue;
         }
         if (!allows) {
-          // the user denied what replaced it too when it's some of what they saw, which is never done for allowing it
+          // the user denied what replaced it too when it's some of what they saw for the same config file, which is
+          // never done for allowing it (the same approval is sent the denial again once)
           const deniedItems = new Set(approval.items.map(item => item.specifier));
-          const replacement = pending.find(other =>
-            other.kind === approval.kind && !other.denied && other.items.every(item => deniedItems.has(item.specifier))
+          const replacements = pending.filter(other =>
+            other.kind === approval.kind
+            && other.configFile.uri === approval.configFile.uri
+            && other.configFile.dirUri === approval.configFile.dirUri
+            && !other.denied
+            && other.items.every(item => deniedItems.has(item.specifier))
           );
+          const replacement = replacements.find(other => other.id === approval.id) ?? replacements[0];
           const denial = replacement?.decisions.find(option => option.decision === decision);
           if (replacement != null && denial != null) {
             await this.#options.approve({ id: replacement.id, decision })

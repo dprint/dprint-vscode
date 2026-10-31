@@ -267,6 +267,89 @@ describe("Approvals", () => {
     assert.deepStrictEqual(asked, ["processPlugins", "replacement"]);
   });
 
+  it("only denies what replaced a denied approval when it's for the same config file", async () => {
+    const otherConfigFile = {
+      ...approval("processPlugins"),
+      id: "other",
+      configFile: configFile("file:///sub/dprint.json"),
+    };
+    const otherDir = {
+      ...approval("processPlugins"),
+      id: "otherDir",
+      configFile: { ...configFile("file:///dprint.json"), dirUri: "file:///sub" },
+    };
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "deny",
+      approve: async params => {
+        approved.push(params);
+        throw Object.assign(new Error("Changed."), {
+          code: -32803,
+          data: {
+            kind: "approvalChanged",
+            current: { configFile: null, approvals: [otherConfigFile, otherDir], status: READY },
+          },
+        });
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "deny" }]);
+  });
+
+  it("sends a decision again once instead of asking when the same approval is pending after it changed", async () => {
+    // ex. dprint was started again before it received it, which doesn't know what it was for
+    const changedError = Object.assign(new Error("Changed."), { code: -32803, data: { kind: "approvalChanged" } });
+    const asked: string[] = [];
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async pending => {
+        asked.push(pending.id);
+        return "allow";
+      },
+      approve: async params => {
+        approved.push(params);
+        if (approved.length === 1) {
+          throw changedError;
+        }
+        return { configFile: null, approvals: [], status: READY };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [approval("download")], status: READY }),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), true);
+    assert.deepStrictEqual(asked, ["download"]);
+    assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }, { id: "download", decision: "allow" }]);
+
+    // a denial too, rather than to another approval it replaced
+    const subset = { ...approval("processPlugins"), id: "subset", items: [] };
+    const deniedAsked: string[] = [];
+    const denied: ApproveParams[] = [];
+    const denials = new Approvals({
+      ask: async pending => {
+        deniedAsked.push(pending.id);
+        return "deny";
+      },
+      approve: async params => {
+        denied.push(params);
+        if (denied.length === 1) {
+          throw changedError;
+        }
+        return { configFile: null, approvals: [], status: READY };
+      },
+      pendingApprovals: async () => ({
+        configFile: null,
+        approvals: [subset, approval("processPlugins")],
+        status: READY,
+      }),
+    });
+    assert.strictEqual(await denials.request([approval("processPlugins")], { isExplicit: false }), false);
+    assert.deepStrictEqual(deniedAsked, ["processPlugins"]);
+    assert.deepStrictEqual(denied, [{ id: "processPlugins", decision: "deny" }, {
+      id: "processPlugins",
+      decision: "deny",
+    }]);
+  });
+
   it("doesn't use what the user answers once it's cancelled", async () => {
     let approvals: Approvals;
     const created = createApprovals({
