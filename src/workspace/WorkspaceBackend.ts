@@ -14,7 +14,9 @@ import {
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
 import {
-  DPRINT_DIR_CONFIG_FILE_GLOB,
+  DOT_CONFIG_DIR_NAME,
+  DOT_CONFIG_FILE_NAMES,
+  DPRINT_CONFIG_FILE_NAMES,
   FILE_SCHEME,
   isDprintExtensionId,
   JUPYTER_NOTEBOOK_TYPE,
@@ -37,7 +39,6 @@ import { getNoConfigMessage } from "../noConfigMessage";
 import { hasPluginForFile, type PluginFileInfo } from "../pluginFiles";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { AncestorConfigFileWatchers } from "./AncestorConfigFileWatchers";
 import {
   type ApprovalChoice,
   Approvals,
@@ -47,6 +48,7 @@ import {
   SHOW_DETAILS_TITLE,
   toPlainNotificationText,
 } from "./approvals";
+import { DirWatchers, type WatchedFileChange } from "./DirWatchers";
 import { getConfigFilePatterns } from "./documentPatterns";
 import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./formatResults";
 import { FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
@@ -699,10 +701,25 @@ class WorkspaceState {
   readonly #getServiceForExecutable: (executable: DprintExecutable) => Promise<ServiceResolution>;
   readonly #onActivate: () => void;
   readonly #session: WorkspaceSession;
-  /** Watches the config files in ancestor directories, which the workspace folders in the same directory share. */
-  readonly #ancestorWatchers = new AncestorConfigFileWatchers(dirPath => this.#watchAncestorConfigFileDir(dirPath));
-  /** The watchers of the files the config files were resolved from by their uri. */
-  readonly #fileWatchers = new Map<string, vscode.Disposable>();
+  /**
+   * Watches the config files in ancestor directories of the workspace folders (and their `.config`
+   * directories), which the workspace folders in the same directory share.
+   */
+  readonly #ancestorWatchers = new DirWatchers({
+    pathKind: path => this.#environment.pathKind(path),
+    watchDir,
+    onChange: (filePath, change) => this.#onAncestorConfigFileChanged(filePath, change),
+    isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
+  });
+  /** Watches the files the config files were resolved from (`watchUris`) by their directories. */
+  readonly #fileWatchers = new DirWatchers({
+    pathKind: path => this.#environment.pathKind(path),
+    watchDir,
+    onChange: (filePath, change) => this.#onResolvedFromFileChanged(filePath, change),
+    isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
+  });
+  /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
+  #watchUrisByPath = new Map<string, string>();
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
   readonly #formats = new Set<Promise<unknown>>();
   /** The messages of the plugin errors that were shown, which are only shown once. */
@@ -794,12 +811,7 @@ class WorkspaceState {
   setConfigs(configs: Config[]) {
     this.#configs = configs;
     this.#hasConfigs = true;
-    // the ones of a dprint process are watched once it says they aren't on another machine
-    for (const config of configs) {
-      if (config.isAncestor && config.service == null) {
-        this.#ancestorWatchers.watch(getConfigFileDir(this.#environment, config.configFilePath));
-      }
-    }
+    this.#updateAncestorWatchers();
   }
 
   /** Gets the dprint process of the executable, which is shared with the other config files that use it. */
@@ -1064,73 +1076,70 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    // the ones of a dprint process are watched once it says they aren't on another machine
-    this.#ancestorWatchers.update(
-      this.#configs.flatMap(config =>
-        config.isAncestor && config.service != null && config.info != null
-          ? [{ dirPath: getConfigFileDir(this.#environment, config.configFilePath), info: config.info }]
-          : []
-      ),
-    );
-    const uris = new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []));
-    for (const [uri, watcher] of [...this.#fileWatchers]) {
-      if (!uris.has(uri)) {
-        watcher.dispose();
-        this.#fileWatchers.delete(uri);
-      }
+    this.#updateAncestorWatchers();
+    // dprint leaves out a file whose directory may not be read
+    const watchUrisByPath = new Map<string, string>();
+    const fileNamesByDir = new Map<string, string[]>();
+    for (const uri of new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []))) {
+      const filePath = vscode.Uri.parse(uri).fsPath;
+      watchUrisByPath.set(getWatchedPathKey(filePath), uri);
+      const dirPath = path.dirname(filePath);
+      fileNamesByDir.set(dirPath, [...fileNamesByDir.get(dirPath) ?? [], path.basename(filePath)]);
     }
-    for (const uri of uris) {
-      if (this.#fileWatchers.has(uri)) {
+    this.#watchUrisByPath = watchUrisByPath;
+    this.#fileWatchers.update(fileNamesByDir)
+      .catch(err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err));
+  }
+
+  /** Watches the directories of the config files in ancestor directories of the workspace folders. */
+  #updateAncestorWatchers() {
+    // a state that was stopped disposed its watchers
+    if (this.#disposed) {
+      return;
+    }
+    const fileNamesByDir = new Map<string, readonly string[]>();
+    for (const config of this.#configs) {
+      if (!config.isAncestor) {
         continue;
       }
-      const filePath = vscode.Uri.parse(uri).fsPath;
-      const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(vscode.Uri.file(path.dirname(filePath)), path.basename(filePath)),
-      );
-      const onChange = (type: FileChangeType) => {
-        this.#logger.logDebug("File a configuration file was resolved from changed:", filePath);
-        for (const service of this.#resolvedServices) {
-          service.connection.configFileChanged(uri, type);
-        }
-      };
-      watcher.onDidCreate(() => onChange(FileChangeType.Created));
-      watcher.onDidChange(() => onChange(FileChangeType.Changed));
-      watcher.onDidDelete(() => onChange(FileChangeType.Deleted));
-      this.#fileWatchers.set(uri, watcher);
+      const dirPath = getConfigFileDir(this.#environment, config.configFilePath);
+      // config files in workspace folders are already watched by the extension
+      if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
+        continue;
+      }
+      // the `.config` directory is watched on its own because a watcher of a directory doesn't watch its
+      // subdirectories, and creating or deleting it is a change to the parent directory
+      fileNamesByDir.set(dirPath, [...DPRINT_CONFIG_FILE_NAMES, DOT_CONFIG_DIR_NAME]);
+      fileNamesByDir.set(path.join(dirPath, DOT_CONFIG_DIR_NAME), DOT_CONFIG_FILE_NAMES);
+    }
+    this.#ancestorWatchers.update(fileNamesByDir)
+      .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
+  }
+
+  #onAncestorConfigFileChanged(filePath: string, change: WatchedFileChange) {
+    if (change !== "changed") {
+      this.#logger.logDebug("Ancestor configuration file created or deleted:", filePath);
+      this.#options.onAncestorConfigFileCreatedOrDeleted();
+      return;
+    }
+    if (path.basename(filePath) === DOT_CONFIG_DIR_NAME) {
+      return; // the `.config` directory itself, whose config files are watched on their own
+    }
+    this.#logger.logDebug("Ancestor configuration file changed:", filePath);
+    // dprint doesn't watch the config files, so tell it, which sends dprint/configChanged when
+    // what it formats changed
+    for (const service of this.#resolvedServices) {
+      service.connection.configFileChanged(vscode.Uri.file(filePath).toString(), FileChangeType.Changed);
     }
   }
 
-  /**
-   * Watches the directory of a config file in an ancestor directory of a workspace folder for its changes,
-   * which is undefined when it doesn't need to be.
-   */
-  #watchAncestorConfigFileDir(dirPath: string) {
-    // a state that was stopped disposed its watchers
-    if (this.#disposed) {
-      return undefined;
+  #onResolvedFromFileChanged(filePath: string, change: WatchedFileChange) {
+    this.#logger.logDebug("File a configuration file was resolved from changed:", filePath);
+    // the uri as dprint provided it
+    const uri = this.#watchUrisByPath.get(getWatchedPathKey(filePath)) ?? vscode.Uri.file(filePath).toString();
+    for (const service of this.#resolvedServices) {
+      service.connection.configFileChanged(uri, getFileChangeType(change));
     }
-    // config files in workspace folders are already watched by the extension
-    if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
-      return undefined;
-    }
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(dirPath), DPRINT_DIR_CONFIG_FILE_GLOB),
-    );
-    const onCreateOrDelete = () => {
-      this.#logger.logDebug("Ancestor configuration file created or deleted in:", dirPath);
-      this.#options.onAncestorConfigFileCreatedOrDeleted();
-    };
-    watcher.onDidCreate(onCreateOrDelete);
-    watcher.onDidChange(uri => {
-      this.#logger.logDebug("Ancestor configuration file changed in:", dirPath);
-      // dprint doesn't watch the config files, so tell it, which sends dprint/configChanged when
-      // what it formats changed
-      for (const service of this.#resolvedServices) {
-        service.connection.configFileChanged(uri.toString(), FileChangeType.Changed);
-      }
-    });
-    watcher.onDidDelete(onCreateOrDelete);
-    return watcher;
   }
 
   async #refreshConfig(config: Config) {
@@ -1567,10 +1576,7 @@ class WorkspaceState {
     this.#disposed = true;
     this.#registrationDisposables.dispose();
     this.#disposables.dispose();
-    for (const watcher of this.#fileWatchers.values()) {
-      watcher.dispose();
-    }
-    this.#fileWatchers.clear();
+    this.#fileWatchers.dispose();
     this.#ancestorWatchers.dispose();
   }
 
@@ -1957,6 +1963,26 @@ function getFileChangeType(type: ConfigFileChangeType) {
     case "deleted":
       return FileChangeType.Deleted;
   }
+}
+
+/** Whether file names are compared without their case, which is the default of Windows and macOS. */
+const IS_CASE_INSENSITIVE_FILE_SYSTEM = process.platform === "win32" || process.platform === "darwin";
+
+/**
+ * Watches the files in the directory without its subdirectories, which a pattern without a separator
+ * does. It watches the directory rather than each file, so a file that's a symlink isn't followed.
+ */
+function watchDir(dirPath: string, onChange: (filePath: string, change: WatchedFileChange) => void) {
+  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dirPath), "*"));
+  watcher.onDidCreate(uri => onChange(uri.fsPath, "created"));
+  watcher.onDidChange(uri => onChange(uri.fsPath, "changed"));
+  watcher.onDidDelete(uri => onChange(uri.fsPath, "deleted"));
+  return watcher;
+}
+
+/** Gets what identifies a watched file's path, which is without its case when the file system is. */
+function getWatchedPathKey(filePath: string) {
+  return IS_CASE_INSENSITIVE_FILE_SYSTEM ? filePath.toLowerCase() : filePath;
 }
 
 /** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */
