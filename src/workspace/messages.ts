@@ -269,7 +269,13 @@ export interface ConfigApprovals {
 }
 
 export interface ApproveResult extends ConfigApprovals {
-  /** What to tell the user about the decision (ex. it couldn't be stored). */
+  /**
+   * What to tell the user about the decision, or about one made before for the same configuration file (ex. an `always` decision
+   * couldn't be stored, or the approvals file is from a newer version of dprint that this one can't write to, so it's only used
+   * for the session). The server keeps such a decision for the session like one that isn't `always`. It also says when the file
+   * of the session couldn't be written or deleted, so what the user decided for the session before may come back if the server
+   * is started again.
+   */
   notice?: Notice;
 }
 
