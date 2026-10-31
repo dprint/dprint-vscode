@@ -193,6 +193,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         retiredState?.retire().then(() => this.#disposeUnusedServices());
         onSupported();
       },
+      onConfigFileOnAnotherMachine: uri => this.#dropConfigFileDiagnostics(uri),
     });
     this.#pendingState = state;
     try {
@@ -517,7 +518,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         const result = await connection.approve(params);
         // ex. the decision couldn't be stored
         if (result.notice != null) {
-          showSeverityMessage(result.notice, uri => this.#isConfigFileOnAnotherMachine(uri));
+          showSeverityMessage(result.notice, uri => this.#queryConfigFileOnAnotherMachine(uri));
         }
         return result;
       },
@@ -527,7 +528,7 @@ export class WorkspaceBackend implements vscode.Disposable {
       // the errors of a config file so the next format doesn't show it again
       showNotUsed: (notFormatted, configFile) => {
         this.#session.shownConfigErrors.shouldShow(configFile, notFormatted.message);
-        showSeverityMessage(notFormatted, uri => this.#isConfigFileOnAnotherMachine(uri));
+        showSeverityMessage(notFormatted, uri => this.#queryConfigFileOnAnotherMachine(uri));
       },
       showDeniedSince: approval => {
         vscode.window.showWarningMessage(
@@ -620,6 +621,25 @@ export class WorkspaceBackend implements vscode.Disposable {
   /** Gets what dprint's latest result for the config file says (see `WorkspaceState.isConfigFileOnAnotherMachine`). */
   #isConfigFileOnAnotherMachine(uri: string) {
     return (this.#state ?? this.#pendingState)?.isConfigFileOnAnotherMachine(uri);
+  }
+
+  /** Gets what dprint says about the config file now (see `WorkspaceState.queryConfigFileOnAnotherMachine`). */
+  #queryConfigFileOnAnotherMachine(uri: string) {
+    return (this.#state ?? this.#pendingState)?.queryConfigFileOnAnotherMachine(uri) ?? Promise.resolve(undefined);
+  }
+
+  /** Drops the problems of a config file that's on another machine now, which open it when they're clicked. */
+  #dropConfigFileDiagnostics(uri: string) {
+    const key = getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM);
+    for (const uris of this.#diagnosticUris.values()) {
+      for (const diagnosticUri of [...uris]) {
+        const fileUri = vscode.Uri.parse(diagnosticUri);
+        if (getWatchedPathKey(fileUri.fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM) === key) {
+          uris.delete(diagnosticUri);
+          this.#diagnostics.delete(fileUri);
+        }
+      }
+    }
   }
 
   /** Shows the problems with a config file, which replace the ones shown before for it. */
@@ -724,6 +744,8 @@ interface WorkspaceStateOptions {
   getService(executable: DprintExecutable): Promise<ServiceResolution>;
   /** Called once the state is ready, right before it registers the formatter. */
   onActivate(): void;
+  /** Called when a config file is reported to be on another machine, whose uri isn't held anymore (ex. its problems). */
+  onConfigFileOnAnotherMachine(uri: string): void;
 }
 
 /** What's found for one initialization of the workspace. */
@@ -740,6 +762,7 @@ class WorkspaceState {
   readonly #refreshQueue: CoalescingQueue;
   readonly #getServiceForExecutable: (executable: DprintExecutable) => Promise<ServiceResolution>;
   readonly #onActivate: () => void;
+  readonly #onConfigFileOnAnotherMachine: (uri: string) => void;
   readonly #session: WorkspaceSession;
   /**
    * Watches the config files in ancestor directories of the workspace folders (and their `.config`
@@ -790,6 +813,7 @@ class WorkspaceState {
     this.#session = stateOptions.session;
     this.#getServiceForExecutable = stateOptions.getService;
     this.#onActivate = stateOptions.onActivate;
+    this.#onConfigFileOnAnotherMachine = stateOptions.onConfigFileOnAnotherMachine;
     this.#disposables = new ActivatedDisposables(options.logger);
     this.#registrationDisposables = new ActivatedDisposables(options.logger);
     // coalesced because saving a config file often causes multiple change events
@@ -858,17 +882,44 @@ class WorkspaceState {
    * undefined when there's no result for it.
    */
   isConfigFileOnAnotherMachine(uri: string): boolean | undefined {
-    const key = getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM);
-    for (const config of this.#configs) {
-      const configFile = config.info?.configFile;
-      if (
-        configFile != null
-        && getWatchedPathKey(vscode.Uri.parse(configFile.uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM) === key
-      ) {
-        return configFile.onAnotherMachine === true;
-      }
+    const configFile = this.#findConfigOfUri(uri)?.info?.configFile;
+    return configFile == null ? undefined : configFile.onAnotherMachine === true;
+  }
+
+  /**
+   * Gets dprint/configInfo for the config file again and whether it says it's on another machine, which
+   * is undefined when there's no result for it (ex. it isn't one the extension knows). That's done before
+   * opening it from an older result, because it may lead to another machine since.
+   */
+  async queryConfigFileOnAnotherMachine(uri: string): Promise<boolean | undefined> {
+    const config = this.#findConfigOfUri(uri);
+    const configFile = config?.info?.configFile;
+    if (config?.service == null || configFile == null) {
+      return undefined;
     }
-    return undefined;
+    try {
+      const info = await config.service.connection.configInfo({
+        configFile: { uri: configFile.uri, dirUri: configFile.dirUri },
+      });
+      config.info = info;
+      if (info.configFile?.onAnotherMachine) {
+        this.#onConfigFileOnAnotherMachine(info.configFile.uri);
+      }
+      return info.configFile == null ? undefined : info.configFile.onAnotherMachine === true;
+    } catch (err) {
+      this.#logger.logError("Error getting the configuration file again:", err);
+      return undefined;
+    }
+  }
+
+  /** Gets the config whose latest result has the config file of the uri, compared as file paths. */
+  #findConfigOfUri(uri: string) {
+    const key = getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM);
+    return this.#configs.find(config => {
+      const configFile = config.info?.configFile;
+      return configFile != null
+        && getWatchedPathKey(vscode.Uri.parse(configFile.uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM) === key;
+    });
   }
 
   setConfigs(configs: Config[]) {
@@ -1123,7 +1174,7 @@ class WorkspaceState {
         toPlainNotificationText(`dprint failed to forget the approval decisions: ${failure.reason}`),
       );
     } else if (notice != null) {
-      showSeverityMessage(notice, uri => this.isConfigFileOnAnotherMachine(uri));
+      showSeverityMessage(notice, uri => this.queryConfigFileOnAnotherMachine(uri));
     } else {
       vscode.window.showInformationMessage("dprint will ask to approve what the configuration files need again.");
     }
@@ -1214,6 +1265,9 @@ class WorkspaceState {
       config.info = await config.service.connection.configInfo({
         configFile: { uri: vscode.Uri.file(config.configFilePath).toString(), dirUri: config.dirUri.toString() },
       });
+      if (config.info.configFile?.onAnotherMachine) {
+        this.#onConfigFileOnAnotherMachine(config.info.configFile.uri);
+      }
       const notFormatted = getNotFormatted(config.info.status);
       const approvals = notFormatted?.approvals ?? [];
       if (approvals.length > 0) {
@@ -1282,7 +1336,7 @@ class WorkspaceState {
           if (formatted.notice != null) {
             if (options.saysWhyNotFormatted) {
               // a command doesn't say anything about a document that was formatted itself
-              showSeverityMessage(formatted.notice, uri => this.isConfigFileOnAnotherMachine(uri));
+              showSeverityMessage(formatted.notice, uri => this.queryConfigFileOnAnotherMachine(uri));
             } else {
               this.#onMessage(formatted.notice, formatted.configFile, {});
             }
@@ -1429,13 +1483,13 @@ class WorkspaceState {
     switch (message.show) {
       case "always":
         this.#logger.logError(message.message);
-        showSeverityMessage(message, uri => this.isConfigFileOnAnotherMachine(uri));
+        showSeverityMessage(message, uri => this.queryConfigFileOnAnotherMachine(uri));
         break;
       case "oncePerConfigFile": {
         this.#logger.logError(message.message);
         const identifier = configFile == null ? undefined : { uri: configFile.uri, dirUri: configFile.dirUri };
         if (this.#session.shownConfigErrors.shouldShow(identifier, message.message)) {
-          showSeverityMessage(message, uri => this.isConfigFileOnAnotherMachine(uri));
+          showSeverityMessage(message, uri => this.queryConfigFileOnAnotherMachine(uri));
         }
         break;
       }
@@ -2069,7 +2123,10 @@ function toPlainQuickPickText(text: string) {
 }
 
 /** Shows the message to the user like its severity says, which is a warning for one that isn't known. */
-function showSeverityMessage(message: Notice, isConfigFileOnAnotherMachine: (uri: string) => boolean | undefined) {
+function showSeverityMessage(
+  message: Notice,
+  queryConfigFileOnAnotherMachine: (uri: string) => Promise<boolean | undefined>,
+) {
   // the actions that aren't known are left out, and so is opening anything but a file (ex. a website)
   const actions = (message.actions ?? []).filter(
     (action): action is { kind: "openUri"; label: string; uri: string } =>
@@ -2084,23 +2141,26 @@ function showSeverityMessage(message: Notice, isConfigFileOnAnotherMachine: (uri
   show(toPlainNotificationText(message.message), ...titles).then(async selection => {
     const action = actions.find(action => action.label === selection);
     if (action != null) {
-      await openFileWithoutSymlinks(vscode.Uri.parse(action.uri), isConfigFileOnAnotherMachine);
+      await openFileWithoutSymlinks(vscode.Uri.parse(action.uri), queryConfigFileOnAnotherMachine);
     }
   });
 }
 
 /**
  * Opens a file that a message offered to open, which may have been shown a while ago (ex. from the
- * notification center), so it's only opened when that doesn't follow a symlink, or when dprint's latest
- * result for it says it isn't on another machine (see `canOpenConfigFile`), because a symlink may lead to
- * another machine since (ex. a `git pull` replaced the config file with a symlink to a share).
+ * notification center), so it's only opened when that doesn't follow a symlink, or when dprint says now
+ * that it isn't on another machine (see `canOpenConfigFile`), because a symlink may lead to another machine
+ * since (ex. a `git pull` replaced the config file with a symlink to a share).
  */
 async function openFileWithoutSymlinks(
   uri: vscode.Uri,
-  isConfigFileOnAnotherMachine: (uri: string) => boolean | undefined,
+  queryConfigFileOnAnotherMachine: (uri: string) => Promise<boolean | undefined>,
 ) {
   const access = await getFileAccess(uri.fsPath, { lstat: lstatPath, isWorkspaceFolderOrAncestor });
-  if (canOpenConfigFile(access, isConfigFileOnAnotherMachine(uri.toString()))) {
+  const isOnAnotherMachine = access === "exists" || access === "gone"
+    ? undefined
+    : await queryConfigFileOnAnotherMachine(uri.toString());
+  if (canOpenConfigFile(access, isOnAnotherMachine)) {
     await vscode.commands.executeCommand("vscode.open", uri);
   } else if (access === "gone") {
     vscode.window.showInformationMessage(
