@@ -190,7 +190,12 @@ export type FormatFailedReason = "formatError" | "pluginError" | (string & {});
 
 /** Something the user needs to approve before dprint uses a config file. */
 export interface PendingApproval {
-  /** Identifies exactly what's approved, which changes when it does. */
+  /**
+   * Identifies exactly what's approved, which changes when what's shown does (ex. the configuration of a process plugin, or
+   * once its process plugins are set up) and is the same in another server of the same version of dprint, but may change
+   * between versions, so the same approval is recognized by what it approves instead (its config file, kind, and the
+   * specifiers of its items).
+   */
   id: string;
   kind: ApprovalKind;
   /** A short description of what's approved. */
@@ -282,7 +287,7 @@ export interface ApproveResult extends ConfigApprovals {
   /**
    * What to tell the user about the decision, or about one made before for the same configuration file (ex. an `always` decision
    * couldn't be stored, or the approvals file is from a newer version of dprint that this one can't write to, so it's only used
-   * for the session). The server keeps such a decision for the session like one that isn't `always` (see "Lifecycle"). It also says
+   * for the session). The server keeps such a decision for the session like one that isn't `always` (see "Approving"). It also says
    * when the file of the session couldn't be written or deleted, so what the user decided for the session before may come back if the
    * server is started again, and when the session's decisions aren't kept yet because another server that's running uses the session
    * id or its lock can't be taken (see `sessionId`).
@@ -384,10 +389,10 @@ export interface ConfigFileInfo {
   inWorkspace: boolean;
   /**
    * Whether it was found on another machine and reading it isn't allowed yet (see "Approving"), which is left out otherwise. Don't
-   * open, read, or watch it (or its directory) then (ex. with a button in the prompt or a command that opens the configuration file
-   * of a document), because that reads it from the other machine, which the approval is for, and a watcher follows its symlinks like
-   * a read does. The server sends `dprint/configChanged` once it's allowed, which is when to start watching it, and stop watching it
-   * when a later result has it again.
+   * open or read it then (ex. with a button in the prompt or a command that opens the configuration file of a document), because
+   * that reads it from the other machine, which the approval is for. Watch it only like any file, with a watcher of its directory that
+   * doesn't follow symlinks, which doesn't watch the directory when it's a symlink itself (ex. a `.config` directory that's a symlink
+   * to a share, see "Lifecycle"). The server sends `dprint/configChanged` once it's allowed.
    */
   onAnotherMachine?: boolean;
 }
