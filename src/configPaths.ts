@@ -21,7 +21,9 @@ export async function findWorkspaceFolderAncestorConfigFile(
   if (configFilePaths.some(configFilePath => path.relative(folderPath, getConfigFileDir(env, configFilePath)) === "")) {
     return undefined;
   }
-  return findConfigFileInAncestorDirectories(env, path.dirname(folderPath), options);
+  // the folder may be the root of a share (ex. `/net/host`), above which isn't looked in
+  const parentPath = getSearchParent(env, folderPath);
+  return parentPath == null ? undefined : findConfigFileInAncestorDirectories(env, parentPath, options);
 }
 
 /** How the config file of a directory is found. */
@@ -189,6 +191,43 @@ export function getConfigFileDir(env: Environment, configFilePath: string) {
 export function isDotConfigDir(env: Environment, dirPath: string) {
   const parentPath = path.dirname(dirPath);
   return path.basename(dirPath) === DOT_CONFIG_DIR_NAME && parentPath !== dirPath && !isHomeDir(env, parentPath);
+}
+
+/**
+ * Gets the names of the files to watch in each directory for the config files in ancestor directories
+ * of the workspace folders: the config file names in the directory a config file applies to, and the
+ * ones of its `.config` directory, which is watched on its own because a watcher of a directory
+ * doesn't watch its subdirectories. The home directory's `.config` isn't one (see `isDotConfigDir`).
+ */
+export function getAncestorConfigFileNamesByDir(env: Environment, configFilePaths: Iterable<string>) {
+  const fileNamesByDir = new Map<string, readonly string[]>();
+  for (const configFilePath of configFilePaths) {
+    const dirPath = getConfigFileDir(env, configFilePath);
+    const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
+    if (isDotConfigDir(env, dotConfigDirPath)) {
+      // creating or deleting the `.config` directory is a change of the directory
+      fileNamesByDir.set(dirPath, [...DPRINT_CONFIG_FILE_NAMES, DOT_CONFIG_DIR_NAME]);
+      fileNamesByDir.set(dotConfigDirPath, DOT_CONFIG_FILE_NAMES);
+    } else {
+      fileNamesByDir.set(dirPath, DPRINT_CONFIG_FILE_NAMES);
+    }
+  }
+  return fileNamesByDir;
+}
+
+/**
+ * Gets what to do for a change of a file that a config file in an ancestor directory is watched for:
+ * find the config files again when one was created or deleted (including a `.config` directory),
+ * tell dprint when one changed, and nothing when a `.config` directory itself changed.
+ */
+export function getAncestorConfigFileChangeAction(
+  filePath: string,
+  change: "created" | "changed" | "deleted",
+): "findAgain" | "configFileChanged" | undefined {
+  if (change !== "changed") {
+    return "findAgain";
+  }
+  return path.basename(filePath) === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
 }
 
 /**

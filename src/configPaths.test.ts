@@ -8,6 +8,8 @@ import {
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findWorkspaceFolderAncestorConfigFile,
+  getAncestorConfigFileChangeAction,
+  getAncestorConfigFileNamesByDir,
   getConfigFileDir,
   isPathWithin,
 } from "./configPaths";
@@ -19,6 +21,25 @@ const rootDir = path.parse(path.resolve("/")).root;
 
 describe("findWorkspaceFolderAncestorConfigFile", () => {
   const folderPath = path.resolve("/project/packages/app");
+
+  it("doesn't look above a folder that's the root of a share of an automounter", async () => {
+    // `/net/dprint.json` would be looked up as a host named `dprint.json`
+    const env = new TestEnvironment();
+    const checkedPaths: string[] = [];
+    const countingEnv = {
+      pathKind(filePath: string) {
+        checkedPaths.push(filePath);
+        return env.pathKind(filePath);
+      },
+      homeDir: () => env.homeDir(),
+      platform: () => env.platform(),
+    } as unknown as Environment;
+    env.writeFile(path.resolve("/net/dprint.json"), "{}");
+    for (const folderPath of ["/net/host", "/System/Volumes/Data/net/host"]) {
+      assert.strictEqual(await findWorkspaceFolderAncestorConfigFile(countingEnv, folderPath, []), undefined);
+    }
+    assert.deepStrictEqual(checkedPaths, []);
+  });
 
   it("finds the config file of an ancestor directory when opening a descendant directory", async () => {
     const env = new TestEnvironment();
@@ -233,6 +254,42 @@ describe("findConfigFileInAncestorDirectories", () => {
       await findConfigFileInAncestorDirectories(env, path.resolve("/other/src"), options),
       rootConfigPath,
     );
+  });
+});
+
+describe("getAncestorConfigFileNamesByDir", () => {
+  it("has the config file names of each directory and its .config directory", () => {
+    const env = new TestEnvironment({ homeDir });
+    const projectDir = path.resolve("/project");
+    assert.deepStrictEqual(
+      getAncestorConfigFileNamesByDir(env, [path.join(projectDir, ".config", "dprint.json")]),
+      new Map([
+        [projectDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc", ".config"]],
+        [path.join(projectDir, ".config"), ["dprint.json", "dprint.jsonc"]],
+      ]),
+    );
+  });
+
+  it("doesn't have the home directory's .config directory, which isn't one", () => {
+    // ex. it's where the user's configuration of other programs goes
+    const env = new TestEnvironment({ homeDir });
+    assert.deepStrictEqual(
+      getAncestorConfigFileNamesByDir(env, [path.join(homeDir, "dprint.json")]),
+      new Map([[homeDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"]]]),
+    );
+  });
+});
+
+describe("getAncestorConfigFileChangeAction", () => {
+  it("finds the config files again when one was created or deleted, and tells dprint when one changed", () => {
+    const configPath = path.resolve("/project/dprint.json");
+    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "created"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "deleted"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "changed"), "configFileChanged");
+    // a `.config` directory that was created or deleted, and one that only changed
+    const dotConfigPath = path.resolve("/project/.config");
+    assert.strictEqual(getAncestorConfigFileChangeAction(dotConfigPath, "created"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(dotConfigPath, "changed"), undefined);
   });
 });
 

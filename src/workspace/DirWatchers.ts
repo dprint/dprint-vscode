@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { PathKind } from "../environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -9,12 +10,18 @@ export interface DirWatchersOptions {
   /** Gets what's at the path without following a symlink at the end of it. */
   pathKind(path: string): Promise<PathKind | undefined>;
   /**
-   * Watches the files in the directory without its subdirectories (ex. a vscode watcher of `*` in it),
-   * which calls back with the path of a file that changed.
+   * Watches the files with the names in the directory without its subdirectories (ex. a vscode watcher
+   * of a pattern without a separator), which calls back with the path of a file that changed.
    */
-  watchDir(dirPath: string, onChange: (filePath: string, change: WatchedFileChange) => void): { dispose(): void };
+  watchDir(
+    dirPath: string,
+    fileNames: readonly string[],
+    onChange: (filePath: string, change: WatchedFileChange) => void,
+  ): { dispose(): void };
   /** Called when one of the files that a directory is watched for changed. */
   onChange(filePath: string, change: WatchedFileChange): void;
+  /** Called when checking a directory again after it was created or deleted failed. */
+  onError(err: unknown): void;
   /** Whether file names are compared without their case (ex. on Windows and macOS). */
   isCaseInsensitive: boolean;
 }
@@ -25,12 +32,16 @@ export interface DirWatchersOptions {
  * watcher of it, ex. vscode's, watches what it points to). Following one reaches what it points to,
  * which may be on another machine that the user didn't allow reading (ex. a config file that a
  * `git pull` replaced with a symlink to a share).
+ *
+ * A directory is checked again on each update, and when its parent directory (which is watched for
+ * its name) says it was created, deleted, or replaced, so one that's replaced with a symlink stops
+ * being watched and one that's created again is watched again with a new watcher.
  */
 export class DirWatchers {
   readonly #options: DirWatchersOptions;
-  /** The watchers by the path of their directory, with the names of the files they're for. */
-  readonly #watchers = new Map<string, { fileNames: Set<string>; dispose(): void }>();
-  #update = Promise.resolve();
+  /** The directories that are watched by their path. */
+  readonly #entries = new Map<string, DirEntry>();
+  #queue = Promise.resolve();
   #disposed = false;
 
   constructor(options: DirWatchersOptions) {
@@ -40,51 +51,103 @@ export class DirWatchers {
   /**
    * Watches the directories for the names of the files in them and stops watching the others. A
    * directory that doesn't exist or is a symlink isn't watched (ex. a `.config` directory that's a
-   * symlink), which is looked at again on the next update.
+   * symlink) until it's a directory.
    */
   update(fileNamesByDir: ReadonlyMap<string, readonly string[]>): Promise<void> {
-    this.#update = this.#update.then(() => this.#apply(fileNamesByDir));
-    return this.#update;
+    return this.#enqueue(() => this.#apply(fileNamesByDir));
   }
 
   dispose() {
     this.#disposed = true;
-    for (const watcher of this.#watchers.values()) {
-      watcher.dispose();
+    for (const entry of this.#entries.values()) {
+      disposeEntry(entry);
     }
-    this.#watchers.clear();
+    this.#entries.clear();
   }
 
   async #apply(fileNamesByDir: ReadonlyMap<string, readonly string[]>) {
-    for (const [dirPath, watcher] of [...this.#watchers]) {
+    for (const [dirPath, entry] of [...this.#entries]) {
       const fileNames = fileNamesByDir.get(dirPath);
-      if (fileNames == null || !this.#isSameNames(watcher.fileNames, fileNames)) {
-        watcher.dispose();
-        this.#watchers.delete(dirPath);
+      if (fileNames == null || !this.#isSameNames(entry.fileNames, fileNames)) {
+        disposeEntry(entry);
+        this.#entries.delete(dirPath);
       }
     }
     for (const [dirPath, fileNames] of fileNamesByDir) {
       if (this.#disposed) {
         return;
       }
-      if (this.#watchers.has(dirPath)) {
-        continue;
+      let entry = this.#entries.get(dirPath);
+      if (entry == null) {
+        entry = { fileNames: new Set(fileNames.map(name => this.#normalizeName(name))), originalNames: fileNames };
+        this.#entries.set(dirPath, entry);
       }
-      const kind = await this.#options.pathKind(dirPath).catch(() => undefined);
-      if (this.#disposed) {
-        return;
+      if (entry.parentWatcher == null) {
+        await this.#watchParent(dirPath, entry);
       }
-      if (kind !== "dir") {
-        continue;
+      await this.#check(dirPath, entry, { isRecreated: false });
+    }
+  }
+
+  /** Watches the parent directory for the directory's name, unless the parent is a symlink too. */
+  async #watchParent(dirPath: string, entry: DirEntry) {
+    const parentPath = path.dirname(dirPath);
+    if (parentPath === dirPath || await this.#pathKind(parentPath) !== "dir" || this.#isStale(dirPath, entry)) {
+      return;
+    }
+    const name = path.basename(dirPath);
+    entry.parentWatcher = this.#options.watchDir(parentPath, [name], filePath => {
+      if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(name)) {
+        this.#enqueue(() => this.#check(dirPath, entry, { isRecreated: true })).catch(err =>
+          this.#options.onError(err)
+        );
       }
-      const names = new Set(fileNames.map(name => this.#normalizeName(name)));
-      const watcher = this.#options.watchDir(dirPath, (filePath, change) => {
-        if (names.has(this.#normalizeName(getFileName(filePath)))) {
+    });
+  }
+
+  /**
+   * Watches the directory when it's a directory and stops watching it otherwise. One that was
+   * created or replaced is watched with a new watcher, because the old one may watch what a
+   * symlink that replaced it points to.
+   */
+  async #check(dirPath: string, entry: DirEntry, options: { isRecreated: boolean }) {
+    if (this.#isStale(dirPath, entry)) {
+      return;
+    }
+    if (options.isRecreated) {
+      entry.dirWatcher?.dispose();
+      entry.dirWatcher = undefined;
+    }
+    const kind = await this.#pathKind(dirPath);
+    if (this.#isStale(dirPath, entry)) {
+      return;
+    }
+    if (kind !== "dir") {
+      entry.dirWatcher?.dispose();
+      entry.dirWatcher = undefined;
+    } else if (entry.dirWatcher == null) {
+      entry.dirWatcher = this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
+        if (entry.fileNames.has(this.#normalizeName(getFileName(filePath)))) {
           this.#options.onChange(filePath, change);
         }
       });
-      this.#watchers.set(dirPath, { fileNames: names, dispose: () => watcher.dispose() });
     }
+  }
+
+  /** Runs the task after the ones before it, whether or not they failed. */
+  #enqueue(task: () => Promise<void>) {
+    const run = this.#queue.then(task);
+    this.#queue = run.catch(() => {/* the caller handles it */});
+    return run;
+  }
+
+  #pathKind(filePath: string) {
+    return this.#options.pathKind(filePath).catch(() => undefined);
+  }
+
+  /** Whether the entry isn't used anymore (ex. it was disposed while its directory was checked). */
+  #isStale(dirPath: string, entry: DirEntry) {
+    return this.#disposed || this.#entries.get(dirPath) !== entry;
   }
 
   #isSameNames(names: Set<string>, fileNames: readonly string[]) {
@@ -95,6 +158,39 @@ export class DirWatchers {
   #normalizeName(name: string) {
     return this.#options.isCaseInsensitive ? name.toLowerCase() : name;
   }
+}
+
+/**
+ * Gets the names of the files by their directories (ex. for the files the config files were resolved
+ * from, which are watched by their directories).
+ */
+export function getFileNamesByDir(filePaths: Iterable<string>) {
+  const fileNamesByDir = new Map<string, string[]>();
+  for (const filePath of filePaths) {
+    const dirPath = path.dirname(filePath);
+    fileNamesByDir.set(dirPath, [...fileNamesByDir.get(dirPath) ?? [], path.basename(filePath)]);
+  }
+  return fileNamesByDir;
+}
+
+/** Gets what identifies a watched file's path, which is without its case when the file system is. */
+export function getWatchedPathKey(filePath: string, isCaseInsensitive: boolean) {
+  return isCaseInsensitive ? filePath.toLowerCase() : filePath;
+}
+
+interface DirEntry {
+  /** The names of the files it's watched for, without their case when the file system is. */
+  fileNames: Set<string>;
+  originalNames: readonly string[];
+  /** Watches the parent directory for the directory being created, deleted, or replaced. */
+  parentWatcher?: { dispose(): void };
+  /** Watches the directory, which is undefined while it isn't a directory. */
+  dirWatcher?: { dispose(): void };
+}
+
+function disposeEntry(entry: DirEntry) {
+  entry.parentWatcher?.dispose();
+  entry.dirWatcher?.dispose();
 }
 
 /** Gets the name of the file at the path, which may use either separator. */
