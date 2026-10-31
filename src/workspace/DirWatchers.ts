@@ -122,8 +122,14 @@ export class DirWatchers {
    */
   async #check(dirPath: string, entry: DirEntry, statCache: StatCache, isParentReport = false) {
     // its parent, or the nearest ancestor that may be watched when that isn't there (ex. a package directory
-    // in a `node_modules` that doesn't exist yet), is watched for the name of the next directory toward it
-    const ancestor = await this.#findWatchableAncestor(dirPath, statCache);
+    // in a `node_modules` that doesn't exist yet), is watched for the name of the next directory toward it,
+    // apart from a workspace folder or one of its ancestors, which isn't replaced while it's open, and one
+    // whose parent is watched for its name already (ex. a `.config` directory), which that watcher reports
+    const parentEntry = this.#entries.get(path.dirname(dirPath));
+    const isReportedByParent = parentEntry?.names.has(this.#normalizeName(path.basename(dirPath))) ?? false;
+    const ancestor = isReportedByParent || this.#options.isWorkspaceFolderOrAncestor(dirPath)
+      ? undefined
+      : await this.#findWatchableAncestor(dirPath, statCache);
     if (this.#isStale(dirPath, entry)) {
       return;
     }
@@ -153,9 +159,8 @@ export class DirWatchers {
     const hasCreatedOrDeleted = await this.#reportFiles(dirPath, entry);
     if (hasCreatedOrDeleted && entry.dirWatcher === previous && entry.dirWatcher != null) {
       // ex. it was deleted and created again with the same identity, which vscode may not watch yet
-      const identity = entry.dirWatcher.identity;
       entry.dirWatcher.dispose();
-      entry.dirWatcher = swapWatcher(undefined, identity, () => this.#watchDir(dirPath, entry));
+      entry.dirWatcher = startWatcher(entry.dirWatcher.identity, () => this.#watchDir(dirPath, entry));
     }
   }
 
@@ -166,7 +171,7 @@ export class DirWatchers {
       if (name == null) {
         return;
       }
-      this.#options.onChange(filePath, change);
+      this.#reportChange(dirPath, name, filePath, change);
       // so a later report of the directory by its parent doesn't report it again (ex. on each save on Windows),
       // though one that's handled before this event reports it twice, which dprint handles like one
       this.#enqueue(async () => {
@@ -189,6 +194,21 @@ export class DirWatchers {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Reports a change of a file that a directory is watched for, which checks the entry of a directory with
+   * that name again too (ex. a `.config` directory that was created), which its parent's watcher reports.
+   */
+  #reportChange(dirPath: string, name: string, filePath: string, change: WatchedFileChange) {
+    this.#options.onChange(filePath, change);
+    const childPath = [...this.#entries.keys()].find(key =>
+      path.dirname(key) === dirPath && this.#normalizeName(path.basename(key)) === this.#normalizeName(name)
+    );
+    const child = childPath == null ? undefined : this.#entries.get(childPath);
+    if (childPath != null && child != null) {
+      this.#enqueue(() => this.#check(childPath, child, new Map(), true)).catch(err => this.#options.onError(err));
+    }
   }
 
   /**
@@ -223,7 +243,7 @@ export class DirWatchers {
       if (version !== previousVersion) {
         hasCreatedOrDeleted ||= version == null || previousVersion == null;
         const change = version == null ? "deleted" : previousVersion == null ? "created" : "changed";
-        this.#options.onChange(path.join(dirPath, name), change);
+        this.#reportChange(dirPath, name, path.join(dirPath, name), change);
       }
     }
     entry.fileVersions = versions;
@@ -409,9 +429,11 @@ function swapWatcher(
     return current;
   }
   current?.dispose();
-  if (identity == null) {
-    return undefined;
-  }
+  return identity == null ? undefined : startWatcher(identity, watch);
+}
+
+/** Starts a watcher of what has the identity. */
+function startWatcher(identity: string, watch: () => { dispose(): void }): IdentifiedWatcher {
   const watcher = watch();
   return { identity, dispose: () => watcher.dispose() };
 }

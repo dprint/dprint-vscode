@@ -79,17 +79,31 @@ describe("DirWatchers", () => {
     assert.deepStrictEqual(watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p"), ["/p/folder"]);
   });
 
-  it("watches a workspace folder again that's replaced with a symlink", async () => {
-    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/folder": "dir" };
-    const { watchers, watched, disposed, emit } = createWatchers(kinds, { workspaceFolders: ["/p/folder"] });
-    await watchers.update(new Map([["/p/folder", ["base.json"]]]));
-    kinds["/p/folder"] = "symlink";
-    emit("/p", "/p/folder", "changed");
+  it("doesn't watch the parent of a workspace folder or one of its ancestors", async () => {
+    // it isn't replaced while it's open (ex. watching `/` for `Users` would get every event of the system on macOS)
+    const { watchers, watched } = createWatchers({ "/p": "dir", "/p/folder": "dir" }, {
+      workspaceFolders: ["/p/folder"],
+    });
+    await watchers.update(new Map([["/p", ["dprint.json"]], ["/p/folder", ["base.json"]]]));
+    assert.deepStrictEqual(watched, [["/p", ["dprint.json"]], ["/p/folder", ["base.json"]]]);
+  });
+
+  it("checks a directory again when its parent's watcher reports it, which doesn't get its own parent watcher", async () => {
+    // ex. a `.config` directory, whose parent is watched for its config files and `.config`
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/a": "dir" };
+    const { watchers, watched, changes, emit } = createWatchers(kinds);
+    await watchers.update(new Map([["/p/a", ["dprint.json", ".config"]], ["/p/a/.config", ["dprint.json"]]]));
+    // only the parent of `/p/a`, for its name
+    assert.deepStrictEqual(watched, [["/p", ["a"]], ["/p/a", ["dprint.json", ".config"]]]);
+
+    kinds["/p/a/.config"] = "dir";
+    kinds["/p/a/.config/dprint.json"] = "file";
+    emit("/p/a", "/p/a/.config", "created");
     await nextTicks();
-    assert.deepStrictEqual(disposed, ["/p/folder"]);
-    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p"), [
-      "/p/folder",
-      "/p/folder",
+    assert.deepStrictEqual(watched.slice(2), [["/p/a/.config", ["dprint.json"]]]);
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/a/.config", "created"],
+      ["/p/a/.config/dprint.json", "created"],
     ]);
   });
 
