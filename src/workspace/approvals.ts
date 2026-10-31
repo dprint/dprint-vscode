@@ -243,7 +243,13 @@ export class Approvals {
           const denial = replacement?.decisions.find(option => option.decision === decision);
           if (replacement != null && denial != null) {
             await this.#options.approve({ id: replacement.id, decision })
-              .then(() => this.#rememberSessionDecision(replacement, decision))
+              .then(result => {
+                this.#rememberSessionDecision(replacement, decision);
+                // an "Always" denial that couldn't be stored is still used for the session
+                if (result.unstoredDecisionGroups?.includes(getDecisionGroup(replacement))) {
+                  this.#setSessionDecision(replacement, decision);
+                }
+              })
               .catch(() => {/* it's asked about later */});
           }
           return false;
@@ -269,9 +275,12 @@ export class Approvals {
   #getSessionDecision(approval: PendingApproval) {
     // an approval may have had other ids before (ex. before its process plugins were set up),
     // where the one for its id wins and then the earlier ones in order
-    const decision = [approval.id, ...getPreviousIds(approval)]
-      .map(id => this.#sessionDecisions.get(id))
-      .find(decision => decision != null)?.decision;
+    const ids = [approval.id, ...getPreviousIds(approval)];
+    // an "Always" decision that isn't known to be stored yet is sent again like one for the session
+    // (ex. dprint exited before it set up the process plugins, which is when it's stored)
+    const decision = ids.map(id => this.#sessionDecisions.get(id)).find(decision => decision != null)?.decision
+      ?? [...this.#unstoredAlwaysDecisions.values()].flat()
+        .find(([unstored]) => ids.includes(unstored.id))?.[1];
     if (decision == null || !approval.decisions.some(option => option.decision === decision)) {
       return undefined;
     }
@@ -412,7 +421,8 @@ function getItemText(item: ApprovalItem) {
     return `the proxy ${item.specifier}${npmrc}`;
   }
   if (item.kind === "networkPath") {
-    return `${item.specifier} (read from another machine)`;
+    const reachedFrom = item.uri == null ? "" : `, which ${getDisplayPath(item.uri)} in the project reaches`;
+    return `${item.specifier} (read from another machine${reachedFrom})`;
   }
   return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
 }
@@ -444,11 +454,25 @@ export function getDisplayPath(uri: string) {
  * after it) like dprint escapes the text it provides (see `ApprovalItem.specifier` in its spec).
  */
 export function toVisibleText(text: string) {
-  return text.replace(
-    /^\p{M}|[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|(?! )\p{Zs}|\\(?=u\{)/gu,
-    char => `\\u{${char.codePointAt(0)!.toString(16)}}`,
-  );
+  return text.replace(ESCAPED_TEXT_PATTERN, char => `\\u{${char.codePointAt(0)!.toString(16)}}`);
 }
+
+/**
+ * What dprint escapes in what it provides from the project: a combining mark at the start, a control
+ * character, a space other than a plain one, an invisible formatting character (ex. a bidi override),
+ * and a backslash followed by `u{`.
+ */
+const ESCAPED_TEXT_PATTERN = new RegExp(
+  [
+    "^[\\u0300-\\u036f\\u1ab0-\\u1aff\\u1dc0-\\u1dff\\u20d0-\\u20ff\\ufe20-\\ufe2f]",
+    "\\p{Cc}",
+    "[\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]",
+    "[\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\u3164"
+    + "\\ufe00-\\ufe0f\\ufeff\\uffa0\\ufff9-\\ufffb\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e0fff}]",
+    "\\\\(?=u\\{)",
+  ].join("|"),
+  "gu",
+);
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {

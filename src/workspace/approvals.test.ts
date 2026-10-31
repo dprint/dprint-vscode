@@ -446,6 +446,23 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
   });
 
+  it("sends an \"Always\" decision that isn't known to be stored again to a dprint process that was started again", async () => {
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "alwaysAllow",
+      approve: async params => {
+        approved.push(params);
+        // the download that sets up the process plugins is still pending
+        return { configFile: null, approvals: [], status: APPROVAL_REQUIRED };
+      },
+      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
+    });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    approved.length = 0;
+    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
+    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
+  });
+
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };
@@ -617,6 +634,8 @@ describe("toVisibleText", () => {
     // so it can't look like an escape, and a combining mark at the start can't change what's before it
     assert.strictEqual(toVisibleText("C:\\u{a}"), "C:\\u{5c}u{a}");
     assert.strictEqual(toVisibleText("\u0301a"), "\\u{301}a");
+    // the invisible ones that aren't format characters too
+    assert.strictEqual(toVisibleText("a\u034Fb\u3164c\uFE0Fd\u{E0041}"), "a\\u{34f}b\\u{3164}c\\u{fe0f}d\\u{e0041}");
   });
 });
 
