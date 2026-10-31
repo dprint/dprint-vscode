@@ -219,7 +219,12 @@ export interface ApprovalItem {
    * and "networkPath" is a file or directory on another machine that's read.
    */
   kind: "plugin" | "config" | "npmrcProxy" | "networkPath" | (string & {});
-  /** The editor's uri of the project's path of a `networkPath` that reaches another machine through a symlink, which isn't opened. */
+  /**
+   * The uri of the path in the project of a `networkPath` that reaches the other machine through a symlink (the path before ` -> `)
+   * as the editor knows it, which may be shown with it (ex. relative to the workspace folder). It's the local side of the item, not
+   * where it's read from. Don't open, read, or watch it before it's allowed, because that follows the symlink and reaches the other
+   * machine.
+   */
   localUri?: string;
   /** The npm registry of an npm plugin when it isn't the default one. */
   registry?: string;
@@ -275,7 +280,7 @@ export interface ApproveResult extends ConfigApprovals {
    * for the session). The server keeps such a decision for the session like one that isn't `always` (see "Lifecycle"). It also says
    * when the file of the session couldn't be written or deleted, so what the user decided for the session before may come back if the
    * server is started again, and when the session's decisions aren't kept yet because another server that's running uses the session
-   * id (see `sessionId`).
+   * id or its lock can't be taken (see `sessionId`).
    */
   notice?: Notice;
 }
@@ -308,7 +313,12 @@ export interface ForgetDecisionsParams {
 export interface ForgetDecisionsResult {
   /** The decisions that were forgotten. */
   decisions: Decision[];
-  /** What to tell the user about forgetting them (ex. the stored ones couldn't be forgotten). */
+  /**
+   * What to tell the user about forgetting them (ex. the stored decisions couldn't be forgotten, which includes when the approvals
+   * file is from a newer version of dprint that this one can't write to, so only the session's decisions were, or the file of the
+   * session couldn't be written or deleted, so they may come back if the server is started again, or the session's decisions aren't
+   * kept yet because another server that's running uses the session id or its lock can't be taken).
+   */
   notice?: Notice;
 }
 
@@ -328,7 +338,12 @@ export interface Decision {
   configFile?: ConfigFileIdentifier;
   /** The urls, paths, or specifiers it's for. */
   specifiers: string[];
-  /** What it's for in the order of `specifiers` when that's known (ex. a proxy of an `.npmrc` file for a download). */
+  /**
+   * What it's for, like an approval's items, with one for each of the `specifiers` in the same order. The server usually provides it
+   * for downloads so a proxy or a path on another machine can be told apart from a url and shown with its file (an `npmrcProxy` with
+   * its `npmrcUri`, or a `networkPath` with its `localUri`), but it's missing when they aren't known (ex. a denial kept by another
+   * version of dprint). Show the `specifiers` when it's missing.
+   */
   items?: ApprovalItem[];
   allows: boolean;
   always: boolean;
@@ -362,7 +377,12 @@ export interface ConfigFileInfo {
   kind: "local" | "global" | "cli" | (string & {});
   /** Whether it's in a workspace folder. */
   inWorkspace: boolean;
-  /** Whether it's on another machine and wasn't allowed to be read yet, which is when it isn't opened. */
+  /**
+   * Whether it was found on another machine and reading it isn't allowed yet, which is left out otherwise. Don't open, read, or
+   * watch it (or its directory) then (ex. with a button in the prompt or a command that opens the configuration file of a document),
+   * because that reads it from the other machine, which the approval is for, and a watcher follows its symlinks like a read does.
+   * The server sends `dprint/configChanged` once it's allowed, which is when to start watching it.
+   */
   onAnotherMachine?: boolean;
 }
 
