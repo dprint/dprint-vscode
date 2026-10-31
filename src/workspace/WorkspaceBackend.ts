@@ -790,6 +790,8 @@ class WorkspaceState {
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
+  /** The global config file a document was formatted with, and what dprint says about it (see `#noteGlobalConfig`). */
+  #globalConfig: { service: Service; configFile: ConfigFileInfo; info: ConfigInfoResult | undefined } | undefined;
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
   readonly #formats = new Set<Promise<unknown>>();
   /** The messages of the plugin errors that were shown, which are only shown once. */
@@ -936,7 +938,7 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    await Promise.all(this.#configs.map(config => this.#refreshConfig(config)));
+    await Promise.all([...this.#configs.map(config => this.#refreshConfig(config)), this.#refreshGlobalConfig()]);
     if (this.#disposed) {
       return;
     }
@@ -1156,7 +1158,8 @@ class WorkspaceState {
     this.#updateAncestorWatchers();
     // dprint leaves out a file whose directory may not be read
     const watchUrisByPath = new Map<string, string>();
-    for (const uri of new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []))) {
+    const infos = [...this.#configs.map(config => config.info), this.#globalConfig?.info];
+    for (const uri of new Set(infos.flatMap(info => info?.watchUris ?? []))) {
       watchUrisByPath.set(getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM), uri);
     }
     this.#watchUrisByPath = watchUrisByPath;
@@ -1236,6 +1239,35 @@ class WorkspaceState {
     }
   }
 
+  /**
+   * Notes the global config file that a document is formatted with, whose `watchUris` are watched like the
+   * others' (ex. a config file it extends), though not the global config file itself, which dprint watches.
+   */
+  #noteGlobalConfig(service: Service, configFile: ConfigFileInfo) {
+    if (this.#globalConfig?.service === service && this.#globalConfig.configFile.uri === configFile.uri) {
+      return;
+    }
+    this.#globalConfig = { service, configFile, info: undefined };
+    this.#refreshGlobalConfig().then(() => this.#updateWatchedFiles());
+  }
+
+  /** Gets the info of the global config file that a document was formatted with again (see `#noteGlobalConfig`). */
+  async #refreshGlobalConfig() {
+    const globalConfig = this.#globalConfig;
+    if (globalConfig == null) {
+      return;
+    }
+    const { uri, dirUri } = globalConfig.configFile;
+    try {
+      const info = await globalConfig.service.connection.configInfo({ configFile: { uri, dirUri } });
+      if (this.#globalConfig === globalConfig) {
+        globalConfig.info = info;
+      }
+    } catch (err) {
+      this.#logger.logError("Error getting the global configuration file:", err);
+    }
+  }
+
   async #refreshConfig(config: Config) {
     if (config.legacyFolder != null) {
       // a running folder reloads its config itself, so only its plugins are gotten again
@@ -1306,6 +1338,9 @@ class WorkspaceState {
       }, token);
       if (result == null) {
         return { edits: [] }; // cancelled
+      }
+      if (result.configFile?.kind === "global") {
+        this.#noteGlobalConfig(service, result.configFile);
       }
       // a kind that's newer than the extension is handled like a result that isn't formatted with
       // the fields it has (ex. its approvals), like a status of a kind it doesn't know

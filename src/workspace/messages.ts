@@ -509,11 +509,11 @@ export interface ConfigSchemaResult {
 }
 
 export interface ConfigChangedParams {
-  /** The config file, which is every config file when it's not provided. */
+  /** The configuration file, which is every configuration file when it's missing. */
   configFile?: ConfigFileIdentifier;
-  /** How it changed, where one that's newer than the extension is handled like "changed". */
+  /** How it changed, which is missing without a `configFile`. Treat a change that isn't known like "changed". */
   change?: "created" | "changed" | "deleted" | (string & {});
-  /** Whether only its schema changed. */
+  /** Whether only its schema changed (ex. a plugin's schema downloaded), so get the schema again but not the plugins. */
   schemaOnly?: boolean;
 }
 
