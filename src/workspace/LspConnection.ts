@@ -98,7 +98,10 @@ export interface LspConnectionOptions {
    */
   onRestart?(): void;
   logger: ConnectionLogger;
-  /** How long to wait for the server to exit after it's asked to before killing it. Defaults to one second. */
+  /**
+   * How long to wait for the server to exit after it's asked to before killing it, and after it's killed
+   * before killing it with SIGKILL. Defaults to one second.
+   */
   killTimeout?: number;
 }
 
@@ -128,6 +131,8 @@ export class LspConnection {
   /** Called when a request or an interaction finishes. */
   readonly #idleListeners = new Set<() => void>();
   #server: Server | undefined;
+  /** Resolves once the server that was killed exited, which is when another is started (see `#kill`). */
+  #killedServerExit: Promise<void> | undefined;
   /** Whether a server was started, which is when starting another is a restart. */
   #hasStarted = false;
   #interactionCount = 0;
@@ -287,6 +292,11 @@ export class LspConnection {
   ): Promise<T | undefined> {
     if (token?.isCancellationRequested) {
       return Promise.resolve(undefined);
+    }
+    // the one that was killed may still be running, which another isn't started beside (see `#kill`)
+    const killedServerExit = this.#killedServerExit;
+    if (killedServerExit != null && this.#server == null && !this.#disposed && !this.#closing) {
+      return killedServerExit.then(() => this.#track(action, token));
     }
     const server = this.#ensureServer();
     if (server == null) {
@@ -487,13 +497,50 @@ export class LspConnection {
     }
   }
 
+  /**
+   * Kills the server and stops using it. Another isn't started until it exited, because the other has
+   * the same session id, whose lock this one may still hold, so it's killed with SIGKILL when it doesn't
+   * exit in time.
+   */
   #kill(server: Server) {
+    if (server.hasExited) {
+      return; // it exited or was killed already
+    }
     try {
       server.process.kill();
     } catch {
       // ignore
     }
+    const killedServerExit = this.#waitForKilledServer(server);
+    this.#killedServerExit = killedServerExit;
+    killedServerExit.then(() => {
+      if (this.#killedServerExit === killedServerExit) {
+        this.#killedServerExit = undefined;
+      }
+    });
     this.#onExit(server, new Error("The dprint language server was stopped while the request was in progress."));
+  }
+
+  /**
+   * Resolves once the server that was killed exited, which is killed with SIGKILL when it doesn't exit in time,
+   * or once that didn't work in time either.
+   */
+  async #waitForKilledServer(server: Server) {
+    const timeout = this.#options.killTimeout ?? 1_000;
+    if (await waitForExit(server, timeout)) {
+      return;
+    }
+    try {
+      server.process.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    if (!await waitForExit(server, timeout)) {
+      // ex. it's stuck reading from a network drive, which isn't a reason to stop formatting
+      this.#options.logger.logWarn(
+        "The dprint language server didn't exit after it was killed, so another is started.",
+      );
+    }
   }
 
   #log(params: MessageParams) {
@@ -594,6 +641,19 @@ interface Server {
 interface PendingRequest {
   server: Server;
   reject(err: unknown): void;
+}
+
+/** Resolves with whether the server's process exited before the timeout. */
+function waitForExit(server: Server, timeout: number) {
+  return new Promise<boolean>(resolve => {
+    const timeoutId = setTimeout(() => resolve(false), timeout);
+    // the wait doesn't keep the process running (ex. the extension host that's shutting down)
+    timeoutId.unref();
+    server.exited.then(() => {
+      clearTimeout(timeoutId);
+      resolve(true);
+    });
+  });
 }
 
 /** Resolves once the stream ended or after the timeout. */

@@ -226,6 +226,53 @@ describe("LspConnection", () => {
     await assert.rejects(configInfo, /stopped while the request was in progress/);
     assert.strictEqual(process.killCount, 1);
     assert.strictEqual(connection.pendingRequestCount, 0);
+    process.exit();
+  });
+
+  it("starts the server again only once the one that was killed exited", async () => {
+    const { connection, processes } = createConnection();
+
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
+    const process = processes[0];
+    await process.nextRequest("dprint/configInfo");
+    process.stdout.write("Content-Length: abc\r\n\r\n");
+    await assert.rejects(configInfo, /stopped while the request was in progress/);
+
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    await nextTick();
+    // the new one has the same session id, whose lock the one that was killed may still hold
+    assert.strictEqual(processes.length, 1);
+    process.exit();
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+    const result = { configFile: null, plugins: [], status: { kind: "ready" } };
+    (await processes[1].nextRequest("dprint/fileInfo")).respond(result);
+    assert.deepStrictEqual(await fileInfo, result);
+  });
+
+  it("kills the process with SIGKILL when it doesn't exit after it was killed", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { connection, processes, logs } = createConnection();
+
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
+    const process = processes[0];
+    await process.nextRequest("dprint/configInfo");
+    process.stdout.write("Content-Length: abc\r\n\r\n");
+    await assert.rejects(configInfo, /stopped while the request was in progress/);
+    connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
+
+    t.mock.timers.tick(999);
+    await nextTick();
+    assert.deepStrictEqual(process.killSignals, [undefined]);
+    t.mock.timers.tick(1);
+    await nextTick();
+    assert.deepStrictEqual(process.killSignals, [undefined, "SIGKILL"]);
+    assert.strictEqual(processes.length, 1);
+    // another is started when that doesn't work either
+    t.mock.timers.tick(1_000);
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+    assert.ok(logs.some(([level, message]) => level === "warn" && /didn't exit after it was killed/.test(message)));
   });
 
   it("shows the messages from the server", async () => {
@@ -540,7 +587,8 @@ class FakeProcess extends EventEmitter {
   readonly peer: MessageConnection;
   readonly #messages: ReceivedMessage[] = [];
   readonly #waiters: ((message: ReceivedMessage) => void)[] = [];
-  killCount = 0;
+  /** The signals it was killed with, which is undefined for the default one. */
+  readonly killSignals: (NodeJS.Signals | undefined)[] = [];
 
   constructor(initializeResult: InitializeResult | null) {
     super();
@@ -569,8 +617,12 @@ class FakeProcess extends EventEmitter {
     this.peer.listen();
   }
 
-  kill() {
-    this.killCount++;
+  get killCount() {
+    return this.killSignals.length;
+  }
+
+  kill(signal?: NodeJS.Signals) {
+    this.killSignals.push(signal);
     return true;
   }
 
