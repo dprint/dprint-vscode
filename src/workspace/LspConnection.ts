@@ -17,6 +17,7 @@ import {
   CONFIG_INFO_METHOD,
   CONFIG_SCHEMA_METHOD,
   type ConfigChangedParams,
+  type ConfigFileInfo,
   type ConfigInfoResult,
   type ConfigParams,
   type ConfigSchemaResult,
@@ -99,6 +100,8 @@ export interface LspConnectionOptions {
   onDiagnostics(params: PublishDiagnosticsParams): void;
   /** Called when what a config file formats may have changed in a way the editor can't see. */
   onConfigChanged(params: ConfigChangedParams): void;
+  /** Called with the config file of each result that has one, which is the latest that's known about it. */
+  onConfigFile?(configFile: ConfigFileInfo): void;
   /**
    * Called when a server is started again after one exited (ex. it crashed), which doesn't know
    * what the one before it was told (ex. the files the config files were resolved from).
@@ -171,11 +174,11 @@ export class LspConnection {
   }
 
   fileInfo(params: FileInfoParams) {
-    return this.#request<FileInfoResult>(FILE_INFO_METHOD, params);
+    return this.#requestWithConfigFile<FileInfoResult>(FILE_INFO_METHOD, params);
   }
 
   pendingApprovals(params: PendingApprovalsParams = {}) {
-    return this.#request<PendingApprovalsResult>(PENDING_APPROVALS_METHOD, params);
+    return this.#requestWithConfigFile<PendingApprovalsResult>(PENDING_APPROVALS_METHOD, params);
   }
 
   forgetDecisions(params: ForgetDecisionsParams = {}) {
@@ -187,7 +190,7 @@ export class LspConnection {
   }
 
   configInfo(params: ConfigParams) {
-    return this.#request<ConfigInfoResult>(CONFIG_INFO_METHOD, params);
+    return this.#requestWithConfigFile<ConfigInfoResult>(CONFIG_INFO_METHOD, params);
   }
 
   configSchema(params: ConfigParams) {
@@ -195,7 +198,7 @@ export class LspConnection {
   }
 
   approve(params: ApproveParams) {
-    return this.#request<ApproveResult>(APPROVE_METHOD, params);
+    return this.#requestWithConfigFile<ApproveResult>(APPROVE_METHOD, params);
   }
 
   /** Formats the text of the document, which resolves with undefined when the format was cancelled. */
@@ -204,6 +207,9 @@ export class LspConnection {
       server => this.#sendRequest<FormatResponse>(server, FORMAT_METHOD, params, token),
       token,
     );
+    if (response?.configFile != null) {
+      this.#options.onConfigFile?.(response.configFile);
+    }
     return response == null ? undefined : { configFile: response.configFile, ...response.result };
   }
 
@@ -287,6 +293,16 @@ export class LspConnection {
       .then(() => server.connection.sendRequest("shutdown"))
       .then(() => server.connection.sendNotification("exit"))
       .catch(() => {/* it's killed after the timeout */});
+  }
+
+  /** Sends a request whose result may have a config file (see `onConfigFile`). */
+  async #requestWithConfigFile<T extends object>(method: string, params: unknown) {
+    const result = await this.#request<T>(method, params);
+    const configFile = (result as { configFile?: ConfigFileInfo | null }).configFile;
+    if (configFile != null) {
+      this.#options.onConfigFile?.(configFile);
+    }
+    return result;
   }
 
   #request<T>(method: string, params: unknown) {

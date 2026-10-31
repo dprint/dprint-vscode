@@ -188,6 +188,8 @@ export class Approvals {
         continue;
       }
       if (!allows) {
+        // nothing else is asked about after a denial, because the config file isn't used, and a later
+        // format asks about what's left
         return false;
       }
     }

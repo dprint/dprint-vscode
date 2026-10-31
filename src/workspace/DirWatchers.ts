@@ -283,7 +283,7 @@ export async function getFileAccess(
 }
 
 /**
- * Gets whether a config file can be opened (or its problems kept), which is when it can be without
+ * Gets whether a config file can be opened from an older message, which is when it can be without
  * following a symlink, or when it's a symlink or reached through one and dprint's latest result for it
  * is known and doesn't say it's on another machine (ex. a config file in a dotfiles directory that a
  * symlink in the project points to).
