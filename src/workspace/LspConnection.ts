@@ -140,8 +140,9 @@ export class LspConnection {
   #closing = false;
   #disposed = false;
   /**
-   * Identifies the session to dprint, which keeps what the user decided for it when a server that
-   * exited is started again (a new connection is a new session, ex. for the restart command).
+   * Identifies the session to dprint, which is unique to the server and keeps what the user decided for
+   * the session when the same server is started again with it once its process exited (ex. it crashed,
+   * or it was killed), and a new connection is a new session (ex. for the restart command).
    */
   readonly #sessionId = randomUUID();
 

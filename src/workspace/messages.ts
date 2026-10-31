@@ -222,8 +222,7 @@ export interface ApprovalItem {
   /**
    * The uri of the path in the project of a `networkPath` that reaches the other machine through a symlink (the path before ` -> `)
    * as the editor knows it, which may be shown with it (ex. relative to the workspace folder). It's the local side of the item, not
-   * where it's read from. Don't open, read, or watch it before it's allowed, because that follows the symlink and reaches the other
-   * machine.
+   * where it's read from. Don't open it before it's allowed, because that follows the symlink and reads it from the other machine.
    */
   localUri?: string;
   /** The npm registry of an npm plugin when it isn't the default one. */
@@ -339,10 +338,10 @@ export interface Decision {
   /** The urls, paths, or specifiers it's for. */
   specifiers: string[];
   /**
-   * What it's for, like an approval's items, with one for each of the `specifiers` in the same order. The server usually provides it
-   * for downloads so a proxy or a path on another machine can be told apart from a url and shown with its file (an `npmrcProxy` with
-   * its `npmrcUri`, or a `networkPath` with its `localUri`), but it's missing when they aren't known (ex. a denial kept by another
-   * version of dprint). Show the `specifiers` when it's missing.
+   * What it's for, like an approval's items, with one for each of the `specifiers` in the same order. The server usually provides it for
+   * downloads so a proxy or a path on another machine can be told apart from a url and shown with its file (an `npmrcProxy` with its
+   * `npmrcUri`, or a `networkPath` with its `localUri`), and it's missing when they aren't known (ex. a denial kept by another version of
+   * dprint). Show the `specifiers` when it's missing.
    */
   items?: ApprovalItem[];
   allows: boolean;
@@ -378,10 +377,11 @@ export interface ConfigFileInfo {
   /** Whether it's in a workspace folder. */
   inWorkspace: boolean;
   /**
-   * Whether it was found on another machine and reading it isn't allowed yet, which is left out otherwise. Don't open, read, or
-   * watch it (or its directory) then (ex. with a button in the prompt or a command that opens the configuration file of a document),
-   * because that reads it from the other machine, which the approval is for, and a watcher follows its symlinks like a read does.
-   * The server sends `dprint/configChanged` once it's allowed, which is when to start watching it.
+   * Whether it was found on another machine and reading it isn't allowed yet (see "Approving"), which is left out otherwise. Don't
+   * open, read, or watch it (or its directory) then (ex. with a button in the prompt or a command that opens the configuration file
+   * of a document), because that reads it from the other machine, which the approval is for, and a watcher follows its symlinks like
+   * a read does. The server sends `dprint/configChanged` once it's allowed, which is when to start watching it, and stop watching it
+   * when a later result has it again.
    */
   onAnotherMachine?: boolean;
 }
