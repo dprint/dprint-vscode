@@ -186,22 +186,29 @@ export class Approvals {
       lastConfigFile = configFile;
       this.#rememberSessionDecision(approval, decision);
       const configFileKey = `${configFile.uri}\n${configFile.dirUri}`;
-      if (approval.decisions.find(option => option.id === decision)?.always) {
+      if (approval.decisions.find(option => option.decision === decision)?.always) {
         const unstored = this.#unstoredAlwaysDecisions.get(configFileKey) ?? [];
         unstored.push([approval, decision]);
         this.#unstoredAlwaysDecisions.set(configFileKey, unstored);
       }
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
-        if (result.notice != null) {
-          // ex. an "Always" decision that couldn't be stored is still used for the session
-          for (const [alwaysApproval, alwaysDecision] of this.#unstoredAlwaysDecisions.get(configFileKey) ?? []) {
+        // an "Always" decision that couldn't be stored is still used for the session
+        const unstoredGroups = new Set(result.unstoredDecisionGroups ?? []);
+        const pendingAlways = this.#unstoredAlwaysDecisions.get(configFileKey) ?? [];
+        for (const [alwaysApproval, alwaysDecision] of pendingAlways) {
+          if (unstoredGroups.has(getDecisionGroup(alwaysApproval))) {
             this.#setSessionDecision(alwaysApproval, alwaysDecision);
           }
+        }
+        const stillPending = pendingAlways.filter(([alwaysApproval]) =>
+          !unstoredGroups.has(getDecisionGroup(alwaysApproval))
+        );
+        if (result.status.kind === "ready" || stillPending.length === 0) {
+          // dprint stored the others once the config file is used
           this.#unstoredAlwaysDecisions.delete(configFileKey);
-        } else if (result.status.kind === "ready") {
-          // dprint stored them once the config file is used
-          this.#unstoredAlwaysDecisions.delete(configFileKey);
+        } else {
+          this.#unstoredAlwaysDecisions.set(configFileKey, stillPending);
         }
         pending = result.approvals;
         status = result.status;
@@ -233,7 +240,7 @@ export class Approvals {
           const replacement = pending.find(other =>
             other.kind === approval.kind && !other.denied && other.items.every(item => deniedItems.has(item.specifier))
           );
-          const denial = replacement?.decisions.find(option => option.id === decision);
+          const denial = replacement?.decisions.find(option => option.decision === decision);
           if (replacement != null && denial != null) {
             await this.#options.approve({ id: replacement.id, decision })
               .then(() => this.#rememberSessionDecision(replacement, decision))
@@ -265,7 +272,7 @@ export class Approvals {
     const decision = [approval.id, ...getPreviousIds(approval)]
       .map(id => this.#sessionDecisions.get(id))
       .find(decision => decision != null)?.decision;
-    if (decision == null || !approval.decisions.some(option => option.id === decision)) {
+    if (decision == null || !approval.decisions.some(option => option.decision === decision)) {
       return undefined;
     }
     if (approval.denied) {
@@ -281,7 +288,7 @@ export class Approvals {
   /** Remembers what the user decided for the session, which an "Always" decision replaces. */
   #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
     this.#forgetSessionDecision(approval);
-    if (approval.decisions.find(option => option.id === decision)?.always) {
+    if (approval.decisions.find(option => option.decision === decision)?.always) {
       // it replaces what was decided before in its group too
       this.#forgetGroup(getDecisionGroup(approval));
     } else {
@@ -439,7 +446,7 @@ export function toVisibleText(text: string) {
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {
-  return approval.decisions.map(option => ({ title: option.label, decision: option.id }));
+  return approval.decisions.map(option => ({ title: option.label, decision: option.decision }));
 }
 
 /**
@@ -463,6 +470,6 @@ function getChangedResult(err: unknown): ConfigApprovals | undefined {
 
 /** Gets if the decision allows the approval, which dprint says for a decision the extension doesn't know. */
 function isAllowed(approval: PendingApproval, decision: ApprovalDecision) {
-  const option = approval.decisions.find(option => option.id === decision);
+  const option = approval.decisions.find(option => option.decision === decision);
   return option?.allows ?? (decision === "allow" || decision === "alwaysAllow");
 }

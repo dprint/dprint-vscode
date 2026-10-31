@@ -200,13 +200,13 @@ describe("Approvals", () => {
   it("uses whether a decision that's newer than the extension allows it", async () => {
     const download = approval("download");
     download.decisions.push({
-      id: "trustDomain",
+      decision: "trustDomain",
       label: "Trust the domain",
       allows: true,
       always: true,
       description: "",
     });
-    download.decisions.push({ id: "block", label: "Block", allows: false, always: true, description: "" });
+    download.decisions.push({ decision: "block", label: "Block", allows: false, always: true, description: "" });
     const allowed = createApprovals({ decide: () => "trustDomain" });
     assert.strictEqual(await allowed.approvals.request([download], { isExplicit: false }), true);
     const denied = createApprovals({ decide: () => "block" });
@@ -388,7 +388,13 @@ describe("Approvals", () => {
         // the process plugins are set up once the download is allowed, which is when it's stored
         return params.id === "processPlugins"
           ? { configFile: null, approvals: [approval("download")], status: APPROVAL_REQUIRED }
-          : { configFile: null, approvals: [], status: READY, notice };
+          : {
+            configFile: null,
+            approvals: [],
+            status: READY,
+            notice,
+            unstoredDecisionGroups: [approval("processPlugins").decisionGroup!],
+          };
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
@@ -422,7 +428,13 @@ describe("Approvals", () => {
               claim: true,
             },
           }
-          : { configFile: null, approvals: [], status: READY, notice };
+          : {
+            configFile: null,
+            approvals: [],
+            status: READY,
+            notice,
+            unstoredDecisionGroups: [approval("processPlugins").decisionGroup!],
+          };
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
@@ -541,7 +553,7 @@ describe("getApprovalMessage", () => {
   it("has the descriptions of the decisions", () => {
     const download = approval("download");
     download.decisions = download.decisions.map(option =>
-      option.id === "allow" ? { ...option, description: "Downloads it." } : option
+      option.decision === "allow" ? { ...option, description: "Downloads it." } : option
     );
     assert.match(getApprovalMessage(download), / \(allow: Downloads it\.\)$/);
   });
@@ -618,8 +630,8 @@ describe("getApprovalChoices", () => {
   it("offers the decisions dprint says the approval has", () => {
     assert.deepStrictEqual(
       getApprovalChoices({
-        decisions: [{ id: "allow", label: "Allow", allows: true, always: false, description: "" }, {
-          id: "deny",
+        decisions: [{ decision: "allow", label: "Allow", allows: true, always: false, description: "" }, {
+          decision: "deny",
           label: "Deny",
           allows: false,
           always: false,
@@ -633,10 +645,10 @@ describe("getApprovalChoices", () => {
     assert.deepStrictEqual(
       getApprovalChoices({
         decisions: [
-          { id: "allow", label: "Allow", allows: true, always: false, description: "" },
-          { id: "alwaysAllow", label: "Always Allow", allows: true, always: true, description: "" },
-          { id: "deny", label: "Deny", allows: false, always: false, description: "" },
-          { id: "alwaysDeny", label: "Always Deny", allows: false, always: true, description: "" },
+          { decision: "allow", label: "Allow", allows: true, always: false, description: "" },
+          { decision: "alwaysAllow", label: "Always Allow", allows: true, always: true, description: "" },
+          { decision: "deny", label: "Deny", allows: false, always: false, description: "" },
+          { decision: "alwaysDeny", label: "Always Deny", allows: false, always: true, description: "" },
         ],
       }).map(choice => [
         choice.title,
@@ -649,13 +661,13 @@ describe("getApprovalChoices", () => {
   it("shows a decision that's newer than the extension with its label", () => {
     assert.deepStrictEqual(
       getApprovalChoices({
-        decisions: [{ id: "allow", label: "Allow", allows: true, always: false, description: "" }, {
-          id: "trustDomain",
+        decisions: [{ decision: "allow", label: "Allow", allows: true, always: false, description: "" }, {
+          decision: "trustDomain",
           label: "Trust the domain",
           allows: true,
           always: false,
           description: "",
-        }, { id: "deny", label: "Deny", allows: false, always: false, description: "" }],
+        }, { decision: "deny", label: "Deny", allows: false, always: false, description: "" }],
       }).map(
         choice => [choice.title, choice.decision],
       ),
@@ -700,7 +712,7 @@ function approval(id: string): PendingApproval {
     configFile: configFile("file:///dprint.json"),
     items: [{ specifier: `https://example.com/${id}`, kind: "plugin" }],
     decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
-      id,
+      decision: id,
       label: id,
       allows: id.endsWith("llow"),
       always: id.startsWith("always"),

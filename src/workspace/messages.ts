@@ -235,7 +235,7 @@ export type ApprovalKind = "downloads" | "processPlugins" | (string & {});
 export type ApprovalDecision = "allow" | "alwaysAllow" | "deny" | "alwaysDeny" | (string & {});
 
 export interface ApprovalDecisionOption {
-  id: ApprovalDecision;
+  decision: ApprovalDecision;
   /** What to show the user, which is for a decision the extension doesn't know. */
   label: string;
   /** Whether it allows what's approved, which is otherwise denied. */
@@ -268,6 +268,11 @@ export interface ConfigApprovals {
 }
 
 export interface ApproveResult extends ConfigApprovals {
+  /**
+   * The groups of the "Always" decisions that couldn't be stored (ex. an "Always Allow" of process
+   * plugins that's stored once they're set up, which may be when approving something else).
+   */
+  unstoredDecisionGroups?: string[];
   /** What to tell the user about the decision (ex. it couldn't be stored). */
   notice?: Notice;
 }
