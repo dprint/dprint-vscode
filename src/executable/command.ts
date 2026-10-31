@@ -186,7 +186,8 @@ const GROUP_KILL_GRACE = 1_000;
  * Kills a process with the processes it started (see `getProcessTreeKill`), which resolves once that
  * was done: once `taskkill` finished on Windows, and once every process of the group exited (or after
  * a timeout) elsewhere, where the group is killed with SIGKILL when it doesn't exit in time (ex. a
- * process that a plugin started ignores SIGTERM). Only the process is killed when that fails. Nothing
+ * process that a plugin started ignores SIGTERM). Only the process is killed when that fails, which is
+ * killed with SIGKILL the same way. This is where a kill is escalated, so the caller doesn't. Nothing
  * is done once the process exited, because its pid (and so the root of the tree) may be another
  * process's then, apart from the group, which isn't reused while it has a process.
  *
@@ -211,26 +212,47 @@ export async function killProcessTreeWith(
     }
     return;
   }
+  // only the process is killed (by its handle) when the group can't be signalled
+  let isGroup = true;
   try {
     env.signal(treeKill.pid, signal ?? "SIGTERM");
   } catch {
+    isGroup = false;
     childProcess.kill(signal);
-    return;
   }
   // the group isn't reused while any of its processes is running, so it's safe to check and signal it
   // after its leader exited as long as it still has a process
-  let isKilled = signal === "SIGKILL";
-  for (let waited = 0; waited < GROUP_EXIT_TIMEOUT; waited += GROUP_EXIT_POLL_INTERVAL) {
+  const isRunning = () => {
+    if (!isGroup) {
+      return !hasExited(childProcess);
+    }
     try {
       env.signal(treeKill.pid, 0);
-      if (!isKilled && waited >= GROUP_KILL_GRACE) {
-        isKilled = true;
-        env.signal(treeKill.pid, "SIGKILL");
-      }
+      return true;
     } catch {
-      return; // every process of the group exited
+      return false; // every process of the group exited
+    }
+  };
+  let isKilled = signal === "SIGKILL";
+  for (let waited = 0; waited < GROUP_EXIT_TIMEOUT && isRunning(); waited += GROUP_EXIT_POLL_INTERVAL) {
+    if (!isKilled && waited >= GROUP_KILL_GRACE) {
+      isKilled = true;
+      killForcibly(isGroup ? undefined : childProcess, treeKill.pid, env);
     }
     await env.delay(GROUP_EXIT_POLL_INTERVAL);
+  }
+}
+
+/** Kills the process group with SIGKILL, or the process by its handle when the group can't be signalled. */
+function killForcibly(childProcess: KillableProcess | undefined, groupPid: number, env: ProcessTreeKillEnvironment) {
+  if (childProcess != null) {
+    childProcess.kill("SIGKILL");
+    return;
+  }
+  try {
+    env.signal(groupPid, "SIGKILL");
+  } catch {
+    // every process of the group exited
   }
 }
 

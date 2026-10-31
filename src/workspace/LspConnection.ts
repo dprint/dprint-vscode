@@ -84,8 +84,9 @@ export interface LspConnectionOptions {
   spawn(): ServerProcess;
   /**
    * Kills the process with the processes it started (ex. the dprint that the shell of an npm `dprint.cmd`
-   * started, which keeps running when only the shell is killed), which resolves once that was done.
-   * Defaults to killing only the process.
+   * started, which keeps running when only the shell is killed), which resolves once that was done. It
+   * kills them with SIGKILL itself when they don't exit in time. Defaults to killing only the process,
+   * which is then killed again with SIGKILL here.
    */
   killProcess?(process: ServerProcess, signal: NodeJS.Signals | undefined): Promise<void> | void;
   /** Gets what to initialize each started server with. */
@@ -547,9 +548,11 @@ export class LspConnection {
     if (await waitForExit(server, killed, timeout)) {
       return;
     }
-    // only while it's running, because once it exited its pid may be another process's (ex. what
-    // it started is still being killed)
-    const killedAgain = server.processExited ? killed : this.#killProcess(server, "SIGKILL");
+    // `killProcess` escalates the kill itself, and otherwise the process is only killed again while
+    // it's running, because once it exited its pid may be another process's
+    const killedAgain = this.#options.killProcess != null || server.processExited
+      ? killed
+      : this.#killProcess(server, "SIGKILL");
     if (!await waitForExit(server, killedAgain, timeout)) {
       // ex. it's stuck reading from a network drive, which isn't a reason to stop formatting
       this.#options.logger.logWarn(

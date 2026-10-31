@@ -161,7 +161,8 @@ describe("killProcessTreeWith", () => {
     const { process, killed } = createProcess(1234);
     const { env } = createEnvironment("linux", { signalThrows: true });
     await killProcessTreeWith(process, "SIGTERM", env);
-    assert.deepStrictEqual(killed, ["SIGTERM"]);
+    // and with SIGKILL when it doesn't exit in time
+    assert.deepStrictEqual(killed, ["SIGTERM", "SIGKILL"]);
   });
 
   it("only kills the process by its handle without a pid or once it exited", async () => {
