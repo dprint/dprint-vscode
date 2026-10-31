@@ -228,14 +228,14 @@ export function getAncestorConfigFileNamesByDir(env: Environment, configFilePath
  * tell dprint when one changed, and nothing when a `.config` directory itself changed.
  */
 export function getAncestorConfigFileChangeAction(
+  env: Environment,
   filePath: string,
   change: "created" | "changed" | "deleted",
 ): "findAgain" | "configFileChanged" | undefined {
   if (change !== "changed") {
     return "findAgain";
   }
-  // a `.Config` directory is only reported where the file system is case insensitive, which it is then
-  return path.basename(filePath).toLowerCase() === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
+  return toFileNameKey(env, path.basename(filePath)) === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
 }
 
 /**
@@ -346,5 +346,6 @@ function toFileNameKey(env: Environment, fileName: string) {
 
 function isHomeDir(env: Environment, dirPath: string) {
   const homeDir = env.homeDir();
-  return homeDir != null && path.relative(homeDir, dirPath) === "";
+  // without its case on a case insensitive file system (ex. `/users/david` on macOS), like dprint compares it
+  return homeDir != null && toFileNameKey(env, path.resolve(homeDir)) === toFileNameKey(env, path.resolve(dirPath));
 }

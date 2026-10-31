@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { toCaseInsensitiveGlob } from "../constants";
+import { toCaseInsensitiveNameGlob } from "../constants";
 import type { PathKind } from "../environment";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -216,7 +216,10 @@ export class DirWatchers {
     return hasCreatedOrDeleted;
   }
 
-  /** Gets the version of a watched directory's file, which is undefined when it's gone or the directory isn't watched. */
+  /**
+   * Gets the version of a watched directory's file, which is undefined when it's gone or the directory
+   * isn't watched.
+   */
   async #getFileVersion(dirPath: string, entry: DirEntry, name: string) {
     // the directory was looked at, so its files are looked at without following a symlink
     const stat = entry.dirWatcher == null
@@ -362,10 +365,12 @@ export function getFileNamesByDir(filePaths: Iterable<string>) {
  * system, because vscode's globs don't.
  */
 export function getWatchPattern(fileNames: readonly string[], isCaseInsensitive: boolean) {
-  if (fileNames.some(name => /[*?[\]{},/\\]/.test(name))) {
+  // a letter other than an ASCII one has a case that the classes don't cover, which `DirWatchers` compares
+  const hasOtherCase = (name: string) => /[^\x00-\x7f]/.test(name) && name.toLowerCase() !== name.toUpperCase();
+  if (fileNames.some(name => /[*?[\]{},/\\]/.test(name) || (isCaseInsensitive && hasOtherCase(name)))) {
     return "*";
   }
-  const names = isCaseInsensitive ? fileNames.map(toCaseInsensitiveGlob) : fileNames;
+  const names = isCaseInsensitive ? fileNames.map(toCaseInsensitiveNameGlob) : fileNames;
   return names.length === 1 ? names[0] : `{${names.join(",")}}`;
 }
 

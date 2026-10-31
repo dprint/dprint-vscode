@@ -281,15 +281,24 @@ describe("getAncestorConfigFileNamesByDir", () => {
 });
 
 describe("getAncestorConfigFileChangeAction", () => {
+  const env = new TestEnvironment({ homeDir });
+
   it("finds the config files again when one was created or deleted, and tells dprint when one changed", () => {
     const configPath = path.resolve("/project/dprint.json");
-    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "created"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "deleted"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(configPath, "changed"), "configFileChanged");
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "created"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "deleted"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "changed"), "configFileChanged");
     // a `.config` directory that was created or deleted, and one that only changed
     const dotConfigPath = path.resolve("/project/.config");
-    assert.strictEqual(getAncestorConfigFileChangeAction(dotConfigPath, "created"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(dotConfigPath, "changed"), undefined);
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "created"), "findAgain");
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "changed"), undefined);
+  });
+
+  it("knows a .config directory in another case on a case insensitive file system", () => {
+    const dotConfigPath = path.resolve("/project/.Config");
+    const caseInsensitiveEnv = new TestEnvironment({ homeDir, platform: "darwin" });
+    assert.strictEqual(getAncestorConfigFileChangeAction(caseInsensitiveEnv, dotConfigPath, "changed"), undefined);
+    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "changed"), "configFileChanged");
   });
 });
 
@@ -380,6 +389,13 @@ describe("AncestorConfigFileCache", () => {
 
 describe("getConfigFileDir", () => {
   const env = new TestEnvironment({ homeDir });
+
+  it("knows the home directory in another case on a case insensitive file system", () => {
+    // ex. `code /users/david/proj` on macOS, where the home directory is `/Users/david`, whose `.config` isn't one
+    const caseInsensitiveEnv = new TestEnvironment({ homeDir: path.resolve("/Users/david"), platform: "darwin" });
+    const configPath = path.resolve("/users/david/.config/dprint.json");
+    assert.strictEqual(getConfigFileDir(caseInsensitiveEnv, configPath), path.resolve("/users/david/.config"));
+  });
 
   it("gets the parent of a .config directory in another case on a case insensitive file system", () => {
     // ex. `.Config/Dprint.json` on Windows or macOS, which dprint finds there

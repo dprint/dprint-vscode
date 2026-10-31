@@ -1172,7 +1172,7 @@ class WorkspaceState {
   }
 
   #onAncestorConfigFileChanged(filePath: string, change: WatchedFileChange) {
-    const action = getAncestorConfigFileChangeAction(filePath, change);
+    const action = getAncestorConfigFileChangeAction(this.#environment, filePath, change);
     if (action === "findAgain") {
       this.#logger.logDebug("Ancestor configuration file created or deleted:", filePath);
       this.#options.onAncestorConfigFileCreatedOrDeleted();

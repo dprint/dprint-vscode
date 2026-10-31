@@ -8,7 +8,7 @@ export const DPRINT_CONFIG_FILEPATH_GLOB = `**/${DPRINT_CONFIG_FILE_NAME_GLOB}`;
  */
 export function getConfigFilePathGlob(platform: NodeJS.Platform) {
   return isCaseInsensitivePlatform(platform)
-    ? toCaseInsensitiveGlob(DPRINT_CONFIG_FILEPATH_GLOB)
+    ? toCaseInsensitiveNameGlob(DPRINT_CONFIG_FILEPATH_GLOB)
     : DPRINT_CONFIG_FILEPATH_GLOB;
 }
 
@@ -17,8 +17,12 @@ export function isCaseInsensitivePlatform(platform: NodeJS.Platform) {
   return platform === "win32" || platform === "darwin";
 }
 
-/** Gets a glob whose letters match in either case, with a class of both cases (ex. `[jJ][sS]`). */
-export function toCaseInsensitiveGlob(glob: string) {
+/**
+ * Gets a glob of file names whose ASCII letters match in either case, with a class of both cases (ex.
+ * `[jJ][sS]`). It's for names, which may be in a brace list or after `**\/`, not for a glob that has
+ * classes (ex. `[a-z]` would become `[[aA]-[zZ]]`).
+ */
+export function toCaseInsensitiveNameGlob(glob: string) {
   return glob.replace(/[a-z]/gi, char => `[${char.toLowerCase()}${char.toUpperCase()}]`);
 }
 export const DPRINT_CONFIG_FILE_NAMES = ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"];

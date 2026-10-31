@@ -358,6 +358,9 @@ describe("getWatchPattern", () => {
   it("matches the names in either case when the file system does", () => {
     // ex. `Dprint.json` on Windows or macOS
     assert.strictEqual(getWatchPattern(["a.json", ".c"], true), "{[aA].[jJ][sS][oO][nN],.[cC]}");
+    // a letter whose case the classes don't cover is matched by `*`, which is compared without its case
+    assert.strictEqual(getWatchPattern(["\u00c4.json"], true), "*");
+    assert.strictEqual(getWatchPattern(["\u00c4.json"], false), "\u00c4.json");
   });
 });
 
