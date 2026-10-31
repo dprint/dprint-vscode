@@ -540,7 +540,7 @@ export class WorkspaceBackend implements vscode.Disposable {
           toPlainNotificationText(
             `${approval.title} (configuration file: ${
               getDisplayPath(approval.configFile.uri)
-            }): this was allowed for another configuration file since, so it's used. Forget the decisions or restart dprint to undo that.`,
+            }): what you denied was allowed for another configuration file since, or isn't needed anymore. Forget the decisions or restart dprint to be asked about it again.`,
           ),
         );
       },

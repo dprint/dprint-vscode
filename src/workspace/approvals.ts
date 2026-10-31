@@ -43,7 +43,8 @@ export interface ApprovalsOptions {
    * Tells the user that what they denied was allowed for another config file since, which is when
    * sending their denial failed with `-32803` and nothing of the same kind replaced it while the
    * config file is used, so it's used without the denial (`dprint/forgetDecisions` or the restart
-   * command undoes it).
+   * command undoes it). The error doesn't say why, so it may also be that what they denied isn't
+   * needed anymore (ex. they removed it from the config file while they were asked).
    */
   showAllowedElsewhereSince?(approval: PendingApproval): void;
 }
@@ -190,7 +191,8 @@ export class Approvals {
         }
         if (!allows) {
           if (
-            isApprovalChangedError(err) && same == null && !pending.some(other => other.kind === approval.kind)
+            // the config file is used when its status is ready
+            isApprovalChangedError(err) && !pending.some(other => other.kind === approval.kind)
             && status != null && getNotFormatted(status) == null
           ) {
             // ex. what it denied was each allowed exactly for another config file since, which isn't formatted
