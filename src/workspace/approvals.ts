@@ -34,6 +34,11 @@ export interface ApprovalsOptions {
    * revealed an error in it).
    */
   showNotUsed?(notFormatted: NotFormatted, configFile: ConfigFileIdentifier): void;
+  /**
+   * Tells the user that what they allowed was denied since (ex. in another window), which is when
+   * sending their decision failed and its approval is denied afterwards, so it wasn't used.
+   */
+  showDeniedSince?(approval: PendingApproval): void;
 }
 
 /**
@@ -168,9 +173,13 @@ export class Approvals {
         if (!allows) {
           await this.#forwardDenial(approval, decision, pending, sentAgain);
         }
-        if (same != null && (allows || !same.denied)) {
-          // the decision still wasn't used, because it couldn't be sent again or that failed too
+        if (same != null && !same.denied) {
+          // the decision still wasn't used, because sending it again failed too
           throw err;
+        }
+        if (allows && same?.denied) {
+          // a denial made since is newer than the user's allow, which isn't sent again
+          this.#options.showDeniedSince?.(approval);
         }
         if (!allows) {
           // what replaced it isn't asked about right after the user denied it

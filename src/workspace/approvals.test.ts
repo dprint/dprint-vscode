@@ -464,7 +464,9 @@ describe("Approvals", () => {
 
   it("doesn't send an allow again for an approval that was denied since, which is said", async () => {
     const approved: ApproveParams[] = [];
+    const deniedSince: string[] = [];
     const approvals = new Approvals({
+      showDeniedSince: approval => deniedSince.push(approval.id),
       ask: async () => "allow",
       approve: async params => {
         approved.push(params);
@@ -478,9 +480,10 @@ describe("Approvals", () => {
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
-    // the user's allow wasn't used
-    await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Changed/);
+    // the user is told it was denied since instead of the error
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
     assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }]);
+    assert.deepStrictEqual(deniedSince, ["download"]);
   });
 
   it("doesn't say a denial failed when its approval is denied afterwards", async () => {

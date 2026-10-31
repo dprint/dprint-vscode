@@ -517,6 +517,15 @@ export class WorkspaceBackend implements vscode.Disposable {
         this.#session.shownConfigErrors.shouldShow(configFile, notFormatted.message);
         showSeverityMessage(notFormatted);
       },
+      showDeniedSince: approval => {
+        vscode.window.showWarningMessage(
+          toPlainNotificationText(
+            `${approval.title} (configuration file: ${
+              getDisplayPath(approval.configFile.uri)
+            }): this was denied since (ex. in another window), so what you allowed wasn't used.`,
+          ),
+        );
+      },
     });
     return { key, connection, approvals };
   }
