@@ -82,6 +82,12 @@ export interface ConnectionCancellationToken {
 export interface LspConnectionOptions {
   /** Starts `dprint lsp`, which is done again on the next request after it exits. */
   spawn(): ServerProcess;
+  /**
+   * Kills the process with the processes it started (ex. the dprint that the shell of an npm `dprint.cmd`
+   * started, which keeps running when only the shell is killed), which resolves once that was done.
+   * Defaults to killing only the process.
+   */
+  killProcess?(process: ServerProcess, signal: NodeJS.Signals | undefined): Promise<void> | void;
   /** Gets what to initialize each started server with. */
   getInitializeParams(): ClientInitializeParams;
   /** Shows a message from the server to the user. */
@@ -512,12 +518,8 @@ export class LspConnection {
     if (server.hasExited) {
       return; // it exited or was killed already
     }
-    try {
-      server.process.kill();
-    } catch {
-      // ignore
-    }
-    const killedServerExit = this.#waitForKilledServer(server);
+    const killed = this.#killProcess(server, undefined);
+    const killedServerExit = this.#waitForKilledServer(server, killed);
     this.#killedServerExit = killedServerExit;
     killedServerExit.then(() => {
       if (this.#killedServerExit === killedServerExit) {
@@ -531,21 +533,31 @@ export class LspConnection {
    * Resolves once the server that was killed exited, which is killed with SIGKILL when it doesn't exit in time,
    * or once that didn't work in time either.
    */
-  async #waitForKilledServer(server: Server) {
+  async #waitForKilledServer(server: Server, killed: Promise<void>) {
     const timeout = this.#options.killTimeout ?? 1_000;
-    if (await waitForExit(server, timeout)) {
+    if (await waitForExit(server, killed, timeout)) {
       return;
     }
-    try {
-      server.process.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
-    if (!await waitForExit(server, timeout)) {
+    const killedAgain = this.#killProcess(server, "SIGKILL");
+    if (!await waitForExit(server, killedAgain, timeout)) {
       // ex. it's stuck reading from a network drive, which isn't a reason to stop formatting
       this.#options.logger.logWarn(
         "The dprint language server didn't exit after it was killed, so another is started.",
       );
+    }
+  }
+
+  /** Kills the server's process, which resolves once the processes it started were killed too (see `killProcess`). */
+  #killProcess(server: Server, signal: NodeJS.Signals | undefined): Promise<void> {
+    try {
+      const killProcess = this.#options.killProcess;
+      if (killProcess == null) {
+        server.process.kill(signal);
+        return Promise.resolve();
+      }
+      return Promise.resolve(killProcess(server.process, signal)).catch(() => {/* ignore */});
+    } catch {
+      return Promise.resolve();
     }
   }
 
@@ -649,13 +661,16 @@ interface PendingRequest {
   reject(err: unknown): void;
 }
 
-/** Resolves with whether the server's process exited before the timeout. */
-function waitForExit(server: Server, timeout: number) {
+/**
+ * Resolves with whether the server's process exited and the processes it started were killed (see
+ * `killProcess`) before the timeout.
+ */
+function waitForExit(server: Server, killed: Promise<void>, timeout: number) {
   return new Promise<boolean>(resolve => {
     const timeoutId = setTimeout(() => resolve(false), timeout);
     // the wait doesn't keep the process running (ex. the extension host that's shutting down)
     timeoutId.unref();
-    server.exited.then(() => {
+    Promise.all([server.exited, killed]).then(() => {
       clearTimeout(timeoutId);
       resolve(true);
     });

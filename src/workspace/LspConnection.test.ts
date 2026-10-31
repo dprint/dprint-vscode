@@ -288,6 +288,31 @@ describe("LspConnection", () => {
     assert.strictEqual(processes.length, 2);
   });
 
+  it("kills the processes the server's process started, and starts another once that's done", async () => {
+    // ex. the dprint that the shell of an npm `dprint.cmd` started
+    const kills: { process: ServerProcess; signal: NodeJS.Signals | undefined }[] = [];
+    let finishKill!: () => void;
+    const { connection, processes } = createConnection({
+      killProcess: (process, signal) => {
+        kills.push({ process, signal });
+        return new Promise(resolve => finishKill = resolve);
+      },
+    });
+
+    const process = await killWithUnreadableOutput(connection, processes);
+    assert.strictEqual(kills.length, 1);
+    assert.strictEqual(kills[0].process, process as unknown as ServerProcess);
+    assert.strictEqual(kills[0].signal, undefined);
+    connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
+    process.exit();
+    await nextTick();
+    // the process it started may still hold the session's lock
+    assert.strictEqual(processes.length, 1);
+    finishKill();
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+  });
+
   it("doesn't start the server again when disposed while the one that was killed exits", async () => {
     for (const dispose of [(c: LspConnection) => c.dispose(), (c: LspConnection) => c.disposeWhenIdle()]) {
       const { connection, processes } = createConnection();
@@ -560,6 +585,7 @@ function createConnection(options: {
   showMessage?: (params: MessageParams) => void;
   onDiagnostics?: (params: PublishDiagnosticsParams) => void;
   onConfigChanged?: (params: ConfigChangedParams) => void;
+  killProcess?: (process: ServerProcess, signal: NodeJS.Signals | undefined) => Promise<void> | void;
 } = {}) {
   const processes: FakeProcess[] = [];
   const logs: [string, string][] = [];
@@ -572,6 +598,7 @@ function createConnection(options: {
       processes.push(process);
       return process as unknown as ServerProcess;
     },
+    killProcess: options.killProcess,
     getInitializeParams: () => INITIALIZE_PARAMS,
     showMessage: options.showMessage ?? (() => {}),
     showProgress(title, percentage) {

@@ -5,6 +5,7 @@ import {
   getCommandDisplayText,
   getCommandLaunchInfo,
   getProcessKey,
+  getProcessTreeKill,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -78,6 +79,27 @@ describe("getCommandLaunchInfo", () => {
         .command,
       "\"C:\\project\\.vscode\\dprint.BAT\" \"-v\"",
     );
+  });
+});
+
+describe("getProcessTreeKill", () => {
+  it("kills the process tree with taskkill by its absolute path on Windows", () => {
+    // ex. the dprint.exe that the cmd.exe of an npm `dprint.cmd` started
+    assert.deepStrictEqual(getProcessTreeKill(1234, "win32", "D:\\Windows"), {
+      kind: "command",
+      command: "D:\\Windows\\System32\\taskkill.exe",
+      args: ["/T", "/F", "/PID", "1234"],
+    });
+    assert.strictEqual(
+      (getProcessTreeKill(1234, "win32", undefined) as { command: string }).command,
+      "C:\\Windows\\System32\\taskkill.exe",
+    );
+  });
+
+  it("signals the process group elsewhere", () => {
+    // ex. the dprint that npm's Node.js wrapper started
+    assert.deepStrictEqual(getProcessTreeKill(1234, "linux", undefined), { kind: "group", pid: -1234 });
+    assert.deepStrictEqual(getProcessTreeKill(1234, "darwin", undefined), { kind: "group", pid: -1234 });
   });
 });
 

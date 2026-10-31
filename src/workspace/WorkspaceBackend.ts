@@ -23,7 +23,7 @@ import {
   USER_DATA_SCHEME,
 } from "../constants";
 import { type Environment, RealEnvironment } from "../environment";
-import { DprintExecutable } from "../executable/DprintExecutable";
+import { DprintExecutable, killProcessTree } from "../executable/DprintExecutable";
 import type { ConfigFileChangeType, FormatDocumentResult } from "../ExtensionBackend";
 import {
   getLanguageFiles,
@@ -459,6 +459,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   #createConnection(executable: DprintExecutable): LspConnection {
     const connection: LspConnection = new LspConnection({
       spawn: () => executable.spawnLanguageServer(),
+      // ex. a shell or an npm `dprint.cmd` started it, which leaves dprint running when only it's killed
+      killProcess: (serverProcess, signal) => killProcessTree(serverProcess, signal),
       getInitializeParams: () => ({
         processId: process.pid,
         clientInfo: { name: vscode.env.appName, version: vscode.version },

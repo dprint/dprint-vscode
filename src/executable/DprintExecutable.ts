@@ -1,5 +1,5 @@
 import { which } from "@dsherret/which";
-import { exec, execFile, spawn } from "node:child_process";
+import { type ChildProcess, exec, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as process from "node:process";
@@ -14,6 +14,7 @@ import {
   getCommandDisplayText,
   getCommandLaunchInfo,
   getProcessKey,
+  getProcessTreeKill,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -94,24 +95,27 @@ export class DprintExecutable {
 
   /**
    * Starts dprint's language server, which an editor extension uses with the `dprint/*`
-   * methods. It exits with the process of the `processId` it's initialized with.
+   * methods. It exits with the process of the `processId` it's initialized with. It's
+   * started in its own process group outside Windows, so it can be killed with what it
+   * started (see `killProcessTree`).
    */
   spawnLanguageServer() {
     const args = ["lsp"];
     if (this.#verbose) {
       args.push("--verbose");
     }
-    return this.spawn(args);
+    return this.spawn(args, { detached: process.platform !== "win32" });
   }
 
   /** Starts the cli with the arguments and pipes for its stdio. */
-  spawn(args: string[]) {
+  spawn(args: string[], options: { detached?: boolean } = {}) {
     const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
     return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
       env: getLaunchEnv(this.#env),
       shell: launchInfo.shell,
+      detached: options.detached,
     });
   }
 
@@ -151,6 +155,36 @@ export class DprintExecutable {
       }
     });
   }
+}
+
+/**
+ * Kills the language server's process with the processes it started (see `getProcessTreeKill`),
+ * which resolves once that was done. Only the process is killed when that fails.
+ */
+export function killProcessTree(childProcess: ChildProcess, signal: NodeJS.Signals | undefined): Promise<void> {
+  const pid = childProcess.pid;
+  if (pid == null) {
+    childProcess.kill(signal);
+    return Promise.resolve();
+  }
+  const treeKill = getProcessTreeKill(pid, process.platform, process.env.SystemRoot);
+  if (treeKill.kind === "group") {
+    try {
+      process.kill(treeKill.pid, signal ?? "SIGTERM");
+    } catch {
+      childProcess.kill(signal);
+    }
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    execFile(treeKill.command, treeKill.args, { cwd: path.dirname(treeKill.command), windowsHide: true }, err => {
+      if (err != null) {
+        // ex. taskkill wasn't found, or the process exited already
+        childProcess.kill(signal);
+      }
+      resolve();
+    });
+  });
 }
 
 async function getCommand(options: DprintExecutableOptions): Promise<DprintCommand> {

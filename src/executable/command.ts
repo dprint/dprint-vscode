@@ -127,6 +127,34 @@ export function getCommandLaunchInfo(
   }
 }
 
+/** How to kill a process together with the processes it started. */
+export type ProcessTreeKill =
+  /** A command to run. */
+  | { kind: "command"; command: string; args: string[] }
+  /** The process group to signal, which is the negative process id of its leader. */
+  | { kind: "group"; pid: number };
+
+/**
+ * Gets how to kill a process together with the processes it started, because killing only a shell,
+ * a batch file such as an npm `dprint.cmd`, or npm's Node.js wrapper leaves dprint running. That's
+ * `taskkill /T /F` on Windows, by its absolute path so it isn't looked for in the workspace folder,
+ * and the process group elsewhere, which needs the process to be started in its own group.
+ */
+export function getProcessTreeKill(
+  pid: number,
+  platform: NodeJS.Platform,
+  systemRoot: string | undefined,
+): ProcessTreeKill {
+  if (platform === "win32") {
+    return {
+      kind: "command",
+      command: path.win32.join(systemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+      args: ["/T", "/F", "/PID", String(pid)],
+    };
+  }
+  return { kind: "group", pid: -pid };
+}
+
 function getWindowsCommandPath(command: DprintCommand) {
   return command.kind === "setting" && command.cwd != null && isWindowsRelativePath(command.path)
     // resolve instead of join for a drive-relative path (ex. `C:bin\dprint`)
