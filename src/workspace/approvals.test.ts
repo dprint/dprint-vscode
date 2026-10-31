@@ -486,37 +486,6 @@ describe("Approvals", () => {
     assert.deepStrictEqual(deniedSince, ["download"]);
   });
 
-  it("says a denial was allowed for another config file since when nothing replaced it", async () => {
-    // ex. what it denied was each allowed exactly for another config file since
-    for (
-      const [current, expected] of [
-        [{ configFile: null, approvals: [], status: READY }, ["processPlugins"]],
-        // not while the config file isn't used, or when something of the same kind replaced it
-        [{ configFile: null, approvals: [], status: APPROVAL_REQUIRED }, []],
-        [
-          { configFile: null, approvals: [{ ...approval("processPlugins"), id: "other", items: [] }], status: READY },
-          [],
-        ],
-      ] as const
-    ) {
-      const allowedElsewhere: string[] = [];
-      const approvals = new Approvals({
-        showAllowedElsewhereSince: approval => allowedElsewhere.push(approval.id),
-        ask: async () => "deny",
-        approve: async params => {
-          if (params.id === "processPlugins") {
-            throw Object.assign(new Error("Changed."), { code: -32803, data: { kind: "approvalChanged", current } });
-          }
-          return { configFile: null, approvals: [], status: READY };
-        },
-        pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-      });
-      // it isn't formatted because of the denial
-      assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), false);
-      assert.deepStrictEqual(allowedElsewhere, expected);
-    }
-  });
-
   it("doesn't say a denial failed when its approval is denied afterwards", async () => {
     const approved: ApproveParams[] = [];
     const approvals = new Approvals({

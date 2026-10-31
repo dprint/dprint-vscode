@@ -438,11 +438,12 @@ export interface ConfigInfoResult {
   /** The other files the config file formats, which only fileInfo says (ex. extensionless files with a shebang). */
   otherFiles: { kind: "shebangs" | "associations" | (string & {}); values: string[] }[];
   /**
-   * The local files that it was resolved from (ex. a configuration file it extends), and its own canonical path when that isn't the
-   * path of `configFile.uri` (ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), because the
-   * `configFileGlobs` watcher doesn't report a change there. The editor watches them too, by their directories (see "Lifecycle"
-   * for when one that's a symlink isn't watched). A file whose directory may not be read (ex. it's on another machine now) is
-   * left out.
+   * The local files that it was resolved from (ex. a configuration file it extends), and what it points to when it's a local
+   * configuration file that's a symlink (or is in a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a
+   * `base.json` or to a file in `node_modules`), because the `configFileGlobs` watcher doesn't report a change there. The editor
+   * watches them too, by their directories (see "Lifecycle" for when one that's a symlink isn't watched). Each is the editor's path
+   * when that's through a workspace folder or one of its ancestors that it knows by another path, and the canonical path otherwise,
+   * which the editor may watch. A file whose directory may not be read (ex. it's on another machine now) is left out.
    */
   watchUris: string[];
   status: FormatStatus;

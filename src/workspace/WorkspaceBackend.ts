@@ -535,15 +535,6 @@ export class WorkspaceBackend implements vscode.Disposable {
           ),
         );
       },
-      showAllowedElsewhereSince: approval => {
-        vscode.window.showWarningMessage(
-          toPlainNotificationText(
-            `${approval.title} (configuration file: ${
-              getDisplayPath(approval.configFile.uri)
-            }): what you denied was allowed for another configuration file since, or isn't needed anymore. Forget the decisions or restart dprint to be asked about it again.`,
-          ),
-        );
-      },
     });
     return { key, connection, approvals };
   }
