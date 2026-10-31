@@ -159,6 +159,29 @@ describe("DirWatchers", () => {
     assert.strictEqual(errors.length, 1);
   });
 
+  it("doesn't watch or look at a directory that's reached through a symlink", async () => {
+    // ex. a `git pull` made a directory above it a symlink to a share, which `lstat` would follow
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/link": "symlink", "/p/link/sub": "dir" };
+    const { watchers, watched, lstatCalls } = createWatchers(kinds);
+    await watchers.update(new Map([["/p/link/sub", ["base.json"]]]));
+    assert.deepStrictEqual(watched, []);
+    assert.ok(!lstatCalls.includes("/p/link/sub"), lstatCalls.join(", "));
+  });
+
+  it("watches a directory that's reached through a workspace folder that's a symlink", async () => {
+    const { watchers, watched } = createWatchers({ "/ws": "symlink", "/ws/a": "dir", "/ws/a/b": "dir" }, {
+      workspaceFolders: ["/ws"],
+    });
+    await watchers.update(new Map([["/ws/a/b", ["base.json"]]]));
+    assert.deepStrictEqual(watched, [["/ws/a", ["b"]], ["/ws/a/b", ["base.json"]]]);
+  });
+
+  it("looks at each directory once for an update", async () => {
+    const { watchers, lstatCalls } = createWatchers({ "/p": "dir", "/p/x": "dir", "/p/x/a": "dir", "/p/x/b": "dir" });
+    await watchers.update(new Map([["/p/x/a", ["base.json"]], ["/p/x/b", ["base.json"]]]));
+    assert.deepStrictEqual(lstatCalls.filter(call => call === "/p/x").length, 1);
+  });
+
   it("checks a watched directory again on each update", async () => {
     const kinds: Record<string, PathKind | undefined> = { "/p/a": "dir" };
     const { watchers, disposed } = createWatchers(kinds);
@@ -277,11 +300,13 @@ function createWatchers(
   const generations = new Map<string, { kind: PathKind | undefined; generation: number }>();
   const watched: [string, readonly string[]][] = [];
   const disposed: string[] = [];
+  const lstatCalls: string[] = [];
   const changes: [string, WatchedFileChange][] = [];
   const callbacks = new Map<string, ((filePath: string, change: WatchedFileChange) => void)[]>();
   const watchers = new DirWatchers({
     lstat: async filePath => {
       const key = toTestPath(filePath);
+      lstatCalls.push(key);
       const kind = await (options.pathKind?.(key) ?? Promise.resolve(kinds[key]));
       const last = generations.get(key);
       const generation = last == null ? 0 : last.kind === kind ? last.generation : last.generation + 1;
@@ -303,14 +328,28 @@ function createWatchers(
     onChange: (filePath, change) => changes.push([filePath, change]),
     onError: options.onError ?? (err => assert.fail(String(err))),
     isCaseInsensitive: options.isCaseInsensitive ?? false,
-    isWorkspaceFolderOrAncestor: dirPath => (options.workspaceFolders ?? []).includes(toTestPath(dirPath)),
+    // `/p` and `/` are ancestors of a workspace folder, which the directories in the tests are in
+    isWorkspaceFolderOrAncestor: dirPath =>
+      ["/p/workspace", ...options.workspaceFolders ?? []].some(folder => isSameOrAncestor(toTestPath(dirPath), folder)),
   });
   const emit = (dirPath: string, filePath: string, change: WatchedFileChange) => {
     for (const callback of callbacks.get(dirPath) ?? []) {
       callback(filePath, change);
     }
   };
-  return { watchers, watched, disposed, changes, emit };
+  return { watchers, watched, disposed, changes, emit, lstatCalls };
+}
+
+/** Gets whether the directory is the folder or one of its ancestors, with the tests' forward slashes. */
+function isSameOrAncestor(dirPath: string, folder: string) {
+  for (let current = folder;; current = path.posix.dirname(current)) {
+    if (current === dirPath) {
+      return true;
+    }
+    if (path.posix.dirname(current) === current) {
+      return false;
+    }
+  }
 }
 
 /** Gets a path with forward slashes, which the tests use on every platform. */

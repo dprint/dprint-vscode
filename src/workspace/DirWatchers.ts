@@ -50,6 +50,10 @@ export interface DirWatchersOptions {
  * That holds for a directory that dprint provided too, because it may have been replaced with a
  * symlink since.
  *
+ * The directories above one are looked at too, from the nearest workspace folder (or one of its
+ * ancestors) down, because `lstat` follows a symlink before the last part of a path, so one that's
+ * reached through a symlink isn't watched or looked at either.
+ *
  * Each directory, and its parent (which is watched for the directory's name), is checked again on
  * each update, and the directory is checked again when its parent's watcher reports it, so one
  * that's replaced (ex. with a symlink) stops being watched or is watched with a new watcher, and
@@ -87,6 +91,8 @@ export class DirWatchers {
   }
 
   async #apply(fileNamesByDir: ReadonlyMap<string, readonly string[]>) {
+    // the directories that are looked at for each update, which the entries share
+    const statCache: StatCache = new Map();
     for (const [dirPath, entry] of [...this.#entries]) {
       const fileNames = fileNamesByDir.get(dirPath);
       if (fileNames == null || !this.#isSameNames(entry.fileNames, fileNames)) {
@@ -103,8 +109,8 @@ export class DirWatchers {
         entry = { fileNames: new Set(fileNames.map(name => this.#normalizeName(name))), originalNames: fileNames };
         this.#entries.set(dirPath, entry);
       }
-      await this.#checkParent(dirPath, entry);
-      await this.#check(dirPath, entry);
+      await this.#checkParent(dirPath, entry, statCache);
+      await this.#check(dirPath, entry, statCache);
     }
   }
 
@@ -113,12 +119,12 @@ export class DirWatchers {
    * folder or one of its ancestors that's a symlink), with a new watcher when it was replaced, and
    * stops watching it otherwise.
    */
-  async #checkParent(dirPath: string, entry: DirEntry) {
+  async #checkParent(dirPath: string, entry: DirEntry, statCache: StatCache) {
     const parentPath = path.dirname(dirPath);
     if (parentPath === dirPath) {
       return;
     }
-    const stat = await this.#lstat(parentPath);
+    const stat = await this.#lstat(parentPath, statCache);
     if (this.#isStale(dirPath, entry)) {
       return;
     }
@@ -134,7 +140,7 @@ export class DirWatchers {
     const name = path.basename(dirPath);
     const watcher = this.#options.watchDir(parentPath, [name], filePath => {
       if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(name)) {
-        this.#enqueue(() => this.#check(dirPath, entry)).catch(err => this.#options.onError(err));
+        this.#enqueue(() => this.#check(dirPath, entry, new Map())).catch(err => this.#options.onError(err));
       }
     });
     entry.parentWatcher = { identity, dispose: () => watcher.dispose() };
@@ -147,11 +153,11 @@ export class DirWatchers {
    * to, and stops watching it otherwise. Its parent is checked again when it's gone, because a parent
    * that was deleted too doesn't report the directory being created again.
    */
-  async #check(dirPath: string, entry: DirEntry) {
+  async #check(dirPath: string, entry: DirEntry, statCache: StatCache) {
     if (this.#isStale(dirPath, entry)) {
       return;
     }
-    const stat = await this.#lstat(dirPath);
+    const stat = await this.#lstat(dirPath, statCache);
     if (this.#isStale(dirPath, entry)) {
       return;
     }
@@ -164,7 +170,7 @@ export class DirWatchers {
     entry.dirWatcher = undefined;
     if (identity == null) {
       if (stat == null) {
-        await this.#checkParent(dirPath, entry);
+        await this.#checkParent(dirPath, entry, statCache);
       }
       return;
     }
@@ -191,8 +197,10 @@ export class DirWatchers {
     return run;
   }
 
-  #lstat(filePath: string) {
-    return this.#options.lstat(filePath).catch(() => undefined);
+  /** Gets what's at the path, which is undefined when it's gone or reached through a symlink that may not be followed. */
+  async #lstat(filePath: string, statCache: StatCache) {
+    const result = await lstatWithoutSymlinks(filePath, this.#options, statCache);
+    return result.isReachable ? result.stat : undefined;
   }
 
   /** Whether the entry isn't used anymore (ex. it was disposed while its directory was checked). */
@@ -208,6 +216,41 @@ export class DirWatchers {
   #normalizeName(name: string) {
     return this.#options.isCaseInsensitive ? name.toLowerCase() : name;
   }
+}
+
+/** What's at a path, when it could be looked at without following a symlink (see `lstatWithoutSymlinks`). */
+export type ReachableStat = { isReachable: true; stat: PathStat | undefined } | { isReachable: false };
+
+/** What was found at the paths that were looked at, which is shared by the lookups of one update. */
+export type StatCache = Map<string, Promise<PathStat | undefined>>;
+
+/**
+ * Gets what's at a path without following a symlink in it, because `lstat` only doesn't follow the last
+ * part of a path: each directory above it is looked at first, from the nearest workspace folder (or one
+ * of its ancestors, which may be symlinks because the user opened the workspace folder through them)
+ * down. It's not reachable when one of them is a symlink, and gone when one of them doesn't exist.
+ */
+export async function lstatWithoutSymlinks(
+  filePath: string,
+  options: Pick<DirWatchersOptions, "lstat" | "isWorkspaceFolderOrAncestor">,
+  statCache: StatCache = new Map(),
+): Promise<ReachableStat> {
+  const parentPath = path.dirname(filePath);
+  if (parentPath !== filePath && !options.isWorkspaceFolderOrAncestor(parentPath)) {
+    const parent = await lstatWithoutSymlinks(parentPath, options, statCache);
+    if (!parent.isReachable || parent.stat?.kind === "symlink") {
+      return { isReachable: false };
+    }
+    if (parent.stat?.kind !== "dir") {
+      return { isReachable: true, stat: undefined };
+    }
+  }
+  let stat = statCache.get(filePath);
+  if (stat == null) {
+    stat = options.lstat(filePath).catch(() => undefined);
+    statCache.set(filePath, stat);
+  }
+  return { isReachable: true, stat: await stat };
 }
 
 /**

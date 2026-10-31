@@ -54,7 +54,9 @@ import {
   getWatchedPathKey,
   getWatchPattern,
   isWorkspaceFolderOrAncestorPath,
+  lstatWithoutSymlinks,
   type PathStat,
+  type StatCache,
   type WatchedFileChange,
 } from "./DirWatchers";
 import { getConfigFilePatterns } from "./documentPatterns";
@@ -588,12 +590,20 @@ export class WorkspaceBackend implements vscode.Disposable {
 
   /** Clears the problems of the config files that were deleted, which dprint doesn't check anymore. */
   async #clearDeletedConfigDiagnostics() {
+    const statCache: StatCache = new Map();
     for (const uris of this.#diagnosticUris.values()) {
       for (const uri of [...uris]) {
         const fileUri = vscode.Uri.parse(uri);
-        // a symlink isn't followed to find out whether it's there (ex. one to a share that replaced it),
-        // so its problems are kept until dprint publishes them again or it's gone
-        if (fileUri.scheme === FILE_SCHEME && await this.#environment.pathKind(fileUri.fsPath) == null) {
+        // a symlink isn't followed to find out whether it's there (ex. one to a share that replaced it or a
+        // directory above it), so its problems are kept until dprint publishes them again or it's gone
+        if (fileUri.scheme !== FILE_SCHEME) {
+          continue;
+        }
+        const result = await lstatWithoutSymlinks(fileUri.fsPath, {
+          lstat: lstatPath,
+          isWorkspaceFolderOrAncestor,
+        }, statCache);
+        if (result.isReachable && result.stat == null) {
           uris.delete(uri);
           this.#diagnostics.delete(fileUri);
         }
