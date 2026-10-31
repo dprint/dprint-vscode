@@ -63,7 +63,6 @@ import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./
 import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type Action,
-  type ApprovalDecision,
   type ConfigApprovals,
   type ConfigFileInfo,
   type ConfigInfoResult,
@@ -139,8 +138,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #approvalConfigurationProvider: vscode.Disposable;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
-  /** The prompts that are open by the id of their approval, which the dprint processes share (see `#askApproval`). */
-  readonly #approvalPrompts = new Map<string, Promise<ApprovalDecision | undefined>>();
   /** What's kept across the states for the session of the extension. */
   readonly #session: WorkspaceSession = {
     hasNotifiedNoConfig: false,
@@ -517,23 +514,10 @@ export class WorkspaceBackend implements vscode.Disposable {
     return connection;
   }
 
-  /**
-   * Asks the user about an approval, which shares the prompt with the other dprint processes that ask about
-   * the same approval id at the same time (ex. two installs of the same version of dprint that use the same
-   * global config file), so each of them is sent the decision. Each still notes on its own that it asked.
-   */
-  #askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
-    let prompt = this.#approvalPrompts.get(approval.id);
-    if (prompt == null) {
-      prompt = askApproval(approval, choices).finally(() => this.#approvalPrompts.delete(approval.id));
-      this.#approvalPrompts.set(approval.id, prompt);
-    }
-    return prompt;
-  }
-
   #createService(key: string, connection: LspConnection, configFileNames: ConfigFileNames): Service {
     const approvals = new Approvals({
-      ask: (approval, choices) => this.#askApproval(approval, choices),
+      // each dprint process shows its own prompts, because the same id may be another approval in another version
+      ask: askApproval,
       approve: async params => {
         const result = await connection.approve(params);
         // ex. the decision couldn't be stored
