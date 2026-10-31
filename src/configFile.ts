@@ -15,9 +15,11 @@ export function discoverWorkspaceConfigFiles(opts: { logger: Logger }) {
   });
 
   function vscodeFindFiles() {
-    // note: this follows a symlink to a directory when vscode's `search.followSymlinks` setting is on, which
-    // it is by default, and a symlink to a share may make it read from another machine. Its API has no
-    // option to turn that off (`findFiles2` with `followSymlinks` is only a proposed API).
+    // note: this follows a symlink to a directory while vscode's `search.followSymlinks` setting is on, which
+    // it is by default (its search runs ripgrep with `--follow`), so a symlink in the workspace to a share may
+    // make it read from another machine. The api of the vscode versions this supports (`engines.vscode`) has
+    // no option to turn that off (`findFiles2` with `followSymlinks` is a proposed api there, which a published
+    // extension can't use), and the spec only asks for it where the editor's api allows it.
     return vscode.workspace.findFiles(
       /* include */ DPRINT_CONFIG_FILEPATH_GLOB,
       /* exclude */ "**/node_modules/**",
