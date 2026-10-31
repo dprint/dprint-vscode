@@ -55,13 +55,14 @@ export interface DirWatchersOptions {
  *
  * A directory and its parent (which is watched for the directory's name) are checked again on each
  * update and when the parent's watcher reports the directory, and a watcher is replaced when what it
- * watches was replaced. When the watcher of a directory is replaced or removed, its files are reported
- * as created or deleted, because the files that were created with it aren't reported by the new
- * watcher. When the parent reports a directory that kept its identity (ex. it was deleted and created
- * again, and ext4 reused its inode), the files whose versions changed since they were last looked at
- * are reported instead. Note that vscode polls a watched directory that was deleted until it exists again and then
- * watches it again by itself (following a symlink that replaced it), which can't be turned off, so the
- * watcher of a parent that's gone is disposed once that's noticed.
+ * watches was replaced. Then its files whose versions changed since they were last looked at (which
+ * includes their identity) are reported, because a new watcher doesn't report the files that were
+ * created with the directory, and a directory that was deleted and created again may keep its identity
+ * (ex. ext4 reuses the inode it just freed). Its watcher is replaced too when one of them was created
+ * or deleted, so vscode watches the new directory right away. Note that vscode polls a watched directory
+ * that was deleted until it exists again and then watches it again by itself (following a symlink that
+ * replaced it), which can't be turned off, so the watcher of a parent that's gone is disposed once that's
+ * noticed.
  */
 export class DirWatchers {
   readonly #options: DirWatchersOptions;
@@ -144,22 +145,36 @@ export class DirWatchers {
       return;
     }
     const previous = entry.dirWatcher;
-    entry.dirWatcher = swapWatcher(
-      previous,
-      identity,
-      () =>
-        this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
-          if (entry.fileNames.has(this.#normalizeName(getFileName(filePath)))) {
-            this.#options.onChange(filePath, change);
-          }
-        }),
-    );
-    if (entry.dirWatcher !== previous) {
-      // the files of the first watcher are only noted, which the later checks compare with
-      await this.#reportFiles(dirPath, entry, entry.fileVersions == null ? "none" : "all");
-    } else if (isParentReport && entry.dirWatcher != null) {
-      await this.#reportFiles(dirPath, entry, "changed");
+    entry.dirWatcher = swapWatcher(previous, identity, () => this.#watchDir(dirPath, entry));
+    if (entry.dirWatcher === previous && !isParentReport) {
+      return;
     }
+    const hasCreatedOrDeleted = await this.#reportFiles(dirPath, entry);
+    if (hasCreatedOrDeleted && entry.dirWatcher === previous && entry.dirWatcher != null) {
+      // ex. it was deleted and created again with the same identity, which vscode may not watch yet
+      entry.dirWatcher.dispose();
+      entry.dirWatcher = swapWatcher(undefined, entry.dirWatcher.identity, () => this.#watchDir(dirPath, entry));
+    }
+  }
+
+  /** Watches the directory for its files, which notes the version of each one it reports (see `#reportFiles`). */
+  #watchDir(dirPath: string, entry: DirEntry) {
+    return this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
+      const name = entry.originalNames.find(name =>
+        this.#normalizeName(name) === this.#normalizeName(getFileName(filePath))
+      );
+      if (name == null) {
+        return;
+      }
+      this.#options.onChange(filePath, change);
+      // so a later report of the directory by its parent doesn't report it again (ex. on each save on Windows)
+      this.#enqueue(async () => {
+        const version = await this.#getFileVersion(dirPath, entry, name);
+        if (!this.#isStale(dirPath, entry)) {
+          entry.fileVersions?.set(name, version);
+        }
+      }).catch(err => this.#options.onError(err));
+    });
   }
 
   /**
@@ -173,30 +188,41 @@ export class DirWatchers {
   }
 
   /**
-   * Notes the versions of a directory's files and reports them as created, changed, or deleted, which
-   * dprint checks itself (ex. a package directory that `npm install` created again with its files): all
-   * of them when its watcher was replaced or removed, only the ones that changed since they were noted
-   * when it's the same, and none for its first watcher.
+   * Notes the versions of a directory's files, and reports the ones that changed since they were noted as
+   * created, changed, or deleted, which dprint checks itself (ex. a package directory that `npm install`
+   * created again with its files). The first time, they're only noted. Resolves with whether one of them
+   * was created or deleted.
    */
-  async #reportFiles(dirPath: string, entry: DirEntry, which: "all" | "changed" | "none") {
+  async #reportFiles(dirPath: string, entry: DirEntry) {
     const versions = new Map<string, string | undefined>();
+    let hasCreatedOrDeleted = false;
     for (const name of entry.originalNames) {
-      const filePath = path.join(dirPath, name);
-      // the directory was looked at, so its files are looked at without following a symlink
-      const stat = entry.dirWatcher == null ? undefined : await this.#options.lstat(filePath).catch(() => undefined);
+      const version = await this.#getFileVersion(dirPath, entry, name);
       if (this.#isStale(dirPath, entry)) {
-        return;
+        return false;
       }
-      const version = stat == null ? undefined : `${stat.identity}:${stat.version ?? ""}`;
-      const previousVersion = entry.fileVersions?.get(name);
       versions.set(name, version);
-      if (which === "all") {
-        this.#options.onChange(filePath, version == null ? "deleted" : "created");
-      } else if (which === "changed" && version !== previousVersion) {
-        this.#options.onChange(filePath, version == null ? "deleted" : previousVersion == null ? "created" : "changed");
+      if (entry.fileVersions == null) {
+        continue;
+      }
+      const previousVersion = entry.fileVersions.get(name);
+      if (version !== previousVersion) {
+        hasCreatedOrDeleted ||= version == null || previousVersion == null;
+        const change = version == null ? "deleted" : previousVersion == null ? "created" : "changed";
+        this.#options.onChange(path.join(dirPath, name), change);
       }
     }
     entry.fileVersions = versions;
+    return hasCreatedOrDeleted;
+  }
+
+  /** Gets the version of a watched directory's file, which is undefined when it's gone or the directory isn't watched. */
+  async #getFileVersion(dirPath: string, entry: DirEntry, name: string) {
+    // the directory was looked at, so its files are looked at without following a symlink
+    const stat = entry.dirWatcher == null
+      ? undefined
+      : await this.#options.lstat(path.join(dirPath, name)).catch(() => undefined);
+    return stat == null ? undefined : `${stat.identity}:${stat.version ?? ""}`;
   }
 
   /**

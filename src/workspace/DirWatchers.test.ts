@@ -194,20 +194,26 @@ describe("DirWatchers", () => {
       "/p": "dir",
       "/p/pkg": "dir",
       "/p/pkg/dprint.json": "file",
+      "/p/pkg/old.json": "file",
     };
-    const identities: Record<string, string> = { "/p/pkg": "old" };
+    const identities: Record<string, string> = { "/p/pkg": "old", "/p/pkg/dprint.json": "old" };
     const { watchers, watched, disposed, changes, emit } = createWatchers(kinds, { identities });
-    await watchers.update(new Map([["/p/pkg", ["dprint.json", "base.json"]]]));
+    await watchers.update(new Map([["/p/pkg", ["dprint.json", "old.json", "new.json", "missing.json"]]]));
     assert.strictEqual(changes.length, 0);
 
     identities["/p/pkg"] = "new";
+    identities["/p/pkg/dprint.json"] = "new";
+    kinds["/p/pkg/old.json"] = undefined;
+    kinds["/p/pkg/new.json"] = "file";
     emit("/p", "/p/pkg", "created");
     await nextTicks();
     assert.deepStrictEqual(disposed, ["/p/pkg"]);
     assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/pkg").length, 2);
+    // not the file that's missing before and after
     assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
-      ["/p/pkg/dprint.json", "created"],
-      ["/p/pkg/base.json", "deleted"],
+      ["/p/pkg/dprint.json", "changed"],
+      ["/p/pkg/old.json", "deleted"],
+      ["/p/pkg/new.json", "created"],
     ]);
   });
 
@@ -227,7 +233,8 @@ describe("DirWatchers", () => {
     kinds["/p/shared/new.json"] = "file";
     emit("/p", "/p/shared", "changed");
     await nextTicks();
-    assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/shared").length, 1);
+    // and watches it again, because a file was created or deleted, which vscode may not watch yet
+    assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/shared").length, 2);
     assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
       ["/p/shared/base.json", "changed"],
       ["/p/shared/other.json", "deleted"],
@@ -239,10 +246,30 @@ describe("DirWatchers", () => {
     assert.strictEqual(changes.length, 3);
   });
 
+  it("doesn't report a file again that its directory's watcher reported", async () => {
+    // ex. saving a file on Windows reports it and then its directory to the parent's watcher
+    const kinds: Record<string, PathKind | undefined> = {
+      "/p": "dir",
+      "/p/shared": "dir",
+      "/p/shared/base.json": "file",
+    };
+    const versions: Record<string, string> = { "/p/shared/base.json": "1" };
+    const { watchers, changes, emit } = createWatchers(kinds, { versions });
+    await watchers.update(new Map([["/p/shared", ["base.json"]]]));
+    versions["/p/shared/base.json"] = "2";
+    emit("/p/shared", "/p/shared/base.json", "changed");
+    await nextTicks();
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/shared/base.json", "changed"],
+    ]);
+  });
+
   it("reports the files of a directory that's gone as deleted", async () => {
-    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/pkg": "dir" };
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/pkg": "dir", "/p/pkg/dprint.json": "file" };
     const { watchers, changes, emit } = createWatchers(kinds);
-    await watchers.update(new Map([["/p/pkg", ["dprint.json"]]]));
+    await watchers.update(new Map([["/p/pkg", ["dprint.json", "missing.json"]]]));
     kinds["/p/pkg"] = undefined;
     emit("/p", "/p/pkg", "deleted");
     await nextTicks();
