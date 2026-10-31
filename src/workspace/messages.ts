@@ -225,7 +225,12 @@ export interface ApprovalItem {
    * where it's read from. Don't open it before it's allowed, because that follows the symlink and reads it from the other machine.
    */
   localUri?: string;
-  /** The npm registry of an npm plugin when it isn't the default one. */
+  /**
+   * The npm registry an npm plugin is from when it isn't the default one (`https://registry.npmjs.org/`), which an `.npmrc` file
+   * can set (ex. the project's for a scope). Show it with the specifier because the specifier doesn't say where the plugin is from.
+   * For the download of an npm registry itself, it's the registry, which is the specifier too, and allowing it allows every url under
+   * it unlike another url. It's escaped like the specifier.
+   */
   registry?: string;
   /** The `.npmrc` file of a proxy. */
   npmrcUri?: string;

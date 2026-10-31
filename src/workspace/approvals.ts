@@ -312,7 +312,14 @@ function getItemText(item: ApprovalItem) {
     const reachedFrom = item.localUri == null ? "" : `, which ${getDisplayPath(item.localUri)} in the project reaches`;
     return `${item.specifier} (read from another machine${reachedFrom})`;
   }
-  return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
+  if (item.registry == null) {
+    return item.specifier;
+  }
+  // the download of a registry itself, which allows every url under it unlike another url
+  if (item.registry === item.specifier) {
+    return `the npm registry ${item.specifier} (allowing it allows every package from it)`;
+  }
+  return `${item.specifier} (from the npm registry ${item.registry})`;
 }
 
 /**

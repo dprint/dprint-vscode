@@ -662,6 +662,7 @@ describe("getApprovalDetails", () => {
     const download = approval("download");
     download.items = [
       { specifier: "https://example.com/plugin.wasm", kind: "plugin" },
+      { specifier: "npm:@scope/plugin@1.0.0", kind: "plugin", registry: "https://registry.example.com/" },
       { specifier: "https://registry.example.com/", kind: "plugin", registry: "https://registry.example.com/" },
       { specifier: "https://${TOKEN}@proxy.example", kind: "npmrcProxy", npmrcUri: "https://example.com/.npmrc" },
     ];
@@ -669,7 +670,8 @@ describe("getApprovalDetails", () => {
       getApprovalDetails(download),
       "// download\n// Approve download?\n\n// what's approved\n"
         + "// - https://example.com/plugin.wasm\n"
-        + "// - https://registry.example.com/ (from the npm registry https://registry.example.com/)\n"
+        + "// - npm:@scope/plugin@1.0.0 (from the npm registry https://registry.example.com/)\n"
+        + "// - the npm registry https://registry.example.com/ (allowing it allows every package from it)\n"
         + "// - the proxy https://${TOKEN}@proxy.example that https://example.com/.npmrc sets",
     );
   });
