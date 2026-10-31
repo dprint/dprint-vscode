@@ -394,7 +394,13 @@ export class LspConnection {
       initialized: undefined!,
       isInitialized: false,
       hasExited: false,
-      exited: new Promise(resolve => resolveExited = resolve),
+      processExited: false,
+      exited: new Promise(resolve =>
+        resolveExited = () => {
+          server.processExited = true;
+          resolve();
+        }
+      ),
       workspaceFolders: initializeParams.workspaceFolders,
       progress: new Map(),
       stderr: "",
@@ -538,7 +544,9 @@ export class LspConnection {
     if (await waitForExit(server, killed, timeout)) {
       return;
     }
-    const killedAgain = this.#killProcess(server, "SIGKILL");
+    // only while it's running, because once it exited its pid may be another process's (ex. what
+    // it started is still being killed)
+    const killedAgain = server.processExited ? killed : this.#killProcess(server, "SIGKILL");
     if (!await waitForExit(server, killedAgain, timeout)) {
       // ex. it's stuck reading from a network drive, which isn't a reason to stop formatting
       this.#options.logger.logWarn(
@@ -549,6 +557,9 @@ export class LspConnection {
 
   /** Kills the server's process, which resolves once the processes it started were killed too (see `killProcess`). */
   #killProcess(server: Server, signal: NodeJS.Signals | undefined): Promise<void> {
+    if (server.processExited) {
+      return Promise.resolve(); // its pid may be another process's
+    }
     try {
       const killProcess = this.#options.killProcess;
       if (killProcess == null) {
@@ -646,6 +657,11 @@ interface Server {
   /** Whether it responded to the initialize request. */
   isInitialized: boolean;
   hasExited: boolean;
+  /**
+   * Whether the process exited or failed to start, after which it's never killed because its pid
+   * may be another process's then.
+   */
+  processExited: boolean;
   /** Resolves once the process exited or failed to start. */
   exited: Promise<void>;
   /** The workspace folders the server has. */

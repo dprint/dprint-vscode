@@ -6,6 +6,9 @@ import {
   getCommandLaunchInfo,
   getProcessKey,
   getProcessTreeKill,
+  type KillableProcess,
+  killProcessTreeWith,
+  type ProcessTreeKillEnvironment,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -101,6 +104,99 @@ describe("getProcessTreeKill", () => {
     assert.deepStrictEqual(getProcessTreeKill(1234, "linux", undefined), { kind: "group", pid: -1234 });
     assert.deepStrictEqual(getProcessTreeKill(1234, "darwin", undefined), { kind: "group", pid: -1234 });
   });
+});
+
+describe("killProcessTreeWith", () => {
+  it("runs taskkill on Windows, and kills only the process when that fails", async () => {
+    for (const succeeds of [true, false]) {
+      const { process, killed } = createProcess(1234);
+      const { env, calls } = createEnvironment("win32", { runSucceeds: succeeds });
+      await killProcessTreeWith(process, undefined, env);
+      assert.deepStrictEqual(calls, [["run", "C:\\Windows\\System32\\taskkill.exe", "/T", "/F", "/PID", "1234"]]);
+      assert.deepStrictEqual(killed, succeeds ? [] : [undefined]);
+    }
+  });
+
+  it("signals the process group elsewhere and waits for its processes to exit", async () => {
+    const { process, killed } = createProcess(1234);
+    // the group has processes for two checks
+    const { env, calls } = createEnvironment("linux", { groupChecks: 2 });
+    await killProcessTreeWith(process, "SIGKILL", env);
+    assert.deepStrictEqual(calls, [
+      ["signal", -1234, "SIGKILL"],
+      ["signal", -1234, 0],
+      ["delay"],
+      ["signal", -1234, 0],
+      ["delay"],
+      ["signal", -1234, 0],
+    ]);
+    assert.deepStrictEqual(killed, []);
+  });
+
+  it("stops waiting for the processes of the group after a timeout", async () => {
+    const { process } = createProcess(1234);
+    const { env, calls } = createEnvironment("linux", { groupChecks: Infinity });
+    await killProcessTreeWith(process, undefined, env);
+    assert.strictEqual(calls.filter(call => call[0] === "delay").length, 100);
+  });
+
+  it("kills only the process when the group can't be signalled", async () => {
+    const { process, killed } = createProcess(1234);
+    const { env } = createEnvironment("linux", { signalThrows: true });
+    await killProcessTreeWith(process, "SIGTERM", env);
+    assert.deepStrictEqual(killed, ["SIGTERM"]);
+  });
+
+  it("only kills the process by its handle without a pid or once it exited", async () => {
+    // its pid may be another process's once it exited
+    for (const [pid, exitCode] of [[undefined, null], [1234, 1]] as const) {
+      const { process, killed } = createProcess(pid, exitCode);
+      const { env, calls } = createEnvironment("win32");
+      await killProcessTreeWith(process, undefined, env);
+      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(killed, [undefined]);
+    }
+  });
+
+  function createProcess(pid: number | undefined, exitCode: number | null = null) {
+    const killed: (NodeJS.Signals | undefined)[] = [];
+    const process: KillableProcess = {
+      pid,
+      exitCode,
+      signalCode: null,
+      kill: signal => {
+        killed.push(signal);
+        return true;
+      },
+    };
+    return { process, killed };
+  }
+
+  function createEnvironment(
+    platform: NodeJS.Platform,
+    options: { runSucceeds?: boolean; groupChecks?: number; signalThrows?: boolean } = {},
+  ) {
+    const calls: unknown[][] = [];
+    let groupChecks = options.groupChecks ?? 0;
+    const env: ProcessTreeKillEnvironment = {
+      platform,
+      systemRoot: undefined,
+      signal: (pid, signal) => {
+        calls.push(["signal", pid, signal]);
+        if (options.signalThrows || (signal === 0 && groupChecks-- <= 0)) {
+          throw new Error("ESRCH");
+        }
+      },
+      run: async (command, args) => {
+        calls.push(["run", command, ...args]);
+        return options.runSucceeds ?? true;
+      },
+      delay: async () => {
+        calls.push(["delay"]);
+      },
+    };
+    return { env, calls };
+  }
 });
 
 describe("expandWindowsEnvVars", () => {

@@ -14,7 +14,7 @@ import {
   getCommandDisplayText,
   getCommandLaunchInfo,
   getProcessKey,
-  getProcessTreeKill,
+  killProcessTreeWith,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
@@ -158,32 +158,19 @@ export class DprintExecutable {
 }
 
 /**
- * Kills the language server's process with the processes it started (see `getProcessTreeKill`),
+ * Kills the language server's process with the processes it started (see `killProcessTreeWith`),
  * which resolves once that was done. Only the process is killed when that fails.
  */
 export function killProcessTree(childProcess: ChildProcess, signal: NodeJS.Signals | undefined): Promise<void> {
-  const pid = childProcess.pid;
-  if (pid == null) {
-    childProcess.kill(signal);
-    return Promise.resolve();
-  }
-  const treeKill = getProcessTreeKill(pid, process.platform, process.env.SystemRoot);
-  if (treeKill.kind === "group") {
-    try {
-      process.kill(treeKill.pid, signal ?? "SIGTERM");
-    } catch {
-      childProcess.kill(signal);
-    }
-    return Promise.resolve();
-  }
-  return new Promise(resolve => {
-    execFile(treeKill.command, treeKill.args, { cwd: path.dirname(treeKill.command), windowsHide: true }, err => {
-      if (err != null) {
-        // ex. taskkill wasn't found, or the process exited already
-        childProcess.kill(signal);
-      }
-      resolve();
-    });
+  return killProcessTreeWith(childProcess, signal, {
+    platform: process.platform,
+    systemRoot: process.env.SystemRoot,
+    signal: (pid, signal) => process.kill(pid, signal),
+    run: (command, args) =>
+      new Promise(resolve => {
+        execFile(command, args, { cwd: path.dirname(command), windowsHide: true }, err => resolve(err == null));
+      }),
+    delay: ms => new Promise(resolve => setTimeout(resolve, ms).unref()),
   });
 }
 

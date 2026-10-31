@@ -313,6 +313,31 @@ describe("LspConnection", () => {
     assert.strictEqual(processes.length, 2);
   });
 
+  it("doesn't kill the process again once it exited", async t => {
+    // ex. taskkill was slow to start, and the pid may be another process's once it exited
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const signals: (NodeJS.Signals | undefined)[] = [];
+    const { connection, processes } = createConnection({
+      killProcess: (_process, signal) => {
+        signals.push(signal);
+        return new Promise(() => {/* never finishes */});
+      },
+    });
+
+    const process = await killWithUnreadableOutput(connection, processes);
+    connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
+    process.exit();
+    await nextTick();
+    t.mock.timers.tick(1_000);
+    await nextTick();
+    assert.deepStrictEqual(signals, [undefined]);
+    // and another is started after the timeout
+    t.mock.timers.tick(1_000);
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+    assert.deepStrictEqual(signals, [undefined]);
+  });
+
   it("doesn't start the server again when disposed while the one that was killed exits", async () => {
     for (const dispose of [(c: LspConnection) => c.dispose(), (c: LspConnection) => c.disposeWhenIdle()]) {
       const { connection, processes } = createConnection();

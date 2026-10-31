@@ -155,6 +155,76 @@ export function getProcessTreeKill(
   return { kind: "group", pid: -pid };
 }
 
+/** The parts of a child process that killing it uses, which is a subset so this can be unit tested. */
+export interface KillableProcess {
+  readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  /** Kills it by its handle, which never reaches another process that has its pid once it exited. */
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+/** What killing a process tree uses, which is provided so it can be unit tested. */
+export interface ProcessTreeKillEnvironment {
+  platform: NodeJS.Platform;
+  systemRoot: string | undefined;
+  /** Sends a signal to a process or a process group like `process.kill`, which throws when there's none. */
+  signal(pid: number, signal: NodeJS.Signals | 0): void;
+  /** Runs a command, which resolves with whether it succeeded. */
+  run(command: string, args: string[]): Promise<boolean>;
+  delay(ms: number): Promise<void>;
+}
+
+/** How long to wait for the processes of a group to exit after it's signalled (see `killProcessTreeWith`). */
+const GROUP_EXIT_TIMEOUT = 5_000;
+/** How often to check whether the processes of a group exited. */
+const GROUP_EXIT_POLL_INTERVAL = 50;
+
+/**
+ * Kills a process with the processes it started (see `getProcessTreeKill`), which resolves once that
+ * was done: once `taskkill` finished on Windows, and once every process of the group exited (or after
+ * a timeout) elsewhere. Only the process is killed when that fails. Nothing is done once the process
+ * exited, because its pid (and so the root of the tree) may be another process's then.
+ */
+export async function killProcessTreeWith(
+  childProcess: KillableProcess,
+  signal: NodeJS.Signals | undefined,
+  env: ProcessTreeKillEnvironment,
+): Promise<void> {
+  const pid = childProcess.pid;
+  if (pid == null || hasExited(childProcess)) {
+    childProcess.kill(signal); // by its handle, which does nothing once it exited
+    return;
+  }
+  const treeKill = getProcessTreeKill(pid, env.platform, env.systemRoot);
+  if (treeKill.kind === "command") {
+    if (!await env.run(treeKill.command, treeKill.args) && !hasExited(childProcess)) {
+      // ex. taskkill wasn't found
+      childProcess.kill(signal);
+    }
+    return;
+  }
+  try {
+    env.signal(treeKill.pid, signal ?? "SIGTERM");
+  } catch {
+    childProcess.kill(signal);
+    return;
+  }
+  // the group isn't reused while any of its processes is running, so it's safe to check after its leader exited
+  for (let waited = 0; waited < GROUP_EXIT_TIMEOUT; waited += GROUP_EXIT_POLL_INTERVAL) {
+    try {
+      env.signal(treeKill.pid, 0);
+    } catch {
+      return; // every process of the group exited
+    }
+    await env.delay(GROUP_EXIT_POLL_INTERVAL);
+  }
+}
+
+function hasExited(childProcess: KillableProcess) {
+  return childProcess.exitCode != null || childProcess.signalCode != null;
+}
+
 function getWindowsCommandPath(command: DprintCommand) {
   return command.kind === "setting" && command.cwd != null && isWindowsRelativePath(command.path)
     // resolve instead of join for a drive-relative path (ex. `C:bin\dprint`)
