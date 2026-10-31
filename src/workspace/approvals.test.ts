@@ -674,7 +674,7 @@ describe("getApprovalDetails", () => {
       "// download\n// Approve download?\n\n// what's approved\n"
         + "// - https://example.com/plugin.wasm\n"
         + "// - npm:@scope/plugin@1.0.0 (from the npm registry https://registry.example.com/)\n"
-        + "// - the npm registry https://registry.example.com/ (allowing it allows every package from it)\n"
+        + "// - the npm registry https://registry.example.com/ (allowing it allows every package and url under it)\n"
         + "// - the proxy https://${TOKEN}@proxy.example that https://example.com/.npmrc sets",
     );
   });

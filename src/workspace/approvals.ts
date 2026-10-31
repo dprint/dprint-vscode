@@ -326,7 +326,7 @@ function getItemText(item: ApprovalItem) {
   }
   // the download of a registry itself, which allows every url under it unlike another url
   if (item.registry === item.specifier) {
-    return `the npm registry ${item.specifier} (allowing it allows every package from it)`;
+    return `the npm registry ${item.specifier} (allowing it allows every package and url under it)`;
   }
   return `${item.specifier} (from the npm registry ${item.registry})`;
 }

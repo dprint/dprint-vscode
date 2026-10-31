@@ -226,10 +226,11 @@ export interface ApprovalItem {
    */
   localUri?: string;
   /**
-   * The npm registry an npm plugin is from when it isn't the default one (`https://registry.npmjs.org/`), which an `.npmrc` file
-   * can set (ex. the project's for a scope). Show it with the specifier because the specifier doesn't say where the plugin is from.
-   * For the download of an npm registry itself, it's the registry, which is the specifier too, and allowing it allows every url under
-   * it unlike another url. It's escaped like the specifier.
+   * For the download of an npm registry itself (any registry, including the default one), it's the registry, which is the specifier
+   * too, and allowing it allows every url under it unlike another url, while the item's `kind` is what's downloaded from it (`plugin`
+   * or `config`). Show that allowing it allows every package and url under it. Otherwise, it's the npm registry an npm plugin is from
+   * when it isn't the default one (`https://registry.npmjs.org/`), which an `.npmrc` file can set (ex. the project's for a scope).
+   * Show it with the specifier then because the specifier doesn't say where the plugin is from. It's escaped like the specifier.
    */
   registry?: string;
   /** The `.npmrc` file of a proxy. */
