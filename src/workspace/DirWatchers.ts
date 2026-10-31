@@ -282,6 +282,21 @@ export async function getFileAccess(
 }
 
 /**
+ * Gets whether a config file can be opened (or its problems kept), which is when it can be without
+ * following a symlink, or when it's a symlink or reached through one and dprint's latest result for it
+ * is known and doesn't say it's on another machine (ex. a config file in a dotfiles directory that a
+ * symlink in the project points to).
+ *
+ * @param isOnAnotherMachine - What dprint's latest result for it says, which is undefined when there's none.
+ */
+export function canOpenConfigFile(
+  access: Awaited<ReturnType<typeof getFileAccess>>,
+  isOnAnotherMachine: boolean | undefined,
+) {
+  return access === "exists" || ((access === "symlink" || access === "unreachable") && isOnAnotherMachine === false);
+}
+
+/**
  * Gets what's at the path without following a symlink at the end of it. Its identity is its device and
  * inode, which a directory that replaced another may reuse (ex. on ext4), so the files of a directory
  * that its parent's watcher reports are compared with their versions too (see `DirWatchers`), and one

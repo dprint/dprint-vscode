@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { PathKind } from "../environment";
 import {
+  canOpenConfigFile,
   DirWatchers,
   getFileAccess,
   getFileNamesByDir,
@@ -366,6 +367,21 @@ describe("getFileAccess", () => {
     assert.strictEqual(await getFileAccess("/p/linked.json", options), "symlink");
     assert.strictEqual(await getFileAccess("/p/link/dprint.json", options), "unreachable");
     assert.strictEqual(await getFileAccess("/p/missing.json", options), "gone");
+  });
+});
+
+describe("canOpenConfigFile", () => {
+  it("opens one reached without a symlink, and one through a symlink only when dprint says it isn't on another machine", () => {
+    assert.strictEqual(canOpenConfigFile("exists", undefined), true);
+    // ex. `~/proj/dprint.json -> ~/dotfiles/dprint.json`
+    assert.strictEqual(canOpenConfigFile("symlink", false), true);
+    assert.strictEqual(canOpenConfigFile("unreachable", false), true);
+    // without a result for it, or when it's on another machine
+    assert.strictEqual(canOpenConfigFile("symlink", undefined), false);
+    assert.strictEqual(canOpenConfigFile("symlink", true), false);
+    assert.strictEqual(canOpenConfigFile("unreachable", undefined), false);
+    assert.strictEqual(canOpenConfigFile("unreachable", true), false);
+    assert.strictEqual(canOpenConfigFile("gone", false), false);
   });
 });
 
