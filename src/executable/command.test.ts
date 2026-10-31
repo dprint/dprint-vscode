@@ -140,6 +140,23 @@ describe("killProcessTreeWith", () => {
     assert.strictEqual(calls.filter(call => call[0] === "delay").length, 100);
   });
 
+  it("kills the group with SIGKILL when its processes don't exit in time, even once its leader exited", async () => {
+    // ex. a process a plugin started ignores SIGTERM, and the group isn't reused while it has one
+    const { process } = createProcess(1234);
+    const { env, calls } = createEnvironment("linux", { groupChecks: 30 });
+    await killProcessTreeWith(process, undefined, env);
+    const signals = calls.filter(call => call[0] === "signal" && call[2] !== 0);
+    assert.deepStrictEqual(signals, [["signal", -1234, "SIGTERM"], ["signal", -1234, "SIGKILL"]]);
+    // after the grace period
+    const killIndex = calls.findIndex(call => call[2] === "SIGKILL");
+    assert.strictEqual(calls.slice(0, killIndex).filter(call => call[0] === "delay").length, 20);
+
+    // and not again when it was already
+    const killed = createEnvironment("linux", { groupChecks: 30 });
+    await killProcessTreeWith(createProcess(1234).process, "SIGKILL", killed.env);
+    assert.strictEqual(killed.calls.filter(call => call[2] === "SIGKILL").length, 1);
+  });
+
   it("kills only the process when the group can't be signalled", async () => {
     const { process, killed } = createProcess(1234);
     const { env } = createEnvironment("linux", { signalThrows: true });

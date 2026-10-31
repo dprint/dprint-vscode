@@ -179,12 +179,19 @@ export interface ProcessTreeKillEnvironment {
 const GROUP_EXIT_TIMEOUT = 5_000;
 /** How often to check whether the processes of a group exited. */
 const GROUP_EXIT_POLL_INTERVAL = 50;
+/** How long the processes of a group get to exit after a signal before they're killed with SIGKILL. */
+const GROUP_KILL_GRACE = 1_000;
 
 /**
  * Kills a process with the processes it started (see `getProcessTreeKill`), which resolves once that
  * was done: once `taskkill` finished on Windows, and once every process of the group exited (or after
- * a timeout) elsewhere. Only the process is killed when that fails. Nothing is done once the process
- * exited, because its pid (and so the root of the tree) may be another process's then.
+ * a timeout) elsewhere, where the group is killed with SIGKILL when it doesn't exit in time (ex. a
+ * process that a plugin started ignores SIGTERM). Only the process is killed when that fails. Nothing
+ * is done once the process exited, because its pid (and so the root of the tree) may be another
+ * process's then, apart from the group, which isn't reused while it has a process.
+ *
+ * Note that `taskkill` opens the process by its pid a little after it's checked that it's running,
+ * so a process that exits in between may have its pid reused by then, which this can't rule out.
  */
 export async function killProcessTreeWith(
   childProcess: KillableProcess,
@@ -210,10 +217,16 @@ export async function killProcessTreeWith(
     childProcess.kill(signal);
     return;
   }
-  // the group isn't reused while any of its processes is running, so it's safe to check after its leader exited
+  // the group isn't reused while any of its processes is running, so it's safe to check and signal it
+  // after its leader exited as long as it still has a process
+  let isKilled = signal === "SIGKILL";
   for (let waited = 0; waited < GROUP_EXIT_TIMEOUT; waited += GROUP_EXIT_POLL_INTERVAL) {
     try {
       env.signal(treeKill.pid, 0);
+      if (!isKilled && waited >= GROUP_KILL_GRACE) {
+        isKilled = true;
+        env.signal(treeKill.pid, "SIGKILL");
+      }
     } catch {
       return; // every process of the group exited
     }

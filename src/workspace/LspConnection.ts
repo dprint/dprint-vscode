@@ -553,7 +553,9 @@ export class LspConnection {
     if (!await waitForExit(server, killedAgain, timeout)) {
       // ex. it's stuck reading from a network drive, which isn't a reason to stop formatting
       this.#options.logger.logWarn(
-        "The dprint language server didn't exit after it was killed, so another is started.",
+        server.processExited
+          ? "The processes the dprint language server started didn't exit after they were killed, so another is started."
+          : "The dprint language server didn't exit after it was killed, so another is started.",
       );
     }
   }

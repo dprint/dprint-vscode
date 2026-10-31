@@ -317,7 +317,7 @@ describe("LspConnection", () => {
     // ex. taskkill was slow to start, and the pid may be another process's once it exited
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const signals: (NodeJS.Signals | undefined)[] = [];
-    const { connection, processes } = createConnection({
+    const { connection, processes, logs } = createConnection({
       killProcess: (_process, signal) => {
         signals.push(signal);
         return new Promise(() => {/* never finishes */});
@@ -336,6 +336,10 @@ describe("LspConnection", () => {
     await waitUntil(() => processes.length === 2);
     assert.strictEqual(processes.length, 2);
     assert.deepStrictEqual(signals, [undefined]);
+    // what didn't exit is what it started
+    assert.ok(
+      logs.some(([level, message]) => level === "warn" && /processes the dprint language server started/.test(message)),
+    );
   });
 
   it("doesn't start the server again when disposed while the one that was killed exits", async () => {
