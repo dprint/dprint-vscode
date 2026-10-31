@@ -452,6 +452,18 @@ describe("filterCacheDirConfigFiles", () => {
     );
   });
 
+  it("doesn't follow a CACHEDIR.TAG that's a symlink", async () => {
+    // ex. one that points to a share, which isn't a cache tag
+    const env = new TestEnvironment({ homeDir });
+    env.writeFile(path.resolve("/other-machine/CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55");
+    env.symlink(path.resolve("/other-machine/CACHEDIR.TAG"), path.resolve("/project/target/CACHEDIR.TAG"));
+
+    assert.deepStrictEqual(
+      await filterCacheDirConfigFiles(env, folderPath, [rootConfig, packageConfig]),
+      [rootConfig, packageConfig],
+    );
+  });
+
   it("removes a config file directly in a cache directory", async () => {
     const env = new TestEnvironment({ homeDir });
     env.writeFile(path.resolve("/project/cache/CACHEDIR.TAG"), "");

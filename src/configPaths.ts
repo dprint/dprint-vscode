@@ -61,7 +61,8 @@ export function filterUnusedConfigFiles(env: Environment, configFilePaths: reado
 /**
  * Removes the config files that are in a cache directory within the folder, such
  * as the config files of the packages Cargo copies into its target directory. Cache
- * directories are identified by a CACHEDIR.TAG file (https://bford.info/cachedir/).
+ * directories are identified by a CACHEDIR.TAG file (https://bford.info/cachedir/),
+ * which is looked up without following a symlink (one isn't a cache tag).
  *
  * @param configFilePaths - The config files found in the folder.
  */
@@ -87,7 +88,7 @@ export async function filterCacheDirConfigFiles(
   function isCacheDir(dirPath: string) {
     let isCacheDir = isCacheDirByPath.get(dirPath);
     if (isCacheDir == null) {
-      isCacheDir = env.fileExists(path.join(dirPath, "CACHEDIR.TAG"));
+      isCacheDir = env.pathKind(path.join(dirPath, "CACHEDIR.TAG")).then(kind => kind === "file");
       isCacheDirByPath.set(dirPath, isCacheDir);
     }
     return isCacheDir;
