@@ -274,7 +274,8 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
  * Finds the config file the dprint CLI uses in the directory. A symlink isn't followed unless the
  * options say to, because it may point to another machine, which dprint only reads once the user
  * allows it. So a symlink that points to nothing is still found, which dprint then says is missing,
- * while the CLI would look further up for one.
+ * while the CLI would look further up for one. It looks for the extension's names, not the ones a dprint
+ * process says it looks up (`ServerCapability.configFileNames`), because it decides which one to start.
  */
 async function findConfigFileInDir(env: Environment, dirPath: string, options: FindConfigFileOptions) {
   const exists = async (filePath: string) =>

@@ -63,6 +63,7 @@ import { getFormatDocumentResult, getProviderEdits, ShownConfigErrors } from "./
 import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ProgressHandle } from "./LspConnection";
 import {
   type Action,
+  type ApprovalDecision,
   type ConfigApprovals,
   type ConfigFileInfo,
   type ConfigInfoResult,
@@ -138,6 +139,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #approvalConfigurationProvider: vscode.Disposable;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
+  /** The prompts that are open by the id of their approval, which the dprint processes share (see `#askApproval`). */
+  readonly #approvalPrompts = new Map<string, Promise<ApprovalDecision | undefined>>();
   /** What's kept across the states for the session of the extension. */
   readonly #session: WorkspaceSession = {
     hasNotifiedNoConfig: false,
@@ -514,9 +517,23 @@ export class WorkspaceBackend implements vscode.Disposable {
     return connection;
   }
 
+  /**
+   * Asks the user about an approval, which shares the prompt with the other dprint processes that ask about
+   * the same approval id at the same time (ex. two installs of the same version of dprint that use the same
+   * global config file), so each of them is sent the decision. Each still notes on its own that it asked.
+   */
+  #askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
+    let prompt = this.#approvalPrompts.get(approval.id);
+    if (prompt == null) {
+      prompt = askApproval(approval, choices).finally(() => this.#approvalPrompts.delete(approval.id));
+      this.#approvalPrompts.set(approval.id, prompt);
+    }
+    return prompt;
+  }
+
   #createService(key: string, connection: LspConnection, configFileNames: ConfigFileNames): Service {
     const approvals = new Approvals({
-      ask: askApproval,
+      ask: (approval, choices) => this.#askApproval(approval, choices),
       approve: async params => {
         const result = await connection.approve(params);
         // ex. the decision couldn't be stored
@@ -1156,7 +1173,9 @@ class WorkspaceState {
         const dirPath = getConfigFileDir(this.#environment, config.configFilePath);
         return !vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath));
       })
-      // with the names that its dprint process looks up
+      // with the names that its dprint process looks up, which only make the config files be found again when one
+      // is created (the search of the ancestor directories and the workspace watcher use the extension's names,
+      // because they run before a dprint process is started)
       .map(config => ({ configFilePath: config.configFilePath, names: config.service?.configFileNames }));
     this.#ancestorWatchers.update(getAncestorConfigFileNamesByDir(this.#environment, configFiles))
       .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
