@@ -32,7 +32,7 @@ export function activateBackend(
     configSchemaProvider,
     logger,
     state,
-    onAncestorConfigFileCreatedOrDeleted: () => {
+    onConfigFilesMayNeedFindingAgain: () => {
       switcher.reInitialize().catch(err => logger.logError("Error initializing:", err));
     },
     onConfigChanged: () => onDidChangeConfig.fire(),

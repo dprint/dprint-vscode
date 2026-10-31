@@ -221,8 +221,11 @@ export interface WorkspaceFolderConfigFile {
  * for each workspace folder without a config file of its own: the ones above it up to the one with the config
  * file it uses (ex. a config file that's created closer to it), or up to where the search stops (ex. one that
  * uses the global config file), apart from the ones in a workspace folder, which the extension watches anyway.
+ *
  * The home directory and its ancestors aren't watched, because a watcher of one on macOS gets each event of
- * everything below it, so those are looked in again instead (see `findWorkspaceFolderAncestorConfigFile`).
+ * everything below it (ex. what every program writes in `~/Library`), so those are looked in again instead
+ * (see `getWorkspaceFolderUnwatchedAncestors`). A directory below the home directory gets the events of what's
+ * below it too, but that's usually a project or a directory of projects, whose events are the user's own work.
  *
  * @param defaultNames - The names that the dprint process of a workspace folder without a config file looks up.
  */
@@ -232,28 +235,44 @@ export function getWorkspaceFolderAncestorWatchDirs(
   configFiles: readonly WorkspaceFolderConfigFile[],
   defaultNames: ConfigFileNames | undefined,
 ) {
-  const homeDir = env.homeDir();
   const dirs: { dirPath: string; names?: ConfigFileNames }[] = [];
   for (const folderPath of folderPaths) {
-    const folderConfigFiles = configFiles.filter(configFile => path.relative(configFile.folderPath, folderPath) === "");
-    const hasOwnConfigFile = folderConfigFiles.some(configFile =>
-      !configFile.isAncestor && path.relative(getConfigFileDir(env, configFile.configFilePath), folderPath) === ""
-    );
-    if (hasOwnConfigFile) {
+    const ancestors = getUsedAncestors(env, folderPath, configFiles);
+    if (ancestors == null) {
       continue;
     }
-    const ancestorConfigFile = folderConfigFiles.find(configFile => configFile.isAncestor);
-    const configDirPath = ancestorConfigFile == null
-      ? undefined
-      : getConfigFileDir(env, ancestorConfigFile.configFilePath);
-    for (const dirPath of getWorkspaceFolderAncestorDirs(env, folderPath, configDirPath)) {
-      const isHomeDirOrAncestor = homeDir != null && isPathWithin(dirPath, homeDir);
-      if (!isHomeDirOrAncestor && !folderPaths.some(folderPath => isPathWithin(folderPath, dirPath))) {
+    const { dirPaths, ancestorConfigFile } = ancestors;
+    for (const dirPath of dirPaths) {
+      if (!isHomeDirOrAncestor(env, dirPath) && !folderPaths.some(otherPath => isPathWithin(otherPath, dirPath))) {
         dirs.push({ dirPath, names: ancestorConfigFile == null ? defaultNames : ancestorConfigFile.names });
       }
     }
   }
   return dirs;
+}
+
+/**
+ * Gets where to look again for a config file in the ancestor directories of the workspace folders that aren't
+ * watched (the home directory and its ancestors, see `getWorkspaceFolderAncestorWatchDirs`), for each workspace
+ * folder without a config file of its own whose config file isn't below the home directory: the first of its
+ * ancestor directories that isn't watched, where the search starts, and the config file it uses now, which is
+ * in one of them or undefined (ex. it uses the global config file).
+ */
+export function getWorkspaceFolderUnwatchedAncestors(
+  env: Environment,
+  folderPaths: readonly string[],
+  configFiles: readonly WorkspaceFolderConfigFile[],
+) {
+  const unwatched: { folderPath: string; dirPath: string; configFilePath: string | undefined }[] = [];
+  for (const folderPath of folderPaths) {
+    const ancestors = getUsedAncestors(env, folderPath, configFiles);
+    // the directories up to a config file below the home directory are all watched
+    const dirPath = ancestors?.dirPaths.find(dirPath => isHomeDirOrAncestor(env, dirPath));
+    if (ancestors != null && dirPath != null) {
+      unwatched.push({ folderPath, dirPath, configFilePath: ancestors.ancestorConfigFile?.configFilePath });
+    }
+  }
+  return unwatched;
 }
 
 /**
@@ -394,6 +413,31 @@ function getSearchParent(env: Environment, dirPath: string) {
     return undefined;
   }
   return parentPath;
+}
+
+/**
+ * Gets the ancestor directories of a workspace folder up to the config file it uses, and that config file, which
+ * is undefined when the workspace folder has a config file of its own.
+ */
+function getUsedAncestors(env: Environment, folderPath: string, configFiles: readonly WorkspaceFolderConfigFile[]) {
+  const folderConfigFiles = configFiles.filter(configFile => path.relative(configFile.folderPath, folderPath) === "");
+  const hasOwnConfigFile = folderConfigFiles.some(configFile =>
+    !configFile.isAncestor && path.relative(getConfigFileDir(env, configFile.configFilePath), folderPath) === ""
+  );
+  if (hasOwnConfigFile) {
+    return undefined;
+  }
+  const ancestorConfigFile = folderConfigFiles.find(configFile => configFile.isAncestor);
+  const configDirPath = ancestorConfigFile == null
+    ? undefined
+    : getConfigFileDir(env, ancestorConfigFile.configFilePath);
+  return { dirPaths: getWorkspaceFolderAncestorDirs(env, folderPath, configDirPath), ancestorConfigFile };
+}
+
+/** Gets whether the directory is the home directory or one of its ancestors. */
+function isHomeDirOrAncestor(env: Environment, dirPath: string) {
+  const homeDir = env.homeDir();
+  return homeDir != null && isPathWithin(dirPath, homeDir);
 }
 
 /**

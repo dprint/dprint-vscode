@@ -5,6 +5,7 @@ import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
+  AncestorConfigFileCache,
   type ConfigFileNames,
   filterCacheDirConfigFiles,
   filterUnusedConfigFiles,
@@ -14,6 +15,7 @@ import {
   getConfigFileDir,
   getConfigFileNamesByDir,
   getWorkspaceFolderAncestorWatchDirs,
+  getWorkspaceFolderUnwatchedAncestors,
   isPathWithin,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
@@ -111,9 +113,10 @@ export interface WorkspaceBackendOptions {
   state: { globalState: vscode.Memento; workspaceState: vscode.Memento };
   /**
    * Called when the config files may need to be found again (ex. a config file was created or deleted in an
-   * ancestor directory of a workspace folder, which the extension's watcher of the workspace doesn't see).
+   * ancestor directory of a workspace folder, which the extension's watcher of the workspace doesn't see, or
+   * dprint said one it doesn't know about was created outside the workspace folders).
    */
-  onAncestorConfigFileCreatedOrDeleted(): void;
+  onConfigFilesMayNeedFindingAgain(): void;
   /**
    * Called when dprint says what a config file formats may have changed (`dprint/configChanged`), including one the
    * extension doesn't know about, which may change what's known about any open document (ex. one the extension
@@ -149,8 +152,10 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #diagnostics: vscode.DiagnosticCollection;
   /** Provides the read-only documents of what process plugins run with (see `askApproval`). */
   readonly #approvalConfigurationProvider: vscode.Disposable;
-  /** Look in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`). */
+  /** What looks in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`). */
   readonly #ancestorCheckListeners: vscode.Disposable[];
+  /** Whether the window was focused, so the ancestor directories are only looked in again when it gets the focus back. */
+  #isWindowFocused = vscode.window.state.focused;
   /** The check of the ancestor directories in progress, which another one doesn't start during. */
   #ancestorCheck: Promise<void> | undefined;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
@@ -176,7 +181,14 @@ export class WorkspaceBackend implements vscode.Disposable {
     // the home directory and its ancestors aren't watched for config files, so they're looked in again when
     // the user may have created or deleted one there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
     this.#ancestorCheckListeners = [
-      vscode.window.onDidChangeWindowState(state => state.focused && this.#checkAncestorConfigFilesAgain()),
+      vscode.window.onDidChangeWindowState(state => {
+        // not when only whether it's active changed
+        const wasFocused = this.#isWindowFocused;
+        this.#isWindowFocused = state.focused;
+        if (state.focused && !wasFocused) {
+          this.#checkAncestorConfigFilesAgain();
+        }
+      }),
       vscode.workspace.onDidSaveTextDocument(() => this.#checkAncestorConfigFilesAgain()),
     ];
   }
@@ -390,7 +402,8 @@ export class WorkspaceBackend implements vscode.Disposable {
 
   /** Looks in the ancestor directories of the workspace folders again, unless that's in progress. */
   #checkAncestorConfigFilesAgain() {
-    if (this.#ancestorCheck != null || this.#state == null) {
+    // the state being initialized finds the config files anyway
+    if (this.#ancestorCheck != null || this.#state == null || this.#pendingState != null) {
       return;
     }
     this.#ancestorCheck = this.#state.checkAncestorConfigFilesAgain()
@@ -550,7 +563,7 @@ export class WorkspaceBackend implements vscode.Disposable {
           && !this.#state?.isKnownConfigFile(params.configFile.uri)
           && !isInWorkspaceFolder(vscode.Uri.parse(params.configFile.uri).fsPath)
         ) {
-          this.#options.onAncestorConfigFileCreatedOrDeleted();
+          this.#options.onConfigFilesMayNeedFindingAgain();
           return;
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
@@ -836,6 +849,11 @@ class WorkspaceState {
     // ex. a file a config file extends in a workspace folder opened through a symlink
     isWorkspaceFolderOrAncestor,
   });
+  /**
+   * The versions of the config files in ancestor directories that aren't watched by their paths, which are
+   * compared when they're looked at again (see `checkAncestorConfigFilesAgain`).
+   */
+  #unwatchedConfigFileVersions = new Map<string, string | undefined>();
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
@@ -930,30 +948,36 @@ class WorkspaceState {
   }
 
   /**
-   * Looks in the ancestor directories of the workspace folders again for a config file that was created or
-   * deleted, which isn't watched for in the home directory and its ancestors (see
-   * `getWorkspaceFolderAncestorWatchDirs`), and has the config files found again when that's the case.
+   * Looks in the ancestor directories of the workspace folders that aren't watched (the home directory and its
+   * ancestors, see `getWorkspaceFolderUnwatchedAncestors`) again, which has the config files found again when
+   * one was created or deleted there, and tells dprint when one that's used there changed.
    */
   async checkAncestorConfigFilesAgain() {
     if (!this.#hasConfigs || this.#disposed) {
       return;
     }
     const configs = this.#configs;
-    for (const folderPath of getWorkspaceFolderPaths()) {
-      const folderConfigs = configs.filter(config => path.relative(config.folderUri.fsPath, folderPath) === "");
-      const configFilePath = await findWorkspaceFolderAncestorConfigFile(
-        this.#environment,
-        folderPath,
-        folderConfigs.filter(config => !config.isAncestor).map(config => config.configFilePath),
-      );
+    const unwatched = this.#getUnwatchedAncestors();
+    // the workspace folders often share these directories
+    const cache = new AncestorConfigFileCache(this.#environment);
+    for (const { folderPath, dirPath, configFilePath } of unwatched) {
+      const foundConfigFilePath = await cache.find(dirPath);
       if (this.#disposed || this.#configs !== configs) {
         return;
       }
-      const knownConfigFilePath = folderConfigs.find(config => config.isAncestor)?.configFilePath;
-      if (configFilePath !== knownConfigFilePath) {
+      if (foundConfigFilePath !== configFilePath) {
         this.#logger.logDebug("Ancestor configuration file changed for:", folderPath);
-        this.#options.onAncestorConfigFileCreatedOrDeleted();
+        this.#options.onConfigFilesMayNeedFindingAgain();
         return;
+      }
+    }
+    for (const filePath of await this.#updateUnwatchedConfigFileVersions(unwatched)) {
+      if (this.#disposed || this.#configs !== configs) {
+        return;
+      }
+      this.#logger.logDebug("Ancestor configuration file changed:", filePath);
+      for (const service of this.#resolvedServices) {
+        service.connection.configFileChanged(vscode.Uri.file(filePath).toString(), FileChangeType.Changed);
       }
     }
   }
@@ -970,6 +994,9 @@ class WorkspaceState {
     this.#configs = configs;
     this.#hasConfigs = true;
     this.#updateAncestorWatchers();
+    // what the config files that aren't watched are compared with when they're looked at again
+    this.#updateUnwatchedConfigFileVersions(this.#getUnwatchedAncestors())
+      .catch(err => this.#logger.logError("Error looking at the configuration files in ancestor directories:", err));
   }
 
   /** Gets the dprint process of the executable, which is shared with the other config files that use it. */
@@ -1308,6 +1335,39 @@ class WorkspaceState {
       .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
   }
 
+  /** Gets where to look again for the config files of the ancestor directories that aren't watched. */
+  #getUnwatchedAncestors() {
+    return getWorkspaceFolderUnwatchedAncestors(
+      this.#environment,
+      getWorkspaceFolderPaths(),
+      this.#configs.map(config => ({
+        folderPath: config.folderUri.fsPath,
+        configFilePath: config.configFilePath,
+        isAncestor: config.isAncestor,
+      })),
+    );
+  }
+
+  /**
+   * Notes the versions of the config files in ancestor directories that aren't watched, which resolves to the
+   * ones whose versions changed since they were last noted.
+   */
+  async #updateUnwatchedConfigFileVersions(unwatched: readonly { configFilePath: string | undefined }[]) {
+    const filePaths = [...new Set(unwatched.flatMap(({ configFilePath }) => configFilePath ?? []))];
+    const stats = await Promise.all(filePaths.map(filePath => lstatPath(filePath)));
+    const previousVersions = this.#unwatchedConfigFileVersions;
+    const versions = new Map<string, string | undefined>();
+    for (const [i, filePath] of filePaths.entries()) {
+      // its identity too, for one that was replaced
+      const stat = stats[i];
+      versions.set(filePath, stat == null ? undefined : `${stat.identity}:${stat.version}`);
+    }
+    this.#unwatchedConfigFileVersions = versions;
+    return filePaths.filter(filePath =>
+      previousVersions.has(filePath) && previousVersions.get(filePath) !== versions.get(filePath)
+    );
+  }
+
   #onAncestorConfigFileChanged(filePath: string, change: WatchedFileChange) {
     const actions = getAncestorConfigFileChangeActions(this.#environment, filePath, change);
     if (!actions.tellDprint && !actions.findAgain) {
@@ -1322,7 +1382,7 @@ class WorkspaceState {
       }
     }
     if (actions.findAgain) {
-      this.#options.onAncestorConfigFileCreatedOrDeleted();
+      this.#options.onConfigFilesMayNeedFindingAgain();
     }
   }
 

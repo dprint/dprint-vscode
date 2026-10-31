@@ -13,6 +13,7 @@ import {
   getConfigFileNamesByDir,
   getWorkspaceFolderAncestorDirs,
   getWorkspaceFolderAncestorWatchDirs,
+  getWorkspaceFolderUnwatchedAncestors,
   isPathWithin,
 } from "./configPaths";
 import type { Environment } from "./environment";
@@ -331,6 +332,44 @@ describe("getWorkspaceFolderAncestorWatchDirs", () => {
       getWorkspaceFolderAncestorWatchDirs(env, [folderPath], [], defaultNames),
       [{ dirPath: path.join(homeDir, "code"), names: defaultNames }],
     );
+  });
+});
+
+describe("getWorkspaceFolderUnwatchedAncestors", () => {
+  const env = new TestEnvironment({ homeDir });
+  const folderPath = path.join(homeDir, "code", "app");
+
+  it("is the home directory for a folder below it without a config file, where the search starts", () => {
+    assert.deepStrictEqual(getWorkspaceFolderUnwatchedAncestors(env, [folderPath], []), [
+      { folderPath, dirPath: homeDir, configFilePath: undefined },
+    ]);
+  });
+
+  it("has the config file in the home directory or one of its ancestors that the folder uses", () => {
+    const configFilePath = path.join(homeDir, "dprint.json");
+    assert.deepStrictEqual(
+      getWorkspaceFolderUnwatchedAncestors(env, [folderPath], [{ folderPath, configFilePath, isAncestor: true }]),
+      [{ folderPath, dirPath: homeDir, configFilePath }],
+    );
+  });
+
+  it("is nothing for a folder whose config file is below the home directory, or that has its own", () => {
+    // the directories up to the config file below the home directory are watched
+    const ancestorConfigFile = {
+      folderPath,
+      configFilePath: path.join(homeDir, "code", "dprint.json"),
+      isAncestor: true,
+    };
+    assert.deepStrictEqual(getWorkspaceFolderUnwatchedAncestors(env, [folderPath], [ancestorConfigFile]), []);
+    const ownConfigFile = { folderPath, configFilePath: path.join(folderPath, "dprint.json"), isAncestor: false };
+    assert.deepStrictEqual(getWorkspaceFolderUnwatchedAncestors(env, [folderPath], [ownConfigFile]), []);
+  });
+
+  it("is the root for a folder outside the home directory, which is an ancestor of it", () => {
+    const outsidePath = path.resolve("/repo/app");
+    assert.deepStrictEqual(getWorkspaceFolderUnwatchedAncestors(env, [outsidePath], []), [
+      { folderPath: outsidePath, dirPath: rootDir, configFilePath: undefined },
+    ]);
   });
 });
 

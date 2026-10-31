@@ -85,8 +85,12 @@ export async function activate(context: vscode.ExtensionContext) {
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
   // config files outside the workspace aren't watched, so check again after the user comes back to the window
+  // (not when only whether it's active changed)
+  let isWindowFocused = vscode.window.state.focused;
   context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
-    if (state.focused) {
+    const wasFocused = isWindowFocused;
+    isWindowFocused = state.focused;
+    if (state.focused && !wasFocused) {
       onConfigFilesMaybeChanged();
     }
   }));
