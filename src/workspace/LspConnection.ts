@@ -45,7 +45,7 @@ import {
   type ServerSettings,
   type WorkspaceFolder,
 } from "./messages";
-import { isSupportedServer } from "./serverSupport";
+import { getServerSupport, isSupportedServer, isUnknownSubcommandError } from "./serverSupport";
 
 // note: this file should not import "vscode" so that it can be unit tested
 
@@ -139,6 +139,8 @@ export interface IdleTimeouts {
 const DEFAULT_IDLE_TIMEOUTS: IdleTimeouts = { requests: 10_000, interactions: 10 * 60_000 };
 /** How long a server runs before it exiting isn't counted as exiting soon after it started (see `getRestartDelay`). */
 const QUICK_EXIT_TIME = 30_000;
+/** What a user does about a server that was started again that's an older dprint than the extension supports. */
+const UPDATE_OR_RESTART_TEXT = "Update dprint, or restart dprint to use its older editor service.";
 /** How long to wait for the rest of stderr of a server that exited before it was initialized. */
 const STDERR_TIMEOUT = 500;
 /** How much of stderr is kept to say why a server exited before it was initialized. */
@@ -167,8 +169,10 @@ export class LspConnection {
   #startFailure: Error | undefined;
   /** How many servers in a row exited soon after they started (see `getRestartDelay`). */
   #quickExitCount = 0;
-  /** Resolves once a server may be started again after one exited (see `getRestartDelay`). */
-  #restartDelay: Promise<void> | undefined;
+  /** When a server may be started again after one exited (see `#delayRestart`). */
+  #restartTime = 0;
+  /** The requests that wait until a server may be started (see `#waitToStart`). */
+  readonly #startWaiters = new Set<StartWaiter>();
   #interactionCount = 0;
   /** Whether it's waiting to shut down, which is when a server isn't started again. */
   #closing = false;
@@ -211,11 +215,17 @@ export class LspConnection {
   }
 
   /**
-   * Has the next request start a server again after one failed to start (see `hasFailedToStart`), which is
-   * done once its settings change, and not when only a config file changed.
+   * Has the next request start a server again after one failed to start (see `hasFailedToStart`) right away,
+   * which is done once its settings change or the backend is initialized again (ex. a config file was created
+   * or deleted, or the workspace folders changed), and not when only a config file's contents changed.
    */
   allowStart() {
     this.#startFailure = undefined;
+    this.#quickExitCount = 0;
+    this.#restartTime = 0;
+    for (const waiter of [...this.#startWaiters]) {
+      waiter.wake();
+    }
   }
 
   /** Starts the server when it's not running and resolves with the result of initializing it. */
@@ -342,6 +352,7 @@ export class LspConnection {
       return Promise.resolve();
     }
     this.#closing = true;
+    this.#rejectStartWaiters();
     return Promise.all([
       this.#waitFor(() => this.#pendingRequests.size === 0, timeouts.requests),
       // an answer can't reach a process that exited
@@ -355,6 +366,7 @@ export class LspConnection {
       return;
     }
     this.#disposed = true;
+    this.#rejectStartWaiters();
     const server = this.#server;
     if (server == null) {
       return;
@@ -383,18 +395,15 @@ export class LspConnection {
     if (token?.isCancellationRequested) {
       return Promise.resolve(undefined);
     }
-    // the one that was killed may still be running, which another isn't started beside (see `#kill`)
-    const killedServerExit = this.#killedServerExit;
-    if (killedServerExit != null && this.#server == null && !this.#disposed && !this.#closing) {
-      return killedServerExit.then(() => this.#track(action, token));
-    }
-    if (this.#startFailure != null && this.#server == null) {
-      return Promise.reject(this.#startFailure);
-    }
-    // one that keeps exiting soon after it started isn't started again right away
-    const restartDelay = this.#restartDelay;
-    if (restartDelay != null && this.#server == null && !this.#disposed && !this.#closing) {
-      return restartDelay.then(() => this.#track(action, token));
+    if (this.#server == null && !this.#disposed && !this.#closing) {
+      if (this.#startFailure != null) {
+        return Promise.reject(this.#startFailure);
+      }
+      // the one that was killed may still be running, which another isn't started beside (see `#kill`), and
+      // one that keeps exiting soon after it started isn't started again right away (see `#delayRestart`)
+      if (this.#killedServerExit != null || this.#restartTime > Date.now()) {
+        return this.#waitToStart(token).then(isCancelled => isCancelled ? undefined : this.#track(action, token));
+      }
     }
     const server = this.#ensureServer();
     if (server == null) {
@@ -413,6 +422,39 @@ export class LspConnection {
       const cancellationDisposable = token?.onCancellationRequested(() => settle(() => resolve(undefined)));
       action(server).then(value => settle(() => resolve(value)), err => settle(() => reject(err)));
     });
+  }
+
+  /**
+   * Waits until a server may be started (see `#track`), which resolves to whether the token was cancelled
+   * first, and rejects once the connection is disposed. It resolves right away once `allowStart` is called.
+   */
+  #waitToStart(token: ConnectionCancellationToken | undefined) {
+    return new Promise<boolean>((resolve, reject) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const settle = (action: () => void) => {
+        if (this.#startWaiters.delete(waiter)) {
+          clearTimeout(timeout);
+          cancellationDisposable?.dispose();
+          action();
+        }
+      };
+      const waiter: StartWaiter = {
+        wake: () => settle(() => resolve(false)),
+        reject: err => settle(() => reject(err)),
+      };
+      this.#startWaiters.add(waiter);
+      const cancellationDisposable = token?.onCancellationRequested(() => settle(() => resolve(true)));
+      const delayMs = this.#restartTime - Date.now();
+      const delay = delayMs > 0 ? new Promise<void>(resolve => timeout = setTimeout(resolve, delayMs)) : undefined;
+      Promise.all([this.#killedServerExit, delay]).then(() => waiter.wake());
+    });
+  }
+
+  /** Rejects the requests that wait until a server may be started, which isn't anymore. */
+  #rejectStartWaiters() {
+    for (const waiter of [...this.#startWaiters]) {
+      waiter.reject(new Error("The dprint language server is not running."));
+    }
   }
 
   /** Sends the request once the server is initialized, which is cancelled with the token. */
@@ -587,7 +629,12 @@ export class LspConnection {
         }
         this.#rejectPendingRequests(server, err);
         connection.dispose();
-        this.#showStartFailure(err);
+        // ex. dprint was downgraded to a version without the subcommand since it started
+        this.#showStartFailure(
+          isUnknownSubcommandError(stderr)
+            ? `This version of dprint doesn't have a language server (${stderr}). ${UPDATE_OR_RESTART_TEXT}`
+            : getFailedToStartMessage(stderr || "It exited before it was initialized."),
+        );
       });
     });
     // a process that fails to spawn (ex. the executable or the cwd no longer exists) only emits this event
@@ -602,7 +649,7 @@ export class LspConnection {
       const startFailure = new Error(`The dprint language server failed to start. ${err}`);
       this.#startFailure = startFailure;
       this.#onExit(server, startFailure);
-      this.#showStartFailure(startFailure);
+      this.#showStartFailure(getFailedToStartMessage(String(err)));
     });
 
     connection.listen();
@@ -614,10 +661,13 @@ export class LspConnection {
       },
     }).then(result => {
       server.isInitialized = true;
+      const isRestart = this.#hasInitialized;
       this.#hasInitialized = true;
-      // an older dprint without the dprint methods is shut down instead
       if (isSupportedServer(result)) {
         connection.sendNotification("initialized", {}).catch(() => {/* the requests fail too */});
+      } else if (isRestart) {
+        // ex. dprint was downgraded since the first one started, which the backend shuts down itself
+        this.#stopUnsupportedServer(server, result);
       }
       return result;
     });
@@ -627,17 +677,30 @@ export class LspConnection {
   }
 
   /**
+   * Stops a server that was started again that doesn't have the dprint methods the extension supports, which
+   * isn't started again until `allowStart` (see `hasFailedToStart`).
+   */
+  #stopUnsupportedServer(server: Server, result: InitializeResult) {
+    const support = getServerSupport(result);
+    const error = "error" in support ? support.error : "It doesn't support the dprint methods.";
+    // an older dprint is used with the older editor service after a restart, unlike a newer one
+    const message = "isVersionMismatch" in support && support.isVersionMismatch
+      ? error
+      : `${error} ${UPDATE_OR_RESTART_TEXT}`;
+    this.#startFailure = new Error(message);
+    this.#kill(server, this.#startFailure);
+    this.#showStartFailure(message);
+  }
+
+  /**
    * Shows the user why a server that was started again failed to start, which isn't started again until its
    * settings change. The caller says why the first one failed, which is deliberately not shown here, because
    * the backend falls back to schema version 5 of the editor service then (ex. for a dprint without the `lsp`
    * subcommand), which shows its own error when that fails too.
    */
-  #showStartFailure(err: Error) {
+  #showStartFailure(message: string) {
     if (this.#hasInitialized && !this.#disposed && !this.#closing) {
-      this.#options.showMessage({
-        type: MessageType.Error,
-        message: `It's not started again until its settings change or dprint is restarted. ${err.message}`,
-      });
+      this.#options.showMessage({ type: MessageType.Error, message });
     }
   }
 
@@ -672,16 +735,12 @@ export class LspConnection {
   #delayRestart(server: Server) {
     this.#quickExitCount = Date.now() - server.startTime < QUICK_EXIT_TIME ? this.#quickExitCount + 1 : 0;
     const ms = (this.#options.getRestartDelay ?? getRestartDelay)(this.#quickExitCount);
-    if (ms <= 0) {
-      return;
+    this.#restartTime = Date.now() + ms;
+    if (ms > 0) {
+      this.#options.logger.logInfo(
+        `The dprint language server exited soon after it started, so it's started again in ${ms}ms at the earliest.`,
+      );
     }
-    const restartDelay = new Promise<void>(resolve => setTimeout(resolve, ms));
-    this.#restartDelay = restartDelay;
-    restartDelay.then(() => {
-      if (this.#restartDelay === restartDelay) {
-        this.#restartDelay = undefined;
-      }
-    });
   }
 
   #rejectPendingRequests(server: Server, err: Error) {
@@ -697,7 +756,7 @@ export class LspConnection {
    * the same session id, whose lock this one may still hold, so it's killed with SIGKILL when it doesn't
    * exit in time.
    */
-  #kill(server: Server) {
+  #kill(server: Server, err = new Error("The dprint language server was stopped while the request was in progress.")) {
     if (server.hasExited) {
       return; // it exited or was killed already
     }
@@ -709,7 +768,7 @@ export class LspConnection {
         this.#killedServerExit = undefined;
       }
     });
-    this.#onExit(server, new Error("The dprint language server was stopped while the request was in progress."));
+    this.#onExit(server, err);
   }
 
   /**
@@ -849,6 +908,12 @@ export function getRestartDelay(quickExitCount: number) {
   return quickExitCount === 0 ? 0 : Math.min(1_000 * 2 ** (quickExitCount - 1), 30_000);
 }
 
+/** Gets the message that's shown when a server that was started again failed to start. */
+function getFailedToStartMessage(detail: string) {
+  return `The dprint language server failed to start, so it's not started again until its settings change or dprint `
+    + `is restarted: ${detail}`;
+}
+
 /** A started `dprint lsp` process. */
 interface Server {
   process: ServerProcess;
@@ -872,6 +937,13 @@ interface Server {
   stderr: string;
   /** When it was started (see `Date.now`). */
   startTime: number;
+}
+
+/** A request that waits until a server may be started (see `LspConnection.#waitToStart`). */
+interface StartWaiter {
+  /** Has it check again whether a server may be started. */
+  wake(): void;
+  reject(err: Error): void;
 }
 
 interface PendingRequest {

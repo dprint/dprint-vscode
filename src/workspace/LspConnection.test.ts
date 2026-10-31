@@ -363,8 +363,8 @@ describe("LspConnection", () => {
     await assert.rejects(fileInfo, /failed to start\. Error: spawn dprint ENOENT/);
     assert.deepStrictEqual(shownMessages, [{
       type: MessageType.Error,
-      message: "It's not started again until its settings change or dprint is restarted. The dprint language "
-        + "server failed to start. Error: spawn dprint ENOENT",
+      message: "The dprint language server failed to start, so it's not started again until its settings change "
+        + "or dprint is restarted: Error: spawn dprint ENOENT",
     }]);
   });
 
@@ -390,8 +390,8 @@ describe("LspConnection", () => {
     assert.strictEqual(connection.hasFailedToStart, true);
     assert.deepStrictEqual(shownMessages, [{
       type: MessageType.Error,
-      message: "It's not started again until its settings change or dprint is restarted. The dprint language "
-        + "server exited before it was initialized. error: something went wrong",
+      message: "The dprint language server failed to start, so it's not started again until its settings change "
+        + "or dprint is restarted: error: something went wrong",
     }]);
     await assert.rejects(connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }), /something went wrong/);
     assert.strictEqual(processes.length, 2);
@@ -444,11 +444,116 @@ describe("LspConnection", () => {
     await third;
     assert.strictEqual(processes.length, 3);
 
-    // one that ran for a while is started again right away
+    // one that ran for a while is started again right away, and the next quick exit waits a second again
     t.mock.timers.tick(30_000);
     processes[2].exit(1);
     await connection.initialize();
     assert.strictEqual(processes.length, 4);
+    processes[3].exit(1);
+    const fifth = connection.initialize();
+    t.mock.timers.tick(999);
+    await nextTick();
+    assert.strictEqual(processes.length, 4);
+    t.mock.timers.tick(1);
+    await fifth;
+    assert.strictEqual(processes.length, 5);
+  });
+
+  it("counts a server that was killed soon after it started as exiting soon after it started", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { connection, processes } = createConnection({ getRestartDelay });
+    const process = await killWithUnreadableOutput(connection, processes);
+    process.exit();
+    const initialize = connection.initialize();
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+    t.mock.timers.tick(1_000);
+    await initialize;
+    assert.strictEqual(processes.length, 2);
+  });
+
+  it("stops waiting to start a server again once the request is cancelled or the connection is disposed", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { connection, processes } = createConnection({ getRestartDelay });
+    await connection.initialize();
+    processes[0].exit(1);
+
+    const token = new FakeCancellationToken();
+    const format = connection.format({ textDocument: { uri: "file:///file.ts" }, text: "text" }, token);
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    token.cancel();
+    assert.strictEqual(await format, undefined);
+    assert.strictEqual(token.listenerCount, 0);
+    connection.dispose();
+    await assert.rejects(fileInfo, /not running/);
+    t.mock.timers.tick(1_000);
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+  });
+
+  it("starts a server again right away once it's allowed to, which forgets how many exited soon", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { connection, processes } = createConnection({ getRestartDelay });
+    await connection.initialize();
+    processes[0].exit(1);
+    const initialize = connection.initialize();
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+    // ex. its settings changed
+    connection.allowStart();
+    await initialize;
+    assert.strictEqual(processes.length, 2);
+  });
+
+  it("stops a server that was started again that's an older dprint, which it says to update", async () => {
+    const shownMessages: MessageParams[] = [];
+    const { connection, processes } = createConnection({
+      initializeResult: null,
+      showMessage: params => shownMessages.push(params),
+    });
+    const initialize = connection.initialize();
+    (await processes[0].nextRequest("initialize")).respond(SUPPORTED_RESULT);
+    await initialize;
+
+    // ex. dprint was downgraded to a version whose language server doesn't have the dprint methods
+    processes[0].exit(1);
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    (await processes[1].nextRequest("initialize")).respond({
+      capabilities: {},
+      serverInfo: { name: "dprint", version: "0.50.0" },
+    });
+    await assert.rejects(fileInfo, /doesn't support the dprint methods/);
+    assert.strictEqual(processes[1].killCount, 1);
+    assert.strictEqual(connection.hasFailedToStart, true);
+    assert.deepStrictEqual(shownMessages, [{
+      type: MessageType.Error,
+      message: "dprint 0.50.0 doesn't support the dprint methods of its language server. Update dprint, or restart "
+        + "dprint to use its older editor service.",
+    }]);
+    processes[1].exit();
+  });
+
+  it("says to update a dprint that was started again that doesn't have a language server", async () => {
+    const shownMessages: MessageParams[] = [];
+    const { connection, processes } = createConnection({
+      initializeResult: null,
+      showMessage: params => shownMessages.push(params),
+    });
+    const initialize = connection.initialize();
+    (await processes[0].nextRequest("initialize")).respond(SUPPORTED_RESULT);
+    await initialize;
+
+    processes[0].exit(1);
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    await processes[1].nextRequest("initialize");
+    processes[1].stderr.write("error: unrecognized subcommand 'lsp'\n");
+    processes[1].exit(2);
+    await assert.rejects(fileInfo, /unrecognized subcommand 'lsp'/);
+    assert.deepStrictEqual(shownMessages, [{
+      type: MessageType.Error,
+      message: "This version of dprint doesn't have a language server (error: unrecognized subcommand 'lsp'). "
+        + "Update dprint, or restart dprint to use its older editor service.",
+    }]);
   });
 
   it("starts a server again right away unless servers keep exiting, and then waits up to 30 seconds", () => {
