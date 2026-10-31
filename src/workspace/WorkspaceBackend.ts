@@ -485,9 +485,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
-      // tells it (what the user decided for the session is sent again when it's asked about)
-      // the new server doesn't know what the user decided for the session either, which is sent
-      // again for what's pending once the config files were gotten again
+      // tells it (it keeps what the user decided for the session by the connection's session id)
       onRestart: () => {
         this.onConfigFileChanged()
           .catch(err => this.#logger.logError("Error refreshing:", err));
@@ -1023,8 +1021,7 @@ class WorkspaceState {
     }
     // each process forgets what was decided for its session, and the stored decisions are shared
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
-      // the user is asked again even about what they were asked about before, which is forgotten first
-      // so a dprint process that's started again (ex. it exited during the request) isn't sent them again
+      // the user is asked again even about what they were asked about before
       service.approvals.forget();
       const result = await service.connection.forgetDecisions();
       return result.notice;

@@ -384,6 +384,19 @@ describe("Approvals", () => {
   });
 });
 
+describe("Approvals asked about", () => {
+  it("doesn't ask on save again about an approval whose id changed once its process plugins were set up", async () => {
+    const { approvals, asked } = createApprovals({ decide: () => undefined });
+    await approvals.request([approval("processPlugins")], { isExplicit: false });
+    // the same config file, kind, and plugins
+    assert.strictEqual(
+      await approvals.request([{ ...approval("processPlugins"), id: "setUp" }], { isExplicit: false }),
+      false,
+    );
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+  });
+});
+
 describe("getApprovalMessage", () => {
   it("has the config file", () => {
     assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\? /);
@@ -469,7 +482,7 @@ describe("toVisibleText", () => {
     assert.strictEqual(toVisibleText("C:\\u{a}"), "C:\\u{5c}u{a}");
     assert.strictEqual(toVisibleText("\u0301a"), "\\u{301}a");
     // and the ones that aren't assigned yet
-    assert.strictEqual(toVisibleText("a͸b"), "a\\u{378}b");
+    assert.strictEqual(toVisibleText("a\u0378b"), "a\\u{378}b");
     // the invisible ones that aren't format characters too
     assert.strictEqual(toVisibleText("a\u034Fb\u3164c\uFE0Fd\u{E0041}"), "a\\u{34f}b\\u{3164}c\\u{fe0f}d\\u{e0041}");
   });

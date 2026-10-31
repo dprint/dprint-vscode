@@ -90,6 +90,8 @@ export class Approvals {
     // whether the config file is used now, which is only known after something was approved
     let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
+    // what was asked about in this request (see `getAskedKey`)
+    const askedKeysNow = new Set<string>();
     // the decisions to send again for an approval that's pending again after it changed, which is
     // only done once for an approval
     const decisionsToSendAgain = new Map<string, ApprovalDecision>();
@@ -113,7 +115,11 @@ export class Approvals {
         decision = undefined;
       }
       if (decision == null) {
-        if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
+        // one asked about earlier in this request that's pending again is what replaced it (ex. after
+        // the user denied it), which is still asked about
+        const askedKey = getAskedKey(approval);
+        const wasAskedBefore = this.#asked.has(askedKey) && !askedKeysNow.has(askedKey);
+        if (!options.isExplicit && (approval.denied || wasAskedBefore)) {
           // the others are still asked about
           isSkipped = true;
           continue;
@@ -121,7 +127,8 @@ export class Approvals {
         if (this.#isCancelled) {
           return false;
         }
-        this.#asked.add(approval.id);
+        this.#asked.add(askedKey);
+        askedKeysNow.add(askedKey);
         decision = await this.#options.ask(approval, getApprovalChoices(approval));
         if (decision == null || this.#isCancelled) {
           // it stays pending, so the user can still approve it with the command
@@ -255,6 +262,15 @@ function toCommentLine(text: string) {
  */
 function toVisibleJson(value: unknown) {
   return JSON.stringify(value, undefined, 2).split("\n").map(toVisibleText).join("\n");
+}
+
+/**
+ * Gets what identifies an approval that was asked about, which is what's approved rather than its id
+ * because its id changes when what's shown about it does (ex. once its process plugins are set up).
+ */
+function getAskedKey(approval: PendingApproval) {
+  const specifiers = approval.items.map(item => item.specifier).sort();
+  return JSON.stringify([approval.configFile.uri, approval.configFile.dirUri, approval.kind, specifiers]);
 }
 
 /** Gets the text of an approval's item, which has where it's from. */
