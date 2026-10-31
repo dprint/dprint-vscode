@@ -106,6 +106,11 @@ export interface LspConnectionOptions {
    */
   getConfigFileKey?(uri: string): string | undefined;
   /**
+   * Called when the session ended because the server was stopped with `shutdown` (ex. by something else),
+   * after which the next server starts a new session, so what was asked about isn't anymore.
+   */
+  onSessionEnded?(): void;
+  /**
    * Called when a server is started again after one exited (ex. it crashed), which doesn't know
    * what the one before it was told (ex. the files the config files were resolved from).
    */
@@ -158,9 +163,10 @@ export class LspConnection {
    * session ending (ex. it crashed, or it was killed, see `#kill`), and not for the restart command,
    * which is a new connection and so a new session. Stopping it with `shutdown` and then `exit` (see
    * `dispose`) ends the session, so a server that's started again for the session is only one that was
-   * killed or sent only `exit`.
+   * killed or sent only `exit`. A server that exits with code 0 without a signal was stopped with
+   * `shutdown` (ex. by something else), so a new session is started then (see `onSessionEnded`).
    */
-  readonly #sessionId = randomUUID();
+  #sessionId = randomUUID();
   /**
    * Whether dprint's latest `dprint/configInfo` or `dprint/fileInfo` result for each config file said it's
    * on another machine, by its key (see `getConfigFileKey`), which stops being the latest once
@@ -496,8 +502,14 @@ export class LspConnection {
         logger.log(text.trim());
       }
     });
-    process.on("exit", () => {
+    process.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
       resolveExited();
+      if (code === 0 && signal == null && !this.#disposed && !this.#closing) {
+        // only a server that was stopped with `shutdown` exits like this, which ended its session (it deleted
+        // its file), so the next one starts a new session
+        this.#sessionId = randomUUID();
+        this.#options.onSessionEnded?.();
+      }
       if (server.hasExited) {
         return; // it was killed
       }

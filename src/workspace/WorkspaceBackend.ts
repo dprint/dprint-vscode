@@ -138,6 +138,8 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #approvalConfigurationProvider: vscode.Disposable;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
+  /** What asks the user about what each dprint process needs approved by its connection. */
+  readonly #approvalsByConnection = new WeakMap<LspConnection, Approvals>();
   /** What's kept across the states for the session of the extension. */
   readonly #session: WorkspaceSession = {
     hasNotifiedNoConfig: false,
@@ -488,6 +490,8 @@ export class WorkspaceBackend implements vscode.Disposable {
       showProgress,
       onDiagnostics: params => this.#setDiagnostics(connection, params),
       getConfigFileKey,
+      // the next server starts a new session, which asks again about what was asked about
+      onSessionEnded: () => this.#approvalsByConnection.get(connection)?.forget(),
       onConfigChanged: params => {
         this.#logger.logDebug("Configuration changed:", params.configFile?.uri ?? "(every configuration file)");
         // only the schema changed (ex. a plugin's schema downloaded), which getting it again is enough for
@@ -544,6 +548,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         );
       },
     });
+    this.#approvalsByConnection.set(connection, approvals);
     return { key, connection, approvals, configFileNames };
   }
 

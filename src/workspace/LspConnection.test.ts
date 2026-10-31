@@ -242,6 +242,29 @@ describe("LspConnection", () => {
     assert.strictEqual(connection.isConfigFileOnAnotherMachine("file:///a/dprint.json"), undefined);
   });
 
+  it("starts a new session after a server exits with code 0 without a signal, which was stopped with shutdown", async () => {
+    let sessionEnds = 0;
+    const { connection, processes } = createConnection({ onSessionEnded: () => sessionEnds++ });
+    const sessionIdOf = async (process: FakeProcess) =>
+      (await process.nextRequest("initialize")).params.capabilities.experimental.dprint.sessionId;
+    await connection.initialize();
+    const firstSessionId = await sessionIdOf(processes[0]);
+
+    // a crash keeps the session
+    processes[0].exit(1);
+    connection.initialize().catch(() => {/* ignore */});
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(await sessionIdOf(processes[1]), firstSessionId);
+    assert.strictEqual(sessionEnds, 0);
+
+    // ex. something else sent shutdown and exit
+    processes[1].exit(0);
+    connection.initialize().catch(() => {/* ignore */});
+    await waitUntil(() => processes.length === 3);
+    assert.notStrictEqual(await sessionIdOf(processes[2]), firstSessionId);
+    assert.strictEqual(sessionEnds, 1);
+  });
+
   it("forgets the latest results when the server is started again", async () => {
     const { connection, processes } = createConnection();
     const configInfo = connection.configInfo({ configFile: { uri: "file:///a/dprint.json" } });
@@ -722,6 +745,7 @@ function createConnection(options: {
   showMessage?: (params: MessageParams) => void;
   onDiagnostics?: (params: PublishDiagnosticsParams) => void;
   onConfigChanged?: (params: ConfigChangedParams) => void;
+  onSessionEnded?: () => void;
   killProcess?: (process: ServerProcess, signal: NodeJS.Signals | undefined) => Promise<void> | void;
 } = {}) {
   const processes: FakeProcess[] = [];
@@ -736,6 +760,7 @@ function createConnection(options: {
       return process as unknown as ServerProcess;
     },
     killProcess: options.killProcess,
+    onSessionEnded: options.onSessionEnded,
     getInitializeParams: () => INITIALIZE_PARAMS,
     showMessage: options.showMessage ?? (() => {}),
     showProgress(title, percentage) {
@@ -825,10 +850,10 @@ class FakeProcess extends EventEmitter {
     return true;
   }
 
-  /** Exits the process. */
-  exit() {
+  /** Exits the process, which exits with code 1 unless provided. */
+  exit(code = 1, signal: NodeJS.Signals | null = null) {
     this.stderr.end();
-    this.emit("exit", 1, null);
+    this.emit("exit", code, signal);
   }
 
   /** Gets the next request or notification that the connection sent. */
