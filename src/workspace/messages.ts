@@ -360,8 +360,13 @@ export interface DecisionsResult {
 export interface Decision {
   kind: ApprovalKind;
   /**
-   * The config file it's for, which is missing for a download that's allowed for every config file.
-   * Its `dirUri` is missing when it's for every directory it's used for (ex. the global config file).
+   * The configuration file it's for, which can be sent to `dprint/forgetDecisions` to forget the decisions of that configuration
+   * file. It's missing for a download that's allowed for every configuration file, and for a process plugin decision whose
+   * configuration file isn't a path or url the server can make a uri of (ex. one stored on another operating system). A decision
+   * without one can't be forgotten on its own (an allowed download stays allowed for the session), so don't offer to forget it,
+   * and never send `dprint/forgetDecisions` without a `configFile` for it, which forgets every decision of every configuration
+   * file. Its `dirUri` is missing when it's for every directory the configuration file is used for (ex. the global
+   * configuration file).
    */
   configFile?: ConfigFileIdentifier;
   /** The urls, paths, or specifiers it's for. */
@@ -425,10 +430,16 @@ export interface ConfigFileInfo {
    * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
    * once it's allowed, and when a configuration file becomes one on another machine (ex. a `git pull` replaced it with a symlink
    * to a share). So before opening a configuration file from an older result or action (ex. a notification's "Open
-   * Configuration File"), check the latest result the editor extension has for it, and don't open it when that has
-   * `onAnotherMachine` or when there's no result for it. The server takes back the diagnostics it published for it then by
-   * publishing empty ones (and moves the ones it published through a directory the editor knew by another path once that
-   * doesn't lead where it did), so don't drop them for this.
+   * Configuration File"), check whether its path is a symlink or is reached through one, looking at each directory of it from the
+   * workspace folder (or the root without one) down without following any (ex. with `lstat`). A path without a symlink can't lead
+   * to another machine the workspace isn't on, so open it. Otherwise, check the latest result the editor extension has for it,
+   * and don't open it when that has `onAnotherMachine` or when there's no result for it. That result only stays the latest for a
+   * configuration file whose changes reach the server (the `configFile.uri` of a `dprint/configInfo` result, see "Lifecycle"),
+   * and stops being it once `dprint/configChanged` names that configuration file (or no configuration file) or the server is
+   * started again. The server takes back the diagnostics it published for it then by publishing empty ones, and the ones it
+   * published through a directory the editor knew by another path once that doesn't lead where it did (when it also sends
+   * `dprint/configChanged` for their configuration files, which are published again once they're resolved again), so don't drop
+   * them for this. This is a best effort (see "Security").
    */
   onAnotherMachine?: boolean;
 }
@@ -450,9 +461,10 @@ export interface ConfigInfoResult {
   /**
    * The local files that it was resolved from (ex. a configuration file it extends), and the canonical path of a local
    * configuration file when the `configFileGlobs` watcher doesn't report a change there, which is when it's a symlink (or is in
-   * a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), and
-   * when it's reached through a directory that's a symlink the editor doesn't watch through. The editor
-   * watches them too, by their directories (see "Lifecycle" for when one that's a symlink isn't watched). Each is the editor's path
+   * a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), when
+   * its names are in another case on disk, and when it's reached through a directory that's a symlink the editor doesn't watch
+   * through. The editor watches them too, by their directories (see "Lifecycle" for when one that's a symlink isn't watched).
+   * Each is the editor's path
    * when that's through a workspace folder or one of its ancestors that it knows by another path, and the canonical path otherwise,
    * which the editor may watch. A file whose directory may not be read (ex. it's on another machine now) is left out.
    */

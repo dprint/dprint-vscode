@@ -628,7 +628,10 @@ export class WorkspaceBackend implements vscode.Disposable {
     }
   }
 
-  /** Notes what dprint's latest result for a config file says, which is used to open it from an older message. */
+  /**
+   * Notes what dprint's latest `dprint/configInfo` result for a config file says, which is used to open
+   * it from an older message.
+   */
   #noteConfigFile(configFile: ConfigFileInfo) {
     if (vscode.Uri.parse(configFile.uri).scheme === FILE_SCHEME) {
       this.#configFilesOnAnotherMachine.set(getConfigFileKey(configFile.uri), configFile.onAnotherMachine === true);

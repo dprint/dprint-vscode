@@ -14,6 +14,7 @@ import { FileChangeType, LspConnection, type ServerProcess } from "./LspConnecti
 import type {
   ClientInitializeParams,
   ConfigChangedParams,
+  ConfigFileInfo,
   InitializeResult,
   MessageParams,
   PublishDiagnosticsParams,
@@ -167,6 +168,33 @@ describe("LspConnection", () => {
     assert.deepStrictEqual(approveRequest.params, { id: "id", decision: "alwaysAllow" });
     approveRequest.respond({ approvals: [] });
     assert.deepStrictEqual(await approve, { approvals: [] });
+  });
+
+  it("provides the config file of each configInfo result, but not of the other results", async () => {
+    // only the changes of the config files of configInfo results reach dprint, so only they're kept as the latest
+    const configFiles: string[] = [];
+    const { connection, processes } = createConnection({
+      onConfigFile: configFile => configFiles.push(configFile.uri),
+    });
+    const configFile = { uri: "file:///dprint.json", dirUri: "file:///", kind: "local", inWorkspace: true };
+
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    const process = processes[0];
+    (await process.nextRequest("dprint/fileInfo")).respond({ configFile, plugins: [], status: { kind: "ready" } });
+    await fileInfo;
+    assert.deepStrictEqual(configFiles, []);
+
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
+    (await process.nextRequest("dprint/configInfo")).respond({
+      configFile,
+      plugins: [],
+      filePatterns: [],
+      otherFiles: [],
+      watchUris: [],
+      status: { kind: "ready" },
+    });
+    await configInfo;
+    assert.deepStrictEqual(configFiles, ["file:///dprint.json"]);
   });
 
   it("rejects a request with an error response", async () => {
@@ -637,6 +665,7 @@ function createConnection(options: {
   onDiagnostics?: (params: PublishDiagnosticsParams) => void;
   onConfigChanged?: (params: ConfigChangedParams) => void;
   killProcess?: (process: ServerProcess, signal: NodeJS.Signals | undefined) => Promise<void> | void;
+  onConfigFile?: (configFile: ConfigFileInfo) => void;
 } = {}) {
   const processes: FakeProcess[] = [];
   const logs: [string, string][] = [];
@@ -650,6 +679,7 @@ function createConnection(options: {
       return process as unknown as ServerProcess;
     },
     killProcess: options.killProcess,
+    onConfigFile: options.onConfigFile,
     getInitializeParams: () => INITIALIZE_PARAMS,
     showMessage: options.showMessage ?? (() => {}),
     showProgress(title, percentage) {
