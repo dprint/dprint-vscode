@@ -2119,21 +2119,16 @@ async function openConfigFileFromMessage(
 ) {
   const access = await getFileAccess(uri.fsPath, { lstat: lstatPath, isWorkspaceFolderOrAncestor });
   const displayPath = getDisplayPath(uri.toString());
-  switch (access) {
-    case "gone":
-      vscode.window.showInformationMessage(toPlainNotificationText(`${displayPath} doesn't exist anymore.`));
-      break;
-    default:
-      if (canOpenConfigFile(access, isConfigFileOnAnotherMachine(uri.toString()))) {
-        await vscode.commands.executeCommand("vscode.open", uri);
-      } else {
-        vscode.window.showWarningMessage(
-          toPlainNotificationText(
-            `${displayPath} wasn't opened because it's a symlink or is reached through one, which may lead to another `
-              + "machine that dprint wasn't allowed to read. Open it yourself if you know where it leads.",
-          ),
-        );
-      }
-      break;
+  if (access === "gone") {
+    vscode.window.showInformationMessage(toPlainNotificationText(`${displayPath} doesn't exist anymore.`));
+  } else if (canOpenConfigFile(access, isConfigFileOnAnotherMachine(uri.toString()))) {
+    await vscode.commands.executeCommand("vscode.open", uri);
+  } else {
+    vscode.window.showWarningMessage(
+      toPlainNotificationText(
+        `${displayPath} wasn't opened because it's a symlink or is reached through one, which may lead to another `
+          + "machine that dprint wasn't allowed to read. Open it yourself if you know where it leads.",
+      ),
+    );
   }
 }

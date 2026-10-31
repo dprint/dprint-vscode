@@ -266,6 +266,41 @@ describe("DirWatchers", () => {
     ]);
   });
 
+  it("reports the files created with a directory that wasn't there at the first update", async () => {
+    // ex. `git checkout` brings back the directory of what a symlinked config file points to, with the file
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir" };
+    const { watchers, changes, emit } = createWatchers(kinds);
+    await watchers.update(new Map([["/p/pkg", ["dprint.json", "missing.json"]]]));
+    kinds["/p/pkg"] = "dir";
+    kinds["/p/pkg/dprint.json"] = "file";
+    emit("/p", "/p/pkg", "created");
+    await nextTicks();
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/pkg/dprint.json", "created"],
+    ]);
+  });
+
+  it("reports a file that's changed when the parent reports its directory before its watcher reports it", async () => {
+    // vscode doesn't order the events of two watchers, and reporting it twice is handled like once by dprint
+    const kinds: Record<string, PathKind | undefined> = {
+      "/p": "dir",
+      "/p/shared": "dir",
+      "/p/shared/base.json": "file",
+    };
+    const versions: Record<string, string> = { "/p/shared/base.json": "1" };
+    const { watchers, changes, emit } = createWatchers(kinds, { versions });
+    await watchers.update(new Map([["/p/shared", ["base.json"]]]));
+    versions["/p/shared/base.json"] = "2";
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    emit("/p/shared", "/p/shared/base.json", "changed");
+    await nextTicks();
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/shared/base.json", "changed"],
+      ["/p/shared/base.json", "changed"],
+    ]);
+  });
+
   it("reports the files of a directory that's gone as deleted", async () => {
     const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/pkg": "dir", "/p/pkg/dprint.json": "file" };
     const { watchers, changes, emit } = createWatchers(kinds);
@@ -361,6 +396,8 @@ describe("getWatchPattern", () => {
     // a letter whose case the classes don't cover is matched by `*`, which is compared without its case
     assert.strictEqual(getWatchPattern(["\u00c4.json"], true), "*");
     assert.strictEqual(getWatchPattern(["\u00c4.json"], false), "\u00c4.json");
+    // but not one whose characters other than ASCII ones have no case
+    assert.strictEqual(getWatchPattern(["\u65e5\u672c.json"], true), "\u65e5\u672c.[jJ][sS][oO][nN]");
   });
 });
 
@@ -416,7 +453,6 @@ describe("canOpenConfigFile", () => {
     assert.strictEqual(canOpenConfigFile("symlink", true), false);
     assert.strictEqual(canOpenConfigFile("unreachable", undefined), false);
     assert.strictEqual(canOpenConfigFile("unreachable", true), false);
-    assert.strictEqual(canOpenConfigFile("gone", false), false);
   });
 });
 

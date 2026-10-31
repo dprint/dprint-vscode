@@ -31,7 +31,7 @@ export interface DirWatchersOptions {
   ): { dispose(): void };
   /** Called when one of the files that a directory is watched for changed. */
   onChange(filePath: string, change: WatchedFileChange): void;
-  /** Called when checking a directory again after its parent's watcher reported it failed. */
+  /** Called when what a watcher started failed (ex. checking a directory that its parent's watcher reported). */
   onError(err: unknown): void;
   /** Whether file names are compared without their case (ex. on Windows and macOS). */
   isCaseInsensitive: boolean;
@@ -95,7 +95,7 @@ export class DirWatchers {
   async #apply(fileNamesByDir: ReadonlyMap<string, readonly string[]>) {
     for (const [dirPath, entry] of [...this.#entries]) {
       const fileNames = fileNamesByDir.get(dirPath);
-      if (fileNames == null || !this.#isSameNames(entry.fileNames, fileNames)) {
+      if (fileNames == null || !this.#isSameNames(entry.names, fileNames)) {
         disposeEntry(entry);
         this.#entries.delete(dirPath);
       }
@@ -105,7 +105,7 @@ export class DirWatchers {
     for (const [dirPath, fileNames] of fileNamesByDir) {
       let entry = this.#entries.get(dirPath);
       if (entry == null) {
-        entry = { fileNames: new Set(fileNames.map(name => this.#normalizeName(name))), originalNames: fileNames };
+        entry = { names: new Map(fileNames.map(name => [this.#normalizeName(name), name])) };
         this.#entries.set(dirPath, entry);
       }
       await this.#check(dirPath, entry, statCache);
@@ -146,28 +146,37 @@ export class DirWatchers {
     }
     const previous = entry.dirWatcher;
     entry.dirWatcher = swapWatcher(previous, identity, () => this.#watchDir(dirPath, entry));
+    if (entry.dirWatcher == null) {
+      // its files are missing, so the ones created with it are reported once it's watched
+      entry.fileVersions ??= new Map();
+    }
     if (entry.dirWatcher === previous && !isParentReport) {
       return;
     }
     const hasCreatedOrDeleted = await this.#reportFiles(dirPath, entry);
     if (hasCreatedOrDeleted && entry.dirWatcher === previous && entry.dirWatcher != null) {
       // ex. it was deleted and created again with the same identity, which vscode may not watch yet
-      entry.dirWatcher.dispose();
-      entry.dirWatcher = swapWatcher(undefined, entry.dirWatcher.identity, () => this.#watchDir(dirPath, entry));
+      entry.dirWatcher = swapWatcher(
+        entry.dirWatcher,
+        entry.dirWatcher.identity,
+        () => this.#watchDir(dirPath, entry),
+        {
+          isReplaced: true,
+        },
+      );
     }
   }
 
   /** Watches the directory for its files, which notes the version of each one it reports (see `#reportFiles`). */
   #watchDir(dirPath: string, entry: DirEntry) {
-    return this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
-      const name = entry.originalNames.find(name =>
-        this.#normalizeName(name) === this.#normalizeName(getFileName(filePath))
-      );
+    return this.#options.watchDir(dirPath, [...entry.names.values()], (filePath, change) => {
+      const name = entry.names.get(this.#normalizeName(getFileName(filePath)));
       if (name == null) {
         return;
       }
       this.#options.onChange(filePath, change);
-      // so a later report of the directory by its parent doesn't report it again (ex. on each save on Windows)
+      // so a later report of the directory by its parent doesn't report it again (ex. on each save on Windows),
+      // though one that's handled before this event reports it twice, which dprint handles like one
       this.#enqueue(async () => {
         const version = await this.#getFileVersion(dirPath, entry, name);
         if (!this.#isStale(dirPath, entry)) {
@@ -196,7 +205,7 @@ export class DirWatchers {
   async #reportFiles(dirPath: string, entry: DirEntry) {
     const versions = new Map<string, string | undefined>();
     let hasCreatedOrDeleted = false;
-    for (const name of entry.originalNames) {
+    for (const name of entry.names.values()) {
       const version = await this.#getFileVersion(dirPath, entry, name);
       if (this.#isStale(dirPath, entry)) {
         return false;
@@ -248,9 +257,9 @@ export class DirWatchers {
     return this.#disposed || this.#entries.get(dirPath) !== entry;
   }
 
-  #isSameNames(names: Set<string>, fileNames: readonly string[]) {
+  #isSameNames(names: Map<string, string>, fileNames: readonly string[]) {
     const otherNames = new Set(fileNames.map(name => this.#normalizeName(name)));
-    return names.size === otherNames.size && [...names].every(name => otherNames.has(name));
+    return names.size === otherNames.size && [...names.keys()].every(name => otherNames.has(name));
   }
 
   #normalizeName(name: string) {
@@ -294,7 +303,7 @@ export async function lstatWithoutSymlinks(
 }
 
 /**
- * Gets whether a file can be opened (or its problems kept) without following a symlink: it's `"symlink"`
+ * Gets whether a file can be opened without following a symlink: it's `"symlink"`
  * when it's a symlink itself and `"unreachable"` when it's reached through one that may not be followed
  * (see `lstatWithoutSymlinks`), either of which may lead to another machine since it was provided (ex. a
  * `git pull` replaced a config file that has problems with a symlink to a share).
@@ -321,10 +330,10 @@ export async function getFileAccess(
  * @param isOnAnotherMachine - What dprint's latest result for it says, which is undefined when there's none.
  */
 export function canOpenConfigFile(
-  access: Awaited<ReturnType<typeof getFileAccess>>,
+  access: "exists" | "symlink" | "unreachable",
   isOnAnotherMachine: boolean | undefined,
 ) {
-  return access === "exists" || ((access === "symlink" || access === "unreachable") && isOnAnotherMachine === false);
+  return access === "exists" || isOnAnotherMachine === false;
 }
 
 /**
@@ -367,7 +376,8 @@ export function getFileNamesByDir(filePaths: Iterable<string>) {
  */
 export function getWatchPattern(fileNames: readonly string[], isCaseInsensitive: boolean) {
   // a letter other than an ASCII one has a case that the classes don't cover, which `DirWatchers` compares
-  const hasOtherCase = (name: string) => /[^\x00-\x7f]/.test(name) && name.toLowerCase() !== name.toUpperCase();
+  const hasOtherCase = (name: string) =>
+    [...name].some(char => char > "\x7f" && char.toLowerCase() !== char.toUpperCase());
   if (fileNames.some(name => /[*?[\]{},/\\]/.test(name) || (isCaseInsensitive && hasOtherCase(name)))) {
     return "*";
   }
@@ -398,16 +408,16 @@ export function getWatchedPathKey(filePath: string, isCaseInsensitive: boolean) 
 }
 
 interface DirEntry {
-  /** The names of the files it's watched for, without their case when the file system is. */
-  fileNames: Set<string>;
-  originalNames: readonly string[];
+  /** The names of the files it's watched for by their names without their case when the file system is. */
+  names: Map<string, string>;
   /** Watches the parent directory (whose identity it has) for the directory being created, deleted, or replaced. */
   parentWatcher?: IdentifiedWatcher;
   /** Watches the directory (whose identity it has), which is undefined while it isn't watched. */
   dirWatcher?: IdentifiedWatcher;
   /**
-   * The versions of its files by their names when they were last looked at, which is undefined until it's
-   * watched, after which a new or removed watcher reports its files.
+   * The versions of its files by their names when they were last looked at, after which the ones whose
+   * versions changed are reported. It's undefined until its first check, and empty (each file missing)
+   * when the directory wasn't there then, so the files created with it are reported.
    */
   fileVersions?: Map<string, string | undefined>;
 }
@@ -417,14 +427,18 @@ interface IdentifiedWatcher {
   dispose(): void;
 }
 
-/** Gets the watcher of what has the identity, which is the current one when it has it, and undefined without one. */
+/**
+ * Gets the watcher of what has the identity, which is the current one when it has it (unless it's replaced
+ * anyway), and undefined without one.
+ */
 function swapWatcher(
   current: IdentifiedWatcher | undefined,
   identity: string | undefined,
   watch: () => { dispose(): void },
+  options: { isReplaced?: boolean } = {},
 ): IdentifiedWatcher | undefined {
   // ex. it only changed because a file in it was saved, which is a change of it on Windows
-  if (current?.identity === identity) {
+  if (current?.identity === identity && !options.isReplaced) {
     return current;
   }
   current?.dispose();
