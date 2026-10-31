@@ -198,20 +198,24 @@ export function isPathWithin(parentPath: string, candidatePath: string) {
     || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
 }
 
-/** Finds the config file the dprint CLI uses in the directory. */
+/**
+ * Finds the config file the dprint CLI uses in the directory. A symlink isn't followed, because
+ * it may point to another machine, which dprint only reads once the user allows it.
+ */
 async function findConfigFileInDir(env: Environment, dirPath: string) {
   for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
     const configFilePath = path.join(dirPath, configFileName);
-    if (await env.fileExists(configFilePath)) {
+    if (await env.pathKind(configFilePath) != null) {
       return configFilePath;
     }
   }
   // only look in the `.config` directory when there is one, which most directories don't have
+  // (a symlinked one isn't looked in, which dprint still finds for the documents it's asked about)
   const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
-  if (isDotConfigDir(env, dotConfigDirPath) && await env.fileExists(dotConfigDirPath)) {
+  if (isDotConfigDir(env, dotConfigDirPath) && await env.pathKind(dotConfigDirPath) === "dir") {
     for (const configFileName of DOT_CONFIG_FILE_NAMES) {
       const configFilePath = path.join(dotConfigDirPath, configFileName);
-      if (await env.fileExists(configFilePath)) {
+      if (await env.pathKind(configFilePath) != null) {
         return configFilePath;
       }
     }

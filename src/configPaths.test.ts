@@ -162,17 +162,34 @@ describe("findConfigFileInAncestorDirectories", () => {
 
     assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), undefined);
   });
+
+  it("finds a symlinked config file without following it", async () => {
+    const env = new TestEnvironment();
+    // ex. a symlink to a file on another machine, which is found though what it points to isn't read
+    const configPath = path.resolve("/project/dprint.json");
+    env.symlink(path.resolve("/other-machine/dprint.json"), configPath);
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), configPath);
+  });
+
+  it("doesn't look in a symlinked .config directory", async () => {
+    const env = new TestEnvironment();
+    env.writeFile(path.resolve("/other-machine/dprint.json"), "{}");
+    env.symlink(path.resolve("/other-machine"), path.resolve("/project/.config"));
+
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), undefined);
+  });
 });
 
 describe("AncestorConfigFileCache", () => {
   function setup() {
     const env = new TestEnvironment({ homeDir });
     const checkedPaths: string[] = [];
-    // only the file existence checks and home directory are used
+    // only the path checks and home directory are used
     const countingEnv = {
-      fileExists(filePath: string) {
+      pathKind(filePath: string) {
         checkedPaths.push(filePath);
-        return env.fileExists(filePath);
+        return env.pathKind(filePath);
       },
       homeDir() {
         return env.homeDir();
