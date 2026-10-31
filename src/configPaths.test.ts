@@ -180,6 +180,32 @@ describe("findConfigFileInAncestorDirectories", () => {
     assert.strictEqual(await findConfigFileInAncestorDirectories(env, path.resolve("/project/src")), undefined);
   });
 
+  it("stops at the root of a share of an automounter", async () => {
+    // `/net/dprint.json` would be looked up as a host named `dprint.json`
+    const checkedPaths: string[] = [];
+    const env = new TestEnvironment();
+    env.writeFile(path.resolve("/net/dprint.json"), "{}");
+    env.writeFile(path.resolve("/dprint.json"), "{}");
+    const countingEnv = {
+      pathKind(filePath: string) {
+        checkedPaths.push(filePath);
+        return env.pathKind(filePath);
+      },
+      homeDir: () => env.homeDir(),
+      platform: () => env.platform(),
+    } as unknown as Environment;
+    for (const dirPath of ["/net/host/proj", "/NET/host/proj", "/System/Volumes/Data/net/host/proj"]) {
+      checkedPaths.length = 0;
+      assert.strictEqual(await findConfigFileInAncestorDirectories(countingEnv, dirPath), undefined);
+      assert.ok(checkedPaths.length > 0);
+      assert.ok(checkedPaths.every(checkedPath => /[\\/]host[\\/]/.test(checkedPath)), checkedPaths.join(", "));
+      // the cache does the same
+      assert.strictEqual(await new AncestorConfigFileCache(countingEnv).find(dirPath), undefined);
+    }
+    // but not elsewhere
+    assert.strictEqual(await findConfigFileInAncestorDirectories(env, "/home/net/proj"), path.join("/", "dprint.json"));
+  });
+
   it("finds a symlink that points to nothing without following it", async () => {
     const env = new TestEnvironment();
     const configPath = path.resolve("/project/dprint.json");
@@ -214,7 +240,7 @@ describe("AncestorConfigFileCache", () => {
   function setup() {
     const env = new TestEnvironment({ homeDir });
     const checkedPaths: string[] = [];
-    // only the path checks and home directory are used
+    // only the path checks, home directory, and platform are used
     const countingEnv = {
       pathKind(filePath: string) {
         checkedPaths.push(filePath);
@@ -222,6 +248,9 @@ describe("AncestorConfigFileCache", () => {
       },
       homeDir() {
         return env.homeDir();
+      },
+      platform() {
+        return env.platform();
       },
     } as unknown as Environment;
     return { env, checkedPaths, cache: new AncestorConfigFileCache(countingEnv) };

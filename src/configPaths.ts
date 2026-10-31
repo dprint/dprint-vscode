@@ -111,8 +111,8 @@ export async function findConfigFileInAncestorDirectories(
       }
     }
 
-    const parentPath = path.dirname(currentPath);
-    if (parentPath === currentPath) {
+    const parentPath = getSearchParent(env, currentPath);
+    if (parentPath == null) {
       return undefined;
     }
     currentPath = parentPath;
@@ -165,8 +165,8 @@ export class AncestorConfigFileCache {
         return configFilePath;
       }
     }
-    const parentPath = path.dirname(dirPath);
-    return parentPath === dirPath ? undefined : this.find(parentPath);
+    const parentPath = getSearchParent(this.#env, dirPath);
+    return parentPath == null ? undefined : this.find(parentPath);
   }
 }
 
@@ -245,6 +245,25 @@ async function findConfigFileInDir(env: Environment, dirPath: string, options: F
     }
   }
   return undefined;
+}
+
+/**
+ * Gets the directory to look in for a config file after the directory, which is undefined at the root
+ * of the file system and at the root of a network share like dprint does, because what's above it
+ * isn't on the share (ex. `/net/host/dprint.json` is looked for, but not `/net/dprint.json`, which
+ * the automounter would look up as a host named `dprint.json`). The root of a UNC path on Windows
+ * (`\\server\share\`) is a root of the file system.
+ */
+function getSearchParent(env: Environment, dirPath: string) {
+  const parentPath = path.dirname(dirPath);
+  if (parentPath === dirPath) {
+    return undefined;
+  }
+  // the directory of a host in `/net` (or where macOS has it on the data volume), whose case doesn't matter
+  if (env.platform() !== "win32" && /^\/(System\/Volumes\/Data\/)?net\/[^/]+\/?$/i.test(dirPath)) {
+    return undefined;
+  }
+  return parentPath;
 }
 
 /**
