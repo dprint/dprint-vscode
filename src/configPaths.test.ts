@@ -277,6 +277,19 @@ describe("AncestorConfigFileCache", () => {
     cache.clear();
     assert.strictEqual(await cache.find(path.resolve("/project/src")), path.resolve("/project/dprint.json"));
   });
+
+  it("finds a config file through symlinks when following them", async () => {
+    // ex. for an older dprint, which reads it anyway
+    const env = new TestEnvironment({ homeDir });
+    const rootConfigPath = path.resolve("/dprint.json");
+    env.writeFile(rootConfigPath, "{}");
+    env.symlink(path.resolve("/deleted/dprint.json"), path.resolve("/project/dprint.json"));
+
+    const following = new AncestorConfigFileCache(env, { followSymlinks: true });
+    assert.strictEqual(await following.find(path.resolve("/project/src")), rootConfigPath);
+    const notFollowing = new AncestorConfigFileCache(env);
+    assert.strictEqual(await notFollowing.find(path.resolve("/project/src")), path.resolve("/project/dprint.json"));
+  });
 });
 
 describe("getConfigFileDir", () => {

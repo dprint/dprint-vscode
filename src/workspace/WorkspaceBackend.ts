@@ -371,6 +371,9 @@ export class WorkspaceBackend implements vscode.Disposable {
         });
       }
       // a workspace folder that's a descendant directory of a folder with a config file uses that one
+      // (this doesn't follow symlinks before the executable is known, so a folder whose executable turns
+      // out to be an older dprint doesn't find one the legacy backend would, ex. in a symlinked `.config`
+      // directory, and its files are formatted by the default process instead)
       const ancestorConfigFilePath = await findWorkspaceFolderAncestorConfigFile(
         this.#environment,
         folder.uri.fsPath,

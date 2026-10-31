@@ -75,6 +75,8 @@ export function activateLegacy(
     },
     // the extension finds the config file of the document itself
     canFormatWithGlobalConfig: () => Promise.resolve(undefined),
+    // the installed version of dprint reads a symlinked config file without the user allowing it anyway
+    followsConfigFileSymlinks: true,
     approve() {
       // the installed version of dprint doesn't need anything to be approved
       vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");

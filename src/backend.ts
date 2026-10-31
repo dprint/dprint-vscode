@@ -61,6 +61,9 @@ export function activateBackend(
     canFormatWithGlobalConfig(document) {
       return (switcher.legacyBackend ?? workspaceBackend).canFormatWithGlobalConfig(document);
     },
+    get followsConfigFileSymlinks() {
+      return switcher.legacyBackend?.followsConfigFileSymlinks ?? false;
+    },
     approve() {
       return (switcher.legacyBackend ?? workspaceBackend).approve();
     },

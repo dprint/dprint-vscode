@@ -80,6 +80,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // cached so that changing the active editor doesn't always hit the file system
   const environment = new RealEnvironment(logger);
   const ancestorConfigFileCache = new AncestorConfigFileCache(environment);
+  // for an older dprint, which reads a symlinked config file anyway
+  const followingAncestorConfigFileCache = new AncestorConfigFileCache(environment, { followSymlinks: true });
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
   // config files outside the workspace aren't watched, so check again after the user comes back to the window
@@ -148,6 +150,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   function onConfigFilesMaybeChanged() {
     ancestorConfigFileCache.clear();
+    followingAncestorConfigFileCache.clear();
     updateCanFormatWithGlobalConfig();
   }
 
@@ -185,7 +188,8 @@ export async function activate(context: vscode.ExtensionContext) {
     }, {
       untitledDirPath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? environment.homeDir(),
       isRemote: vscode.env.remoteName != null,
-      findAncestorConfigFile: dirPath => ancestorConfigFileCache.find(dirPath),
+      findAncestorConfigFile: dirPath =>
+        (backend.followsConfigFileSymlinks ? followingAncestorConfigFileCache : ancestorConfigFileCache).find(dirPath),
     });
   }
 

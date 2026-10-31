@@ -129,10 +129,12 @@ export async function findConfigFileInAncestorDirectories(
  */
 export class AncestorConfigFileCache {
   readonly #env: Environment;
+  readonly #options: FindConfigFileOptions;
   readonly #configFilePathsByDir = new Map<string, Promise<string | undefined>>();
 
-  constructor(env: Environment) {
+  constructor(env: Environment, options: FindConfigFileOptions = {}) {
     this.#env = env;
+    this.#options = options;
   }
 
   find(dirPath: string): Promise<string | undefined> {
@@ -158,7 +160,7 @@ export class AncestorConfigFileCache {
   async #find(dirPath: string): Promise<string | undefined> {
     // a `.config` directory is searched as part of its parent directory, which is next
     if (!isDotConfigDir(this.#env, dirPath)) {
-      const configFilePath = await findConfigFileInDir(this.#env, dirPath, {});
+      const configFilePath = await findConfigFileInDir(this.#env, dirPath, this.#options);
       if (configFilePath != null) {
         return configFilePath;
       }
@@ -229,7 +231,8 @@ async function findConfigFileInDir(env: Environment, dirPath: string, options: F
     }
   }
   // only look in the `.config` directory when there is one, which most directories don't have
-  // (a symlinked one isn't looked in, which dprint still finds for the documents it's asked about)
+  // (a symlinked one is only looked in when following symlinks, and dprint still finds it for the
+  // documents it's asked about)
   const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
   const isDir = async () =>
     options.followSymlinks ? await env.fileExists(dotConfigDirPath) : await env.pathKind(dotConfigDirPath) === "dir";

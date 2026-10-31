@@ -28,6 +28,12 @@ export interface ExtensionBackend extends vscode.Disposable {
    */
   canFormatWithGlobalConfig(document: vscode.TextDocument): Promise<boolean | undefined>;
   /**
+   * Whether the config file of a document is found through symlinks when the backend doesn't know
+   * whether it's formatted with the global config file, which is for an older dprint that reads a
+   * symlinked config file anyway (see `FindConfigFileOptions`).
+   */
+  readonly followsConfigFileSymlinks: boolean;
+  /**
    * Asks the user about what the config files need approved before dprint formats with them
    * (ex. a download from a domain that isn't trusted or running process plugins), which
    * includes what they denied.
