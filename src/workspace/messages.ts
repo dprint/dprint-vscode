@@ -42,7 +42,10 @@ export interface ServerCapability {
   versions: number[];
   /** Where dprint's own files are, which are left out when their directory can't be found. */
   files?: { settingsUri?: string; approvalsUri?: string; globalConfigUri?: string };
-  /** The configuration files to watch in the workspace folders, which is missing without a `version`. */
+  /**
+   * The configuration files to watch in the workspace folders, which are empty for `dprint lsp --config` and missing
+   * without a `version`.
+   */
   configFileGlobs?: string[];
   /**
    * The names of the configuration files that are looked up in a directory (ex. in the ancestor directories of the workspace

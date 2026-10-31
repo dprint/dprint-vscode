@@ -18,6 +18,7 @@ import type {
   InitializeResult,
   MessageParams,
   PublishDiagnosticsParams,
+  WorkspaceFolder,
 } from "./messages";
 
 describe("combineIsOnAnotherMachine", () => {
@@ -624,6 +625,30 @@ describe("LspConnection", () => {
     connection.updateWorkspaceFolders([other]);
     connection.updateSettings({ verbose: true });
     assert.strictEqual((await process.nextMessage()).method, "workspace/didChangeConfiguration");
+  });
+
+  it("keeps the server's order of the workspace folders the editor's, because the server appends the added ones", async () => {
+    // ex. an untitled document is formatted in the first workspace folder
+    const { connection, processes } = createConnection();
+    await connection.initialize();
+    const process = processes[0];
+    await process.nextMessage(); // initialize
+    await process.nextMessage(); // initialized
+    const [a, b, c] = ["a", "b", "c"].map(name => ({ uri: `file:///${name}`, name }));
+    const update = async (folders: WorkspaceFolder[]) => {
+      connection.updateWorkspaceFolders(folders);
+      const message = await process.nextMessage();
+      assert.strictEqual(message.method, "workspace/didChangeWorkspaceFolders");
+      return message.params.event;
+    };
+    assert.deepStrictEqual(await update([a, b]), { added: [a, b], removed: INITIALIZE_PARAMS.workspaceFolders });
+    // one that's added at the end, and one that's removed
+    assert.deepStrictEqual(await update([a, b, c]), { added: [c], removed: [] });
+    assert.deepStrictEqual(await update([a, c]), { added: [], removed: [b] });
+    // one that's added first, which the ones after it are added again after
+    assert.deepStrictEqual(await update([b, a, c]), { added: [b, a, c], removed: [a, c] });
+    // ones that were reordered
+    assert.deepStrictEqual(await update([b, c, a]), { added: [c, a], removed: [a, c] });
   });
 
   it("tells a running server that a config file changed", async () => {

@@ -261,14 +261,25 @@ export class LspConnection {
     }
   }
 
-  /** Sends the workspace folders to a running server. One that's started later is initialized with them. */
+  /**
+   * Sends the workspace folders to a running server. One that's started later is initialized with them.
+   * The server appends the folders that are added, so the ones from the first that's out of order are
+   * removed and added again, which keeps the server's order the editor's (ex. an untitled document is
+   * formatted in the first workspace folder).
+   */
   updateWorkspaceFolders(folders: WorkspaceFolder[]) {
     const server = this.#server;
     if (server == null) {
       return;
     }
-    const added = folders.filter(folder => !server.workspaceFolders.some(other => other.uri === folder.uri));
-    const removed = server.workspaceFolders.filter(other => !folders.some(folder => folder.uri === other.uri));
+    const kept = server.workspaceFolders.filter(other => folders.some(folder => folder.uri === other.uri));
+    let inOrderCount = 0;
+    while (inOrderCount < kept.length && kept[inOrderCount].uri === folders[inOrderCount].uri) {
+      inOrderCount++;
+    }
+    const inOrder = kept.slice(0, inOrderCount);
+    const added = folders.slice(inOrderCount);
+    const removed = server.workspaceFolders.filter(other => !inOrder.includes(other));
     server.workspaceFolders = folders;
     if (added.length > 0 || removed.length > 0) {
       this.#notify(server, "workspace/didChangeWorkspaceFolders", { event: { added, removed } });
