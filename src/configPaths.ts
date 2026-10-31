@@ -293,6 +293,10 @@ async function findConfigFileInDir(env: Environment, dirPath: string, options: F
  * isn't on the share (ex. `/net/host/dprint.json` is looked for, but not `/net/dprint.json`, which
  * the automounter would look up as a host named `dprint.json`). The root of a UNC path on Windows
  * (`\\server\share\`) is a root of the file system.
+ *
+ * Note that this only knows the shares in `/net` (and where macOS has it on the data volume), not the
+ * root of a share that an automounter mounts elsewhere (ex. `/home/me` when `/home` is an `autofs`
+ * directory), which the server stops at too. That's an accepted limitation of this search.
  */
 function getSearchParent(env: Environment, dirPath: string) {
   const parentPath = path.dirname(dirPath);
