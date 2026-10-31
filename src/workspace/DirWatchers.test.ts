@@ -117,19 +117,17 @@ describe("DirWatchers", () => {
     await nextTicks();
     assert.deepStrictEqual(disposed, ["/p/shared", "/p/shared/configs"]);
 
+    // its nearest ancestor is watched for the parent's name then
+    assert.deepStrictEqual(watched.slice(2), [["/p", ["shared"]]]);
+
     // it comes back as a symlink, which isn't watched, and then as a directory, which is
     kinds["/p/shared"] = "symlink";
     await watchers.update(fileNamesByDir);
-    assert.strictEqual(watched.length, 2);
+    assert.strictEqual(watched.length, 3);
     kinds["/p/shared"] = "dir";
     kinds["/p/shared/configs"] = "dir";
     await watchers.update(fileNamesByDir);
-    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath), [
-      "/p/shared",
-      "/p/shared/configs",
-      "/p/shared",
-      "/p/shared/configs",
-    ]);
+    assert.deepStrictEqual(watched.slice(3).map(([dirPath]) => dirPath), ["/p/shared", "/p/shared/configs"]);
   });
 
   it("watches a workspace folder that's a symlink for its directories", async () => {
@@ -168,8 +166,31 @@ describe("DirWatchers", () => {
     const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/link": "symlink", "/p/link/sub": "dir" };
     const { watchers, watched, lstatCalls } = createWatchers(kinds);
     await watchers.update(new Map([["/p/link/sub", ["base.json"]]]));
-    assert.deepStrictEqual(watched, []);
+    // only the nearest ancestor that may be watched, for the symlink's name, so it's noticed when it's replaced
+    assert.deepStrictEqual(watched, [["/p", ["link"]]]);
     assert.ok(!lstatCalls.includes("/p/link/sub"), lstatCalls.join(", "));
+  });
+
+  it("watches the nearest ancestor that's there for a directory whose parent isn't there yet", async () => {
+    // ex. a package directory in a `node_modules` that `npm install` creates
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir" };
+    const { watchers, watched, changes, emit } = createWatchers(kinds);
+    await watchers.update(new Map([["/p/node_modules/pkg", ["dprint.json"]]]));
+    assert.deepStrictEqual(watched, [["/p", ["node_modules"]]]);
+
+    kinds["/p/node_modules"] = "dir";
+    kinds["/p/node_modules/pkg"] = "dir";
+    kinds["/p/node_modules/pkg/dprint.json"] = "file";
+    emit("/p", "/p/node_modules", "created");
+    await nextTicks();
+    assert.deepStrictEqual(watched.slice(1), [
+      ["/p/node_modules", ["pkg"]],
+      ["/p/node_modules/pkg", ["dprint.json"]],
+    ]);
+    // and the files that were created with it
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/node_modules/pkg/dprint.json", "created"],
+    ]);
   });
 
   it("watches a directory that's reached through a workspace folder that's a symlink", async () => {

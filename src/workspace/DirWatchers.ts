@@ -53,7 +53,8 @@ export interface DirWatchersOptions {
  * directories, which the user opened it through. That holds for a directory that dprint provided too,
  * because it may have been replaced with a symlink since.
  *
- * A directory and its parent (which is watched for the directory's name) are checked again on each
+ * A directory and its parent (which is watched for the directory's name, or the nearest ancestor that may
+ * be watched for the name of the next directory toward it when the parent isn't there) are checked again on each
  * update and when the parent's watcher reports the directory, and a watcher is replaced when what it
  * watches was replaced. Then its files whose versions changed since they were last looked at (which
  * includes their identity) are reported, because a new watcher doesn't report the files that were
@@ -120,26 +121,24 @@ export class DirWatchers {
    * deleted and created again with the same identity (ex. ext4 reuses the inode it just freed).
    */
   async #check(dirPath: string, entry: DirEntry, statCache: StatCache, isParentReport = false) {
-    const parentPath = path.dirname(dirPath);
-    if (parentPath !== dirPath) {
-      const identity = await this.#getWatchableIdentity(parentPath, statCache);
-      if (this.#isStale(dirPath, entry)) {
-        return;
-      }
-      const name = this.#normalizeName(path.basename(dirPath));
-      entry.parentWatcher = swapWatcher(
-        entry.parentWatcher,
-        identity,
-        () =>
-          this.#options.watchDir(parentPath, [path.basename(dirPath)], filePath => {
-            if (this.#normalizeName(getFileName(filePath)) === name) {
-              this.#enqueue(() => this.#check(dirPath, entry, new Map(), true)).catch(err =>
-                this.#options.onError(err)
-              );
-            }
-          }),
-      );
+    // its parent, or the nearest ancestor that may be watched when that isn't there (ex. a package directory
+    // in a `node_modules` that doesn't exist yet), is watched for the name of the next directory toward it
+    const ancestor = await this.#findWatchableAncestor(dirPath, statCache);
+    if (this.#isStale(dirPath, entry)) {
+      return;
     }
+    entry.parentWatcher = swapWatcher(
+      entry.parentWatcher,
+      ancestor == null ? undefined : `${ancestor.path}\n${ancestor.identity}`,
+      () => {
+        const childName = path.relative(ancestor!.path, dirPath).split(/[\\/]/)[0];
+        return this.#options.watchDir(ancestor!.path, [childName], filePath => {
+          if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(childName)) {
+            this.#enqueue(() => this.#check(dirPath, entry, new Map(), true)).catch(err => this.#options.onError(err));
+          }
+        });
+      },
+    );
     const identity = await this.#getWatchableIdentity(dirPath, statCache);
     if (this.#isStale(dirPath, entry)) {
       return;
@@ -184,6 +183,17 @@ export class DirWatchers {
         }
       }).catch(err => this.#options.onError(err));
     });
+  }
+
+  /** Gets the nearest ancestor of the directory that may be watched (see `#isWatchable`), with its identity. */
+  async #findWatchableAncestor(dirPath: string, statCache: StatCache) {
+    for (let current = path.dirname(dirPath); current !== dirPath; dirPath = current, current = path.dirname(current)) {
+      const identity = await this.#getWatchableIdentity(current, statCache);
+      if (identity != null) {
+        return { path: current, identity };
+      }
+    }
+    return undefined;
   }
 
   /**
