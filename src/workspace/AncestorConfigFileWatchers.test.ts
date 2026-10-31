@@ -31,6 +31,18 @@ describe("AncestorConfigFileWatchers", () => {
     assert.deepStrictEqual(watched, ["/a", "/a"]);
   });
 
+  it("doesn't watch a directory when one of its config files is on another machine, whatever their order", () => {
+    // ex. the read was only allowed in the dprint process of one of the workspace folders that use it
+    const allowed = { dirPath: "/a", info: { configFile: configFile(false) } };
+    const notAllowed = { dirPath: "/a", info: { configFile: configFile(true) } };
+    for (const configFiles of [[allowed, notAllowed], [notAllowed, allowed]]) {
+      const { watchers, watched } = createWatchers();
+      watchers.update(configFiles);
+      watchers.update(configFiles);
+      assert.deepStrictEqual(watched, []);
+    }
+  });
+
   it("doesn't keep what doesn't need to be watched", () => {
     const watched: string[] = [];
     const watchers = new AncestorConfigFileWatchers(dirPath => {

@@ -32,11 +32,20 @@ export class AncestorConfigFileWatchers {
    * Watches the directories of the config files that dprint said aren't on another machine, and stops
    * watching the ones it says are (ex. a watched one that was replaced with a symlink, which vscode says
    * was changed rather than created). dprint sends dprint/configChanged once one is allowed, and the
-   * next result no longer says it's on another machine, which is when it's watched.
+   * next result no longer says it's on another machine, which is when it's watched. A directory is only
+   * watched when none of its config files are on another machine (ex. one whose read was only allowed
+   * in the dprint process of another workspace folder).
    */
   update(configFiles: readonly { dirPath: string; info: Pick<ConfigInfoResult, "configFile"> }[]) {
+    const isOnAnotherMachineByDir = new Map<string, boolean>();
     for (const { dirPath, info } of configFiles) {
-      if (info.configFile?.onAnotherMachine) {
+      isOnAnotherMachineByDir.set(
+        dirPath,
+        (isOnAnotherMachineByDir.get(dirPath) ?? false) || info.configFile?.onAnotherMachine === true,
+      );
+    }
+    for (const [dirPath, isOnAnotherMachine] of isOnAnotherMachineByDir) {
+      if (isOnAnotherMachine) {
         this.#watchers.get(dirPath)?.dispose();
         this.#watchers.delete(dirPath);
       } else {
