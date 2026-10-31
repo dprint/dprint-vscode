@@ -1,3 +1,4 @@
+import type { ConfigFileNames } from "../configPaths";
 import { DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "../constants";
 import { DPRINT_METHODS_VERSIONS, type InitializeResult } from "./messages";
 
@@ -17,12 +18,6 @@ export interface UnsupportedServer {
    * updated.
    */
   isVersionMismatch?: boolean;
-}
-
-/** The names of the config files that dprint looks up in a directory and in its `.config` directory. */
-export interface ConfigFileNames {
-  configFileNames: readonly string[];
-  dotConfigFileNames: readonly string[];
 }
 
 /**

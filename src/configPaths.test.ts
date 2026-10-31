@@ -8,10 +8,11 @@ import {
   findClosestFolder,
   findConfigFileInAncestorDirectories,
   findWorkspaceFolderAncestorConfigFile,
-  getAncestorConfigFileChangeAction,
-  getAncestorConfigFileNamesByDir,
+  getAncestorConfigFileChangeActions,
   getConfigFileDir,
+  getConfigFileNamesByDir,
   getWorkspaceFolderAncestorDirs,
+  getWorkspaceFolderAncestorWatchDirs,
   isPathWithin,
 } from "./configPaths";
 import type { Environment } from "./environment";
@@ -279,12 +280,66 @@ describe("getWorkspaceFolderAncestorDirs", () => {
   });
 });
 
-describe("getAncestorConfigFileNamesByDir", () => {
+describe("getWorkspaceFolderAncestorWatchDirs", () => {
+  const env = new TestEnvironment({ homeDir });
+  const defaultNames = { configFileNames: ["dprint.json"], dotConfigFileNames: ["dprint.json"] };
+  const names = { configFileNames: ["dprint.json", "dprint.json5"], dotConfigFileNames: ["dprint.json5"] };
+
+  it("is the ancestor directories of a nested folder up to its config file, with the names of its dprint", () => {
+    const folderPath = path.resolve("/repo/packages/app");
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorWatchDirs(env, [folderPath], [
+        { folderPath, configFilePath: path.resolve("/repo/dprint.json"), isAncestor: true, names },
+      ], defaultNames),
+      [{ dirPath: path.resolve("/repo/packages"), names }, { dirPath: path.resolve("/repo"), names }],
+    );
+  });
+
+  it("is nothing for a folder with a config file of its own, including one in its .config directory", () => {
+    const folderPath = path.resolve("/repo/app");
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorWatchDirs(env, [folderPath], [
+        { folderPath, configFilePath: path.resolve("/repo/app/.config/dprint.json"), isAncestor: false },
+      ], defaultNames),
+      [],
+    );
+  });
+
+  it("has the default names for a folder with only config files in its descendant directories", () => {
+    // ex. a monorepo with a config file in each package, where a config file at its root is noticed
+    const folderPath = path.resolve("/repo/app");
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorWatchDirs(env, [folderPath], [
+        { folderPath, configFilePath: path.resolve("/repo/app/packages/a/dprint.json"), isAncestor: false },
+      ], defaultNames),
+      [{ dirPath: path.resolve("/repo"), names: defaultNames }],
+    );
+  });
+
+  it("doesn't have the directories in a workspace folder, which the extension watches", () => {
+    const folderPaths = [path.resolve("/repo/a/b"), path.resolve("/repo/a")];
+    assert.deepStrictEqual(getWorkspaceFolderAncestorWatchDirs(env, folderPaths, [], undefined), [
+      { dirPath: path.resolve("/repo"), names: undefined },
+      { dirPath: path.resolve("/repo"), names: undefined },
+    ]);
+  });
+
+  it("doesn't have the home directory or its ancestors, which are looked in again instead", () => {
+    // ex. a watcher of one on macOS gets each event of everything below it
+    const folderPath = path.join(homeDir, "code", "app");
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorWatchDirs(env, [folderPath], [], defaultNames),
+      [{ dirPath: path.join(homeDir, "code"), names: defaultNames }],
+    );
+  });
+});
+
+describe("getConfigFileNamesByDir", () => {
   it("has the config file names of each directory and its .config directory", () => {
     const env = new TestEnvironment({ homeDir });
     const projectDir = path.resolve("/project");
     assert.deepStrictEqual(
-      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(projectDir, ".config", "dprint.json") }]),
+      getConfigFileNamesByDir(env, [{ dirPath: projectDir }]),
       new Map([
         [projectDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc", ".config"]],
         [path.join(projectDir, ".config"), ["dprint.json", "dprint.jsonc"]],
@@ -298,7 +353,7 @@ describe("getAncestorConfigFileNamesByDir", () => {
     const projectDir = path.resolve("/project");
     const names = { configFileNames: ["dprint.json", "dprint.json5"], dotConfigFileNames: ["dprint.json5"] };
     assert.deepStrictEqual(
-      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(projectDir, "dprint.json"), names }]),
+      getConfigFileNamesByDir(env, [{ dirPath: projectDir, names }]),
       new Map([
         [projectDir, ["dprint.json", "dprint.json5", ".config"]],
         [path.join(projectDir, ".config"), ["dprint.json5"]],
@@ -310,31 +365,49 @@ describe("getAncestorConfigFileNamesByDir", () => {
     // ex. it's where the user's configuration of other programs goes
     const env = new TestEnvironment({ homeDir });
     assert.deepStrictEqual(
-      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(homeDir, "dprint.json") }]),
+      getConfigFileNamesByDir(env, [{ dirPath: homeDir }]),
       new Map([[homeDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"]]]),
     );
   });
 });
 
-describe("getAncestorConfigFileChangeAction", () => {
+describe("getAncestorConfigFileChangeActions", () => {
   const env = new TestEnvironment({ homeDir });
 
-  it("finds the config files again when one was created or deleted, and tells dprint when one changed", () => {
+  it("tells dprint about each change of a config file, and finds them again when one was created or deleted", () => {
     const configPath = path.resolve("/project/dprint.json");
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "created"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "deleted"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, configPath, "changed"), "configFileChanged");
-    // a `.config` directory that was created or deleted, and one that only changed
+    assert.deepStrictEqual(getAncestorConfigFileChangeActions(env, configPath, "created"), {
+      tellDprint: true,
+      findAgain: true,
+    });
+    assert.deepStrictEqual(getAncestorConfigFileChangeActions(env, configPath, "deleted"), {
+      tellDprint: true,
+      findAgain: true,
+    });
+    assert.deepStrictEqual(getAncestorConfigFileChangeActions(env, configPath, "changed"), {
+      tellDprint: true,
+      findAgain: false,
+    });
+    // a `.config` directory that was created or deleted, and one that only changed, which dprint isn't told about
     const dotConfigPath = path.resolve("/project/.config");
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "created"), "findAgain");
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "changed"), undefined);
+    assert.deepStrictEqual(getAncestorConfigFileChangeActions(env, dotConfigPath, "created"), {
+      tellDprint: false,
+      findAgain: true,
+    });
+    assert.deepStrictEqual(getAncestorConfigFileChangeActions(env, dotConfigPath, "changed"), {
+      tellDprint: false,
+      findAgain: false,
+    });
   });
 
   it("knows a .config directory in another case on a case insensitive file system", () => {
     const dotConfigPath = path.resolve("/project/.Config");
     const caseInsensitiveEnv = new TestEnvironment({ homeDir, platform: "darwin" });
-    assert.strictEqual(getAncestorConfigFileChangeAction(caseInsensitiveEnv, dotConfigPath, "changed"), undefined);
-    assert.strictEqual(getAncestorConfigFileChangeAction(env, dotConfigPath, "changed"), "configFileChanged");
+    assert.strictEqual(
+      getAncestorConfigFileChangeActions(caseInsensitiveEnv, dotConfigPath, "changed").tellDprint,
+      false,
+    );
+    assert.strictEqual(getAncestorConfigFileChangeActions(env, dotConfigPath, "changed").tellDprint, true);
   });
 });
 

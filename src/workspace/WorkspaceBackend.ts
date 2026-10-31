@@ -5,14 +5,15 @@ import { getDprintConfig } from "../config";
 import { discoverWorkspaceConfigFiles } from "../configFile";
 import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
+  type ConfigFileNames,
   filterCacheDirConfigFiles,
   filterUnusedConfigFiles,
   findClosestFolder,
   findWorkspaceFolderAncestorConfigFile,
-  getAncestorConfigFileChangeAction,
+  getAncestorConfigFileChangeActions,
   getConfigFileDir,
   getConfigFileNamesByDir,
-  getWorkspaceFolderAncestorDirs,
+  getWorkspaceFolderAncestorWatchDirs,
   isPathWithin,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
@@ -84,7 +85,6 @@ import {
 } from "./messages";
 import { getServerSettings } from "./serverSettings";
 import {
-  type ConfigFileNames,
   getConfigFileNames,
   getServerSupport,
   getUnsupportedError,
@@ -106,7 +106,10 @@ export interface WorkspaceBackendOptions {
   logger: Logger;
   /** Where the user's choices that are kept across sessions are stored (ex. to not show a notification again). */
   state: { globalState: vscode.Memento; workspaceState: vscode.Memento };
-  /** Called when a config file outside the workspace that a workspace folder uses is created or deleted. */
+  /**
+   * Called when the config files may need to be found again (ex. a config file was created or deleted in an
+   * ancestor directory of a workspace folder, which the extension's watcher of the workspace doesn't see).
+   */
   onAncestorConfigFileCreatedOrDeleted(): void;
 }
 
@@ -137,14 +140,17 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #diagnostics: vscode.DiagnosticCollection;
   /** Provides the read-only documents of what process plugins run with (see `askApproval`). */
   readonly #approvalConfigurationProvider: vscode.Disposable;
+  /** Look in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`). */
+  readonly #ancestorCheckListeners: vscode.Disposable[];
+  /** The check of the ancestor directories in progress, which another one doesn't start during. */
+  #ancestorCheck: Promise<void> | undefined;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
   readonly #diagnosticUris = new Map<LspConnection, Set<string>>();
-  /** What asks the user about what each dprint process needs approved by its connection. */
-  readonly #approvalsByConnection = new WeakMap<LspConnection, Approvals>();
   /** What's kept across the states for the session of the extension. */
   readonly #session: WorkspaceSession = {
     hasNotifiedNoConfig: false,
     shownConfigErrors: new ShownConfigErrors(),
+    globalConfigs: new Map(),
     pendingApprovalsItem: createPendingApprovalsItem(),
   };
   #disposed = false;
@@ -158,6 +164,12 @@ export class WorkspaceBackend implements vscode.Disposable {
       APPROVAL_CONFIGURATION_SCHEME,
       { provideTextDocumentContent: uri => approvalConfigurations.get(uri.path) },
     );
+    // the home directory and its ancestors aren't watched for config files, so they're looked in again when
+    // the user may have created or deleted one there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
+    this.#ancestorCheckListeners = [
+      vscode.window.onDidChangeWindowState(state => state.focused && this.#checkAncestorConfigFilesAgain()),
+      vscode.workspace.onDidSaveTextDocument(() => this.#checkAncestorConfigFilesAgain()),
+    ];
   }
 
   /**
@@ -362,6 +374,19 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#diagnostics.dispose();
     this.#approvalConfigurationProvider.dispose();
     this.#session.pendingApprovalsItem.dispose();
+    for (const listener of this.#ancestorCheckListeners) {
+      listener.dispose();
+    }
+  }
+
+  /** Looks in the ancestor directories of the workspace folders again, unless that's in progress. */
+  #checkAncestorConfigFilesAgain() {
+    if (this.#ancestorCheck != null || this.#state == null) {
+      return;
+    }
+    this.#ancestorCheck = this.#state.checkAncestorConfigFilesAgain()
+      .catch(err => this.#logger.logError("Error looking for configuration files in ancestor directories:", err))
+      .finally(() => this.#ancestorCheck = undefined);
   }
 
   /** Finds the config files in the workspace folders and the ones the workspace folders use from an ancestor directory. */
@@ -492,7 +517,8 @@ export class WorkspaceBackend implements vscode.Disposable {
       onDiagnostics: params => this.#setDiagnostics(connection, params),
       getConfigFileKey,
       // the next server starts a new session, which asks again about what was asked about
-      onSessionEnded: () => this.#approvalsByConnection.get(connection)?.forget(),
+      onSessionEnded: () =>
+        [...this.#runningServices()].find(service => service.connection === connection)?.approvals.forget(),
       onConfigChanged: params => {
         this.#logger.logDebug("Configuration changed:", params.configFile?.uri ?? "(every configuration file)");
         // only the schema changed (ex. a plugin's schema downloaded), which getting it again is enough for
@@ -506,11 +532,13 @@ export class WorkspaceBackend implements vscode.Disposable {
         } else {
           this.#session.shownConfigErrors.forget(params.configFile);
         }
-        // one that's created that the extension doesn't know about is found again, and the others are ignored
-        // apart from refreshing what the known ones format (ex. it's in a directory the extension doesn't watch)
+        // one that's created outside the workspace folders that the extension doesn't know about is found again
+        // (ex. in an ancestor directory that isn't watched), while the extension's watcher of the workspace finds
+        // the ones in the workspace folders again itself, and the others only refresh what the known ones format
         if (
           params.change === "created" && params.configFile != null
           && !this.#state?.isKnownConfigFile(params.configFile.uri)
+          && !isInWorkspaceFolder(vscode.Uri.parse(params.configFile.uri).fsPath)
         ) {
           this.#options.onAncestorConfigFileCreatedOrDeleted();
           return;
@@ -518,7 +546,8 @@ export class WorkspaceBackend implements vscode.Disposable {
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
-      // tells it (it keeps what the user decided for the session by the connection's session id)
+      // tells it (it keeps what the user decided for the session by the connection's session id, unless the
+      // session ended because the server exited after `shutdown`, see `onSessionEnded`)
       onRestart: () => {
         this.onConfigFileChanged()
           .catch(err => this.#logger.logError("Error refreshing:", err));
@@ -558,7 +587,6 @@ export class WorkspaceBackend implements vscode.Disposable {
         );
       },
     });
-    this.#approvalsByConnection.set(connection, approvals);
     return { key, connection, approvals, configFileNames };
   }
 
@@ -597,6 +625,7 @@ export class WorkspaceBackend implements vscode.Disposable {
       if (isUnsupportedServer(service)) {
         return;
       }
+      this.#session.globalConfigs.delete(service);
       // the config files of a process that stopped aren't checked anymore
       for (const uri of this.#diagnosticUris.get(service.connection) ?? []) {
         this.#diagnostics.delete(vscode.Uri.parse(uri));
@@ -716,11 +745,20 @@ interface WorkspaceSession {
   hasNotifiedNoConfig: boolean;
   /** The errors of the config files that were shown, which dprint doesn't show for the extension. */
   shownConfigErrors: ShownConfigErrors;
+  /** The global config file of each dprint process that a document used (see `WorkspaceState.#noteGlobalConfig`). */
+  globalConfigs: Map<Service, GlobalConfig>;
   /**
    * Shows that something needs to be approved without interrupting the user, which asks
    * about it when it's clicked.
    */
   pendingApprovalsItem: vscode.StatusBarItem;
+}
+
+/** A global config file that a dprint process used for a document, and what dprint says about it. */
+interface GlobalConfig {
+  configFile: ConfigFileInfo;
+  /** What dprint says about it, which is undefined until it's known. */
+  info: ConfigInfoResult | undefined;
 }
 
 /** What dprint formats a document as. */
@@ -790,13 +828,13 @@ class WorkspaceState {
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
-  /** The global config file a document was formatted with, and what dprint says about it (see `#noteGlobalConfig`). */
-  #globalConfig: { service: Service; configFile: ConfigFileInfo; info: ConfigInfoResult | undefined } | undefined;
   /** The formats in progress, which a state that was replaced waits on before its processes shut down. */
   readonly #formats = new Set<Promise<unknown>>();
   /** The messages of the plugin errors that were shown, which are only shown once. */
   readonly #shownPluginErrors = new Set<string>();
   #defaultService: Promise<ServiceResolution> | undefined;
+  /** The names of the config files that the default dprint process looks up, once it's known. */
+  #defaultConfigFileNames: ConfigFileNames | undefined;
   #configs: Config[] = [];
   /** Whether the config files were set, which is when the plugins can be refreshed. */
   #hasConfigs = false;
@@ -881,10 +919,41 @@ class WorkspaceState {
     return Promise.race([Promise.all(formats), delay(RETIRED_FORMAT_TIMEOUT)]).then(() => this.#disposeLegacyFolders());
   }
 
+  /**
+   * Looks in the ancestor directories of the workspace folders again for a config file that was created or
+   * deleted, which isn't watched for in the home directory and its ancestors (see
+   * `getWorkspaceFolderAncestorWatchDirs`), and has the config files found again when that's the case.
+   */
+  async checkAncestorConfigFilesAgain() {
+    if (!this.#hasConfigs || this.#disposed) {
+      return;
+    }
+    const configs = this.#configs;
+    for (const folderPath of getWorkspaceFolderPaths()) {
+      const folderConfigs = configs.filter(config => path.relative(config.folderUri.fsPath, folderPath) === "");
+      const configFilePath = await findWorkspaceFolderAncestorConfigFile(
+        this.#environment,
+        folderPath,
+        folderConfigs.filter(config => !config.isAncestor).map(config => config.configFilePath),
+      );
+      if (this.#disposed || this.#configs !== configs) {
+        return;
+      }
+      const knownConfigFilePath = folderConfigs.find(config => config.isAncestor)?.configFilePath;
+      if (configFilePath !== knownConfigFilePath) {
+        this.#logger.logDebug("Ancestor configuration file changed for:", folderPath);
+        this.#options.onAncestorConfigFileCreatedOrDeleted();
+        return;
+      }
+    }
+  }
+
   /** Gets whether the config file is one the extension found (see `#findConfigFiles`). */
   isKnownConfigFile(uri: string) {
     const key = getConfigFileKey(uri);
-    return this.#configs.some(config => getConfigFileKey(vscode.Uri.file(config.configFilePath).toString()) === key);
+    return this.#configs.some(config =>
+      getWatchedPathKey(config.configFilePath, IS_CASE_INSENSITIVE_FILE_SYSTEM) === key
+    );
   }
 
   setConfigs(configs: Config[]) {
@@ -921,7 +990,11 @@ class WorkspaceState {
 
   /** Gets the dprint process for the files that don't have a config file in the workspace. */
   getDefaultService(): Promise<ServiceResolution> {
-    this.#defaultService ??= this.getService(() => this.#createDefaultExecutable());
+    this.#defaultService ??= this.getService(() => this.#createDefaultExecutable()).then(service => {
+      // the names it looks up in the ancestor directories of a workspace folder without a config file
+      this.#defaultConfigFileNames = isUnsupportedServer(service) ? undefined : service.configFileNames;
+      return service;
+    });
     return this.#defaultService;
   }
 
@@ -938,7 +1011,10 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    await Promise.all([...this.#configs.map(config => this.#refreshConfig(config)), this.#refreshGlobalConfig()]);
+    await Promise.all([
+      ...this.#configs.map(config => this.#refreshConfig(config)),
+      ...this.#resolvedServices.map(service => this.#refreshGlobalConfig(service)),
+    ]);
     if (this.#disposed) {
       return;
     }
@@ -1000,7 +1076,11 @@ class WorkspaceState {
       globalConfig: "whenNoConfigFile",
       text: document.getText(),
     });
-    return info.configFile?.kind === "global";
+    if (info.configFile?.kind !== "global") {
+      return false;
+    }
+    this.#noteGlobalConfig(service, info.configFile);
+    return true;
   }
 
   /**
@@ -1158,7 +1238,10 @@ class WorkspaceState {
     this.#updateAncestorWatchers();
     // dprint leaves out a file whose directory may not be read
     const watchUrisByPath = new Map<string, string>();
-    const infos = [...this.#configs.map(config => config.info), this.#globalConfig?.info];
+    const infos = [
+      ...this.#configs.map(config => config.info),
+      ...this.#resolvedServices.map(service => this.#session.globalConfigs.get(service)?.info),
+    ];
     for (const uri of new Set(infos.flatMap(info => info?.watchUris ?? []))) {
       watchUrisByPath.set(getWatchedPathKey(vscode.Uri.parse(uri).fsPath, IS_CASE_INSENSITIVE_FILE_SYSTEM), uri);
     }
@@ -1177,55 +1260,39 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    // the ancestor directories of each workspace folder without a config file of its own, up to the one with the
-    // config file it uses (ex. a config file that's created closer to it, or one for a folder that uses the global
-    // config file), whose creation makes the config files be found again
-    const dirs: { dirPath: string; names?: ConfigFileNames }[] = [];
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      if (folder.uri.scheme !== FILE_SCHEME) {
-        continue;
-      }
-      const folderPath = folder.uri.fsPath;
-      const configs = this.#configs.filter(config => path.relative(config.folderUri.fsPath, folderPath) === "");
-      const hasOwnConfigFile = configs.some(config =>
-        !config.isAncestor
-        && path.relative(getConfigFileDir(this.#environment, config.configFilePath), folderPath) === ""
-      );
-      if (hasOwnConfigFile) {
-        continue;
-      }
-      // with the names that its dprint process looks up (the search of the ancestor directories and the workspace
-      // watcher use the extension's names, because they run before a dprint process is started)
-      const ancestorConfig = configs.find(config => config.isAncestor);
-      const configDirPath = ancestorConfig == null
-        ? undefined
-        : getConfigFileDir(this.#environment, ancestorConfig.configFilePath);
-      for (const dirPath of getWorkspaceFolderAncestorDirs(this.#environment, folderPath, configDirPath)) {
-        // config files in workspace folders are already watched by the extension
-        if (!vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
-          dirs.push({ dirPath, names: ancestorConfig?.service?.configFileNames });
-        }
-      }
-    }
+    // with the names that its dprint process looks up (the search of the ancestor directories and the workspace
+    // watcher use the extension's names, because they run before a dprint process is started), where the home
+    // directory and its ancestors are looked in again instead (see `checkAncestorConfigFilesAgain`)
+    const dirs = getWorkspaceFolderAncestorWatchDirs(
+      this.#environment,
+      getWorkspaceFolderPaths(),
+      this.#configs.map(config => ({
+        folderPath: config.folderUri.fsPath,
+        configFilePath: config.configFilePath,
+        isAncestor: config.isAncestor,
+        names: config.service?.configFileNames,
+      })),
+      this.#defaultConfigFileNames,
+    );
     this.#ancestorWatchers.update(getConfigFileNamesByDir(this.#environment, dirs))
       .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
   }
 
   #onAncestorConfigFileChanged(filePath: string, change: WatchedFileChange) {
-    const action = getAncestorConfigFileChangeAction(this.#environment, filePath, change);
-    if (action === "findAgain") {
-      this.#logger.logDebug("Ancestor configuration file created or deleted:", filePath);
+    const actions = getAncestorConfigFileChangeActions(this.#environment, filePath, change);
+    if (!actions.tellDprint && !actions.findAgain) {
+      return;
+    }
+    this.#logger.logDebug(`Ancestor configuration file ${change}:`, filePath);
+    // dprint doesn't watch the config files, so tell it, which sends dprint/configChanged when what it
+    // formats changed (ex. it forgets what was pending for one that was deleted)
+    if (actions.tellDprint) {
+      for (const service of this.#resolvedServices) {
+        service.connection.configFileChanged(vscode.Uri.file(filePath).toString(), getFileChangeType(change));
+      }
+    }
+    if (actions.findAgain) {
       this.#options.onAncestorConfigFileCreatedOrDeleted();
-      return;
-    }
-    if (action == null) {
-      return;
-    }
-    this.#logger.logDebug("Ancestor configuration file changed:", filePath);
-    // dprint doesn't watch the config files, so tell it, which sends dprint/configChanged when
-    // what it formats changed
-    for (const service of this.#resolvedServices) {
-      service.connection.configFileChanged(vscode.Uri.file(filePath).toString(), FileChangeType.Changed);
     }
   }
 
@@ -1240,27 +1307,28 @@ class WorkspaceState {
   }
 
   /**
-   * Notes the global config file that a document is formatted with, whose `watchUris` are watched like the
-   * others' (ex. a config file it extends), though not the global config file itself, which dprint watches.
+   * Notes the global config file that a dprint process used for a document, whose `watchUris` are watched like
+   * the others' (ex. a config file it extends), though not the global config file itself, which dprint watches.
+   * It's kept for the session, so the states that replace this one watch them too.
    */
   #noteGlobalConfig(service: Service, configFile: ConfigFileInfo) {
-    if (this.#globalConfig?.service === service && this.#globalConfig.configFile.uri === configFile.uri) {
+    if (this.#session.globalConfigs.get(service)?.configFile.uri === configFile.uri) {
       return;
     }
-    this.#globalConfig = { service, configFile, info: undefined };
-    this.#refreshGlobalConfig().then(() => this.#updateWatchedFiles());
+    this.#session.globalConfigs.set(service, { configFile, info: undefined });
+    this.#refreshGlobalConfig(service).then(() => this.#updateWatchedFiles());
   }
 
-  /** Gets the info of the global config file that a document was formatted with again (see `#noteGlobalConfig`). */
-  async #refreshGlobalConfig() {
-    const globalConfig = this.#globalConfig;
+  /** Gets the info of the global config file that a dprint process used again (see `#noteGlobalConfig`). */
+  async #refreshGlobalConfig(service: Service) {
+    const globalConfig = this.#session.globalConfigs.get(service);
     if (globalConfig == null) {
       return;
     }
     const { uri, dirUri } = globalConfig.configFile;
     try {
-      const info = await globalConfig.service.connection.configInfo({ configFile: { uri, dirUri } });
-      if (this.#globalConfig === globalConfig) {
+      const info = await service.connection.configInfo({ configFile: { uri, dirUri } });
+      if (this.#session.globalConfigs.get(service) === globalConfig) {
         globalConfig.info = info;
       }
     } catch (err) {
@@ -1873,6 +1941,9 @@ class WorkspaceState {
           textDocument: { uri: vscode.Uri.file(uri.fsPath).toString() },
           globalConfig: getDprintConfig(uri).useGlobalConfig ? "whenNoConfigFile" : undefined,
         });
+        if (info.configFile?.kind === "global") {
+          this.#noteGlobalConfig(service, info.configFile);
+        }
         return info.status.kind === "ready";
       } catch (err) {
         this.#logger.logError("Error checking if the file can be formatted.", err);
@@ -2122,9 +2193,7 @@ let workspaceFolderAndAncestorKeys: { folderPaths: string; keys: Set<string> } |
 /** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
 function isWorkspaceFolderOrAncestor(dirPath: string) {
   // vscode provides a new array each time, so the keys are made again only when the paths changed
-  const folderPaths = (vscode.workspace.workspaceFolders ?? [])
-    .filter(folder => folder.uri.scheme === FILE_SCHEME)
-    .map(folder => folder.uri.fsPath);
+  const folderPaths = getWorkspaceFolderPaths();
   const folderPathsKey = folderPaths.join("\n");
   let cached = workspaceFolderAndAncestorKeys;
   if (cached == null || cached.folderPaths !== folderPathsKey) {
@@ -2135,6 +2204,18 @@ function isWorkspaceFolderOrAncestor(dirPath: string) {
     workspaceFolderAndAncestorKeys = cached;
   }
   return cached.keys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
+}
+
+/** Gets the paths of the workspace folders that are on the file system. */
+function getWorkspaceFolderPaths() {
+  return (vscode.workspace.workspaceFolders ?? [])
+    .filter(folder => folder.uri.scheme === FILE_SCHEME)
+    .map(folder => folder.uri.fsPath);
+}
+
+/** Gets whether the path is in a workspace folder. */
+function isInWorkspaceFolder(filePath: string) {
+  return vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, filePath)) ?? false;
 }
 
 /**

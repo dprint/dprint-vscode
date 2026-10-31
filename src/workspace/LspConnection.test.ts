@@ -255,14 +255,31 @@ describe("LspConnection", () => {
     connection.initialize().catch(() => {/* ignore */});
     await waitUntil(() => processes.length === 2);
     assert.strictEqual(await sessionIdOf(processes[1]), firstSessionId);
+    // and so does a death by a signal, which node reports without an exit code
+    processes[1].exit(null, "SIGSEGV");
+    connection.initialize().catch(() => {/* ignore */});
+    await waitUntil(() => processes.length === 3);
+    assert.strictEqual(await sessionIdOf(processes[2]), firstSessionId);
     assert.strictEqual(sessionEnds, 0);
 
     // ex. something else sent shutdown and exit
-    processes[1].exit(0);
+    processes[2].exit(0);
     connection.initialize().catch(() => {/* ignore */});
-    await waitUntil(() => processes.length === 3);
-    assert.notStrictEqual(await sessionIdOf(processes[2]), firstSessionId);
+    await waitUntil(() => processes.length === 4);
+    assert.notStrictEqual(await sessionIdOf(processes[3]), firstSessionId);
     assert.strictEqual(sessionEnds, 1);
+  });
+
+  it("doesn't end the session when the server exits with code 0 after the connection stopped it", async () => {
+    for (const dispose of [(c: LspConnection) => c.dispose(), (c: LspConnection) => c.disposeWhenIdle()]) {
+      let sessionEnds = 0;
+      const { connection, processes } = createConnection({ onSessionEnded: () => sessionEnds++ });
+      await connection.initialize();
+      dispose(connection);
+      processes[0].exit(0);
+      await nextTick();
+      assert.strictEqual(sessionEnds, 0);
+    }
   });
 
   it("forgets the latest results when the server is started again", async () => {
@@ -851,7 +868,7 @@ class FakeProcess extends EventEmitter {
   }
 
   /** Exits the process, which exits with code 1 unless provided. */
-  exit(code = 1, signal: NodeJS.Signals | null = null) {
+  exit(code: number | null = 1, signal: NodeJS.Signals | null = null) {
     this.stderr.end();
     this.emit("exit", code, signal);
   }

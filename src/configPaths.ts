@@ -200,26 +200,60 @@ export function isDotConfigDir(env: Environment, dirPath: string) {
     && !isHomeDir(env, parentPath);
 }
 
-/**
- * Gets the names of the files to watch in each directory for the config files in ancestor directories
- * of the workspace folders: the config file names in the directory a config file applies to, and the
- * ones of its `.config` directory, which is watched on its own because a watcher of a directory
- * doesn't watch its subdirectories. The home directory's `.config` isn't one (see `isDotConfigDir`).
- */
-export function getAncestorConfigFileNamesByDir(
-  env: Environment,
-  configFiles: Iterable<{ configFilePath: string; names?: ConfigFileNamesOfDprint }>,
-) {
-  return getConfigFileNamesByDir(
-    env,
-    Array.from(configFiles, ({ configFilePath, names }) => ({ dirPath: getConfigFileDir(env, configFilePath), names })),
-  );
-}
-
-/** The names of the config files that dprint looks up, which an older dprint doesn't say. */
-export interface ConfigFileNamesOfDprint {
+/** The names of the config files that dprint looks up in a directory and in its `.config` directory. */
+export interface ConfigFileNames {
   configFileNames: readonly string[];
   dotConfigFileNames: readonly string[];
+}
+
+/** A config file the extension found for a workspace folder (see `getWorkspaceFolderAncestorWatchDirs`). */
+export interface WorkspaceFolderConfigFile {
+  folderPath: string;
+  configFilePath: string;
+  /** Whether it's in an ancestor directory of the workspace folder. */
+  isAncestor: boolean;
+  /** The names its dprint process looks up, which are the extension's when there's none. */
+  names?: ConfigFileNames;
+}
+
+/**
+ * Gets the ancestor directories of the workspace folders to watch for a config file that's created there,
+ * for each workspace folder without a config file of its own: the ones above it up to the one with the config
+ * file it uses (ex. a config file that's created closer to it), or up to where the search stops (ex. one that
+ * uses the global config file), apart from the ones in a workspace folder, which the extension watches anyway.
+ * The home directory and its ancestors aren't watched, because a watcher of one on macOS gets each event of
+ * everything below it, so those are looked in again instead (see `findWorkspaceFolderAncestorConfigFile`).
+ *
+ * @param defaultNames - The names that the dprint process of a workspace folder without a config file looks up.
+ */
+export function getWorkspaceFolderAncestorWatchDirs(
+  env: Environment,
+  folderPaths: readonly string[],
+  configFiles: readonly WorkspaceFolderConfigFile[],
+  defaultNames: ConfigFileNames | undefined,
+) {
+  const homeDir = env.homeDir();
+  const dirs: { dirPath: string; names?: ConfigFileNames }[] = [];
+  for (const folderPath of folderPaths) {
+    const folderConfigFiles = configFiles.filter(configFile => path.relative(configFile.folderPath, folderPath) === "");
+    const hasOwnConfigFile = folderConfigFiles.some(configFile =>
+      !configFile.isAncestor && path.relative(getConfigFileDir(env, configFile.configFilePath), folderPath) === ""
+    );
+    if (hasOwnConfigFile) {
+      continue;
+    }
+    const ancestorConfigFile = folderConfigFiles.find(configFile => configFile.isAncestor);
+    const configDirPath = ancestorConfigFile == null
+      ? undefined
+      : getConfigFileDir(env, ancestorConfigFile.configFilePath);
+    for (const dirPath of getWorkspaceFolderAncestorDirs(env, folderPath, configDirPath)) {
+      const isHomeDirOrAncestor = homeDir != null && isPathWithin(dirPath, homeDir);
+      if (!isHomeDirOrAncestor && !folderPaths.some(folderPath => isPathWithin(folderPath, dirPath))) {
+        dirs.push({ dirPath, names: ancestorConfigFile == null ? defaultNames : ancestorConfigFile.names });
+      }
+    }
+  }
+  return dirs;
 }
 
 /**
@@ -249,11 +283,11 @@ export function getWorkspaceFolderAncestorDirs(
  */
 export function getConfigFileNamesByDir(
   env: Environment,
-  dirs: Iterable<{ dirPath: string; names?: ConfigFileNamesOfDprint }>,
+  dirs: Iterable<{ dirPath: string; names?: ConfigFileNames }>,
 ) {
   const fileNamesByDir = new Map<string, readonly string[]>();
   for (const { dirPath, names } of dirs) {
-    // the names that dprint looks up, which an older dprint doesn't say
+    // the names that its dprint process looks up, which are the extension's without one
     const configFileNames = names?.configFileNames ?? DPRINT_CONFIG_FILE_NAMES;
     const dotConfigFileNames = names?.dotConfigFileNames ?? DOT_CONFIG_FILE_NAMES;
     const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
@@ -270,18 +304,16 @@ export function getConfigFileNamesByDir(
 
 /**
  * Gets what to do for a change of a file that a config file in an ancestor directory is watched for:
- * find the config files again when one was created or deleted (including a `.config` directory),
- * tell dprint when one changed, and nothing when a `.config` directory itself changed.
+ * tell dprint about a config file that was created, changed, or deleted (not a `.config` directory),
+ * and find the config files again when one was created or deleted (including a `.config` directory).
  */
-export function getAncestorConfigFileChangeAction(
+export function getAncestorConfigFileChangeActions(
   env: Environment,
   filePath: string,
   change: "created" | "changed" | "deleted",
-): "findAgain" | "configFileChanged" | undefined {
-  if (change !== "changed") {
-    return "findAgain";
-  }
-  return toFileNameKey(env, path.basename(filePath)) === DOT_CONFIG_DIR_NAME ? undefined : "configFileChanged";
+): { tellDprint: boolean; findAgain: boolean } {
+  const isDotConfigDir = toFileNameKey(env, path.basename(filePath)) === DOT_CONFIG_DIR_NAME;
+  return { tellDprint: !isDotConfigDir, findAgain: change !== "changed" };
 }
 
 /**

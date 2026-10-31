@@ -95,8 +95,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // untitled documents are formatted as a file in the first workspace folder
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(updateCanFormatWithGlobalConfig));
 
-  // reinitialize when a configuration file is created or deleted and let the backend handle changes, which
-  // watches the extension's names rather than dprint's `configFileGlobs`, because it starts before dprint does
+  // reinitialize when a configuration file is created or deleted and let the backend handle changes (the
+  // watcher uses the extension's names rather than dprint's `configFileGlobs`, because it starts before dprint does)
   const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(getConfigFilePathGlob(process.platform));
   context.subscriptions.push(fileSystemWatcher);
   const onConfigFileChanged = async (uri: vscode.Uri, type: ConfigFileChangeType) => {
