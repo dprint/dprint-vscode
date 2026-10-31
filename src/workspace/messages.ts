@@ -277,24 +277,27 @@ export interface ConfigApprovals {
   /** The config file, which is null when it can't be resolved anymore (ex. it was deleted). */
   configFile: ConfigFileInfo | null;
   /**
-   * What needs to be approved now for the config file, which is empty when nothing does. After a
-   * decision, it has what was denied when the decision was to deny it and the denial was kept (a denial
-   * of downloads that were each allowed exactly since isn't, see `ApproveResult.notice`).
+   * What needs to be approved now for the configuration file, which is empty when nothing does. After a decision, it has
+   * what was denied when the decision was to deny it and the denial was kept (a denial of downloads that were each allowed
+   * exactly since isn't, which the `notice` says), and otherwise it may have something else that needs to be approved.
    */
   approvals: PendingApproval[];
-  /** Whether the config file is used now, which isn't ready when it has an error or was deleted. */
+  /**
+   * Whether the configuration file is used now, which isn't "ready" when it has an error or was deleted, even when nothing needs to
+   * be approved. It's for the configuration file, so get the `dprint/fileInfo` of a document to know whether it's formatted.
+   */
   status: FormatStatus;
 }
 
 export interface ApproveResult extends ConfigApprovals {
   /**
-   * What to tell the user about the decision, or about one made before for the same configuration file (ex. an `always` decision
-   * couldn't be stored, or the approvals file is from a newer version of dprint that this one can't write to, so it's only used
-   * for the session). The server keeps such a decision for the session like one that isn't `always` (see "Approving"). It also says
-   * when the file of the session couldn't be written or deleted, so what the user decided for the session before may come back if the
-   * server is started again, when the session's decisions aren't kept yet because another server that's running uses the session
-   * id or its lock can't be taken (see `sessionId`), and that a denial wasn't kept because what it denied was each allowed exactly
-   * since, so it's still allowed for the session.
+   * What to tell the user about the decision, or about one made before for the same configuration file (ex. a denial wasn't kept
+   * because what it denied was each allowed exactly for another configuration file since, so it's still allowed for the session,
+   * or an `always` decision couldn't be stored, or the approvals file is from a newer version of dprint that this one can't write
+   * to, so it's only used for the session). The server keeps such a decision for the session like one that isn't `always` (see
+   * "Approving"). It also says when the file of the session couldn't be written or deleted, so what the user decided for the session
+   * before may come back if the server is started again, and when the session's decisions aren't kept yet because another server
+   * that's running uses the session id or its lock can't be taken (see `sessionId`).
    */
   notice?: Notice;
 }
@@ -399,10 +402,7 @@ export interface FilePlugin {
 }
 
 export interface ConfigFileInfo {
-  /**
-   * A file, https, or npm uri, which is the path it was found at for a config file that's a symlink. On a case insensitive file
-   * system, it (and the uri its problems are published to) may differ in case from the editor's uri of the file.
-   */
+  /** A file, https, or npm uri. */
   uri: string;
   /**
    * The directory whose files it formats, which is the directory it's in unless that's a `.config` directory (other than the home
@@ -423,7 +423,12 @@ export interface ConfigFileInfo {
    * open or read it then (ex. with a button in the prompt or a command that opens the configuration file of a document), because
    * that reads it from the other machine, which the approval is for. Its directory is watched like any other, which is never when
    * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
-   * once it's allowed.
+   * once it's allowed. A configuration file's uri is only known to be safe to open while it's current, because a `git pull` may
+   * replace the file (or a symlink in its path) with a symlink to another machine since. So once a configuration file is reported
+   * with `onAnotherMachine`, drop what's held for its uri (ex. diagnostics, an "Open Configuration File" action, or a button of a
+   * prompt that's still shown), and get `dprint/configInfo` for it again before opening it from an older result (ex. a
+   * notification's action), not opening it when it's `onAnotherMachine`. The server takes back the diagnostics it published for
+   * it then, and the ones it published through a directory the editor knew by another path once that doesn't lead where it did.
    */
   onAnotherMachine?: boolean;
 }
