@@ -8,6 +8,7 @@ import { RealEnvironment } from "./environment";
 import type { ConfigFileChangeType, ExtensionBackend } from "./ExtensionBackend";
 import { canFormatWithGlobalConfig, getNotFormattedMessage, type NotFormattedReason } from "./globalConfigCommand";
 import { Logger } from "./logger";
+import { onDidRegainWindowFocus } from "./utils/windowFocus";
 import { toPlainNotificationText } from "./workspace/approvals";
 
 /** The context key for if the commands to format using the global config file are shown. */
@@ -85,15 +86,7 @@ export async function activate(context: vscode.ExtensionContext) {
   let canFormatWithGlobalConfigUpdateId = 0;
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateCanFormatWithGlobalConfig));
   // config files outside the workspace aren't watched, so check again after the user comes back to the window
-  // (not when only whether it's active changed)
-  let isWindowFocused = vscode.window.state.focused;
-  context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
-    const wasFocused = isWindowFocused;
-    isWindowFocused = state.focused;
-    if (state.focused && !wasFocused) {
-      onConfigFilesMaybeChanged();
-    }
-  }));
+  context.subscriptions.push(onDidRegainWindowFocus(vscode.window, onConfigFilesMaybeChanged));
   if (backend.onDidChangeConfig != null) {
     context.subscriptions.push(backend.onDidChangeConfig(updateCanFormatWithGlobalConfig));
   }

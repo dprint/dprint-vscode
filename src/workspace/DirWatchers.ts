@@ -353,6 +353,19 @@ export async function lstatPath(filePath: string): Promise<PathStat | undefined>
 }
 
 /**
+ * Gets the files whose versions changed, which are the ones in both that have a different version (ex. one
+ * that was deleted has none). A file that's only in the new versions wasn't looked at before.
+ */
+export function getChangedVersions(
+  previousVersions: ReadonlyMap<string, string | undefined>,
+  versions: ReadonlyMap<string, string | undefined>,
+) {
+  return [...versions.keys()].filter(filePath =>
+    previousVersions.has(filePath) && previousVersions.get(filePath) !== versions.get(filePath)
+  );
+}
+
+/**
  * Gets the names of the files by their directories (ex. for the files the config files were resolved
  * from, which are watched by their directories).
  */

@@ -10,7 +10,13 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
-import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ServerProcess } from "./LspConnection";
+import {
+  combineIsOnAnotherMachine,
+  FileChangeType,
+  getRestartDelay,
+  LspConnection,
+  type ServerProcess,
+} from "./LspConnection";
 import {
   type ClientInitializeParams,
   type ConfigChangedParams,
@@ -341,9 +347,25 @@ describe("LspConnection", () => {
     assert.strictEqual(connection.hasFailedToStart, true);
     await assert.rejects(connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }), /spawn dprint ENOENT/);
     assert.strictEqual(processes.length, 1);
-    connection.startAgain();
+    connection.allowStart();
     connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
     assert.strictEqual(processes.length, 2);
+  });
+
+  it("shows why a server that was started again couldn't be spawned", async () => {
+    const shownMessages: MessageParams[] = [];
+    const { connection, processes } = createConnection({ showMessage: params => shownMessages.push(params) });
+    await connection.initialize();
+    processes[0].exit(1);
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    processes[1].pid = undefined;
+    processes[1].emit("error", new Error("spawn dprint ENOENT"));
+    await assert.rejects(fileInfo, /failed to start\. Error: spawn dprint ENOENT/);
+    assert.deepStrictEqual(shownMessages, [{
+      type: MessageType.Error,
+      message: "It's not started again until its settings change or dprint is restarted. The dprint language "
+        + "server failed to start. Error: spawn dprint ENOENT",
+    }]);
   });
 
   it("doesn't start a server again that exited before it was initialized, which it shows after a restart", async () => {
@@ -368,13 +390,13 @@ describe("LspConnection", () => {
     assert.strictEqual(connection.hasFailedToStart, true);
     assert.deepStrictEqual(shownMessages, [{
       type: MessageType.Error,
-      message: "The dprint language server exited before it was initialized. error: something went wrong It's not "
-        + "started again until its settings change or dprint is restarted.",
+      message: "It's not started again until its settings change or dprint is restarted. The dprint language "
+        + "server exited before it was initialized. error: something went wrong",
     }]);
     await assert.rejects(connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }), /something went wrong/);
     assert.strictEqual(processes.length, 2);
 
-    connection.startAgain();
+    connection.allowStart();
     const started = connection.initialize();
     await respondToInitialize(processes[2]);
     await started;
@@ -392,6 +414,53 @@ describe("LspConnection", () => {
     assert.strictEqual(process.killCount, 1);
     assert.strictEqual(connection.pendingRequestCount, 0);
     process.exit();
+    // it was killed, which isn't failing to start
+    assert.strictEqual(connection.hasFailedToStart, false);
+  });
+
+  it("waits longer each time before starting a server again that keeps exiting soon after it started", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { connection, processes } = createConnection({ getRestartDelay });
+    await connection.initialize();
+
+    // ex. it crashes on a request that's sent again once it's started again
+    processes[0].exit(1);
+    const second = connection.initialize();
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+    t.mock.timers.tick(999);
+    await nextTick();
+    assert.strictEqual(processes.length, 1);
+    t.mock.timers.tick(1);
+    await second;
+    assert.strictEqual(processes.length, 2);
+
+    processes[1].exit(1);
+    const third = connection.initialize();
+    t.mock.timers.tick(1_999);
+    await nextTick();
+    assert.strictEqual(processes.length, 2);
+    t.mock.timers.tick(1);
+    await third;
+    assert.strictEqual(processes.length, 3);
+
+    // one that ran for a while is started again right away
+    t.mock.timers.tick(30_000);
+    processes[2].exit(1);
+    await connection.initialize();
+    assert.strictEqual(processes.length, 4);
+  });
+
+  it("starts a server again right away unless servers keep exiting, and then waits up to 30 seconds", () => {
+    assert.deepStrictEqual([0, 1, 2, 3, 5, 6, 10].map(getRestartDelay), [
+      0,
+      1_000,
+      2_000,
+      4_000,
+      16_000,
+      30_000,
+      30_000,
+    ]);
   });
 
   it("starts the server again only once the one that was killed exited", async () => {
@@ -826,6 +895,8 @@ function createConnection(options: {
   onConfigChanged?: (params: ConfigChangedParams) => void;
   onSessionEnded?: () => void;
   killProcess?: (process: ServerProcess, signal: NodeJS.Signals | undefined) => Promise<void> | void;
+  /** Defaults to starting it again right away. */
+  getRestartDelay?: (quickExitCount: number) => number;
 } = {}) {
   const processes: FakeProcess[] = [];
   const logs: [string, string][] = [];
@@ -840,6 +911,7 @@ function createConnection(options: {
     },
     killProcess: options.killProcess,
     onSessionEnded: options.onSessionEnded,
+    getRestartDelay: options.getRestartDelay ?? (() => 0),
     getInitializeParams: () => INITIALIZE_PARAMS,
     showMessage: options.showMessage ?? (() => {}),
     showProgress(title, percentage) {

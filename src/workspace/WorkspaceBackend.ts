@@ -42,6 +42,7 @@ import { getNoConfigMessage } from "../noConfigMessage";
 import { hasPluginForFile, type PluginFileInfo } from "../pluginFiles";
 import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
+import { onDidRegainWindowFocus } from "../utils/windowFocus";
 import {
   type ApprovalChoice,
   Approvals,
@@ -55,6 +56,7 @@ import {
 } from "./approvals";
 import {
   DirWatchers,
+  getChangedVersions,
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
@@ -154,8 +156,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #approvalConfigurationProvider: vscode.Disposable;
   /** What looks in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`). */
   readonly #ancestorCheckListeners: vscode.Disposable[];
-  /** Whether the window was focused, so the ancestor directories are only looked in again when it gets the focus back. */
-  #isWindowFocused = vscode.window.state.focused;
   /** The check of the ancestor directories in progress, which another one doesn't start during. */
   #ancestorCheck: Promise<void> | undefined;
   /** The config files each dprint process sent problems for, which are cleared once it stops. */
@@ -179,16 +179,9 @@ export class WorkspaceBackend implements vscode.Disposable {
       { provideTextDocumentContent: uri => approvalConfigurations.get(uri.path) },
     );
     // the home directory and its ancestors aren't watched for config files, so they're looked in again when
-    // the user may have created or deleted one there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
+    // one may have been created, deleted, or changed there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
     this.#ancestorCheckListeners = [
-      vscode.window.onDidChangeWindowState(state => {
-        // not when only whether it's active changed
-        const wasFocused = this.#isWindowFocused;
-        this.#isWindowFocused = state.focused;
-        if (state.focused && !wasFocused) {
-          this.#checkAncestorConfigFilesAgain();
-        }
-      }),
+      onDidRegainWindowFocus(vscode.window, () => this.#checkAncestorConfigFilesAgain()),
       vscode.workspace.onDidSaveTextDocument(() => this.#checkAncestorConfigFilesAgain()),
     ];
   }
@@ -301,7 +294,7 @@ export class WorkspaceBackend implements vscode.Disposable {
       // the processes that are kept may have been started with other settings or workspace folders, and one
       // that failed to start is started again now that the workspace changed (ex. its executable started now)
       for (const service of state.services) {
-        service.connection.startAgain();
+        service.connection.allowStart();
         service.connection.updateSettings(getSettings());
         service.connection.updateWorkspaceFolders(getWorkspaceFolders());
       }
@@ -328,11 +321,9 @@ export class WorkspaceBackend implements vscode.Disposable {
   }
 
   async onConfigFileChanged(uri?: vscode.Uri, type?: ConfigFileChangeType) {
-    // dprint doesn't watch the config files, so tell it (ex. to publish their problems), and a process that
-    // failed to start is started again for one that changed
+    // dprint doesn't watch the config files, so tell it (ex. to publish their problems)
     if (uri != null && type != null) {
       for (const service of this.#runningServices()) {
-        service.connection.startAgain();
         service.connection.configFileChanged(uri.toString(), getFileChangeType(type));
       }
     }
@@ -1367,9 +1358,7 @@ class WorkspaceState {
       versions.set(filePath, stat == null ? undefined : `${stat.identity}:${stat.version}`);
     }
     this.#unwatchedConfigFileVersions = versions;
-    return filePaths.filter(filePath =>
-      previousVersions.has(filePath) && previousVersions.get(filePath) !== versions.get(filePath)
-    );
+    return getChangedVersions(previousVersions, versions);
   }
 
   #onAncestorConfigFileChanged(filePath: string, change: WatchedFileChange) {
@@ -1889,7 +1878,7 @@ class WorkspaceState {
   #updateSettings() {
     for (const service of this.#resolvedServices) {
       // one that failed to start is started again for its new settings
-      service.connection.startAgain();
+      service.connection.allowStart();
       service.connection.updateSettings(getSettings());
     }
   }

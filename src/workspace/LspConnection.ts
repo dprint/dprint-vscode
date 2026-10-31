@@ -124,6 +124,8 @@ export interface LspConnectionOptions {
    * before killing it with SIGKILL. Defaults to one second.
    */
   killTimeout?: number;
+  /** Gets how long to wait before starting a server again after one exited (see `getRestartDelay`). */
+  getRestartDelay?(quickExitCount: number): number;
 }
 
 /** How long a replaced connection waits before it's shut down (see `disposeWhenIdle`). */
@@ -135,6 +137,8 @@ export interface IdleTimeouts {
 }
 
 const DEFAULT_IDLE_TIMEOUTS: IdleTimeouts = { requests: 10_000, interactions: 10 * 60_000 };
+/** How long a server runs before it exiting isn't counted as exiting soon after it started (see `getRestartDelay`). */
+const QUICK_EXIT_TIME = 30_000;
 /** How long to wait for the rest of stderr of a server that exited before it was initialized. */
 const STDERR_TIMEOUT = 500;
 /** How much of stderr is kept to say why a server exited before it was initialized. */
@@ -144,7 +148,8 @@ const MAX_STDERR_LENGTH = 2_000;
  * Communicates with dprint's language server (`dprint lsp`) using the `dprint/*`
  * methods for editor extensions, where one process formats the files of a whole
  * workspace. The process is started on the first request and again on the next
- * request after it exits, unless it failed to start (see `hasFailedToStart`).
+ * request after it exits, with a delay that grows when it keeps exiting soon after
+ * it started (see `getRestartDelay`), unless it failed to start (see `hasFailedToStart`).
  */
 export class LspConnection {
   readonly #options: LspConnectionOptions;
@@ -158,8 +163,12 @@ export class LspConnection {
   #hasStarted = false;
   /** Whether a server responded to `initialize`, after which a server that fails to start is shown to the user. */
   #hasInitialized = false;
-  /** Why the last server failed to start, which isn't started again until `startAgain` (see `hasFailedToStart`). */
+  /** Why the last server failed to start, which isn't started again until `allowStart` (see `hasFailedToStart`). */
   #startFailure: Error | undefined;
+  /** How many servers in a row exited soon after they started (see `getRestartDelay`). */
+  #quickExitCount = 0;
+  /** Resolves once a server may be started again after one exited (see `getRestartDelay`). */
+  #restartDelay: Promise<void> | undefined;
   #interactionCount = 0;
   /** Whether it's waiting to shut down, which is when a server isn't started again. */
   #closing = false;
@@ -195,14 +204,17 @@ export class LspConnection {
   /**
    * Whether the last server failed to start, which is when it exited before it responded to `initialize` (or
    * couldn't be spawned). A restart doesn't fix that (ex. the executable was replaced with one that doesn't
-   * run), so the requests are rejected with why until `startAgain` is called (ex. its settings changed).
+   * run), so the requests are rejected with why until `allowStart` is called (ex. its settings changed).
    */
   get hasFailedToStart() {
     return this.#startFailure != null;
   }
 
-  /** Has the next request start a server again after one failed to start (see `hasFailedToStart`). */
-  startAgain() {
+  /**
+   * Has the next request start a server again after one failed to start (see `hasFailedToStart`), which is
+   * done once its settings change, and not when only a config file changed.
+   */
+  allowStart() {
     this.#startFailure = undefined;
   }
 
@@ -379,6 +391,11 @@ export class LspConnection {
     if (this.#startFailure != null && this.#server == null) {
       return Promise.reject(this.#startFailure);
     }
+    // one that keeps exiting soon after it started isn't started again right away
+    const restartDelay = this.#restartDelay;
+    if (restartDelay != null && this.#server == null && !this.#disposed && !this.#closing) {
+      return restartDelay.then(() => this.#track(action, token));
+    }
     const server = this.#ensureServer();
     if (server == null) {
       return Promise.reject(new Error("The dprint language server is not running."));
@@ -503,6 +520,7 @@ export class LspConnection {
       workspaceFolders: initializeParams.workspaceFolders,
       progress: new Map(),
       stderr: "",
+      startTime: Date.now(),
     };
 
     connection.onNotification("window/logMessage", (params: MessageParams) => this.#log(params));
@@ -556,13 +574,15 @@ export class LspConnection {
       // while the requests are rejected with what it wrote, which says why (ex. an older dprint without the
       // subcommand, which the backend falls back from when it's the first start)
       this.#onExit(server, undefined);
-      this.#startFailure = new Error("The dprint language server exited before it was initialized.");
+      // replaced with one that has what it wrote, unless another server was started since
+      const placeholder = new Error("The dprint language server exited before it was initialized.");
+      this.#startFailure = placeholder;
       waitForEnd(process.stderr, STDERR_TIMEOUT).then(() => {
         const stderr = server.stderr.trim();
         const err = new Error(
           `The dprint language server exited before it was initialized.${stderr ? ` ${stderr}` : ""}`,
         );
-        if (this.#startFailure != null) {
+        if (this.#startFailure === placeholder) {
           this.#startFailure = err;
         }
         this.#rejectPendingRequests(server, err);
@@ -608,13 +628,15 @@ export class LspConnection {
 
   /**
    * Shows the user why a server that was started again failed to start, which isn't started again until its
-   * settings change. The caller says why the first one failed (ex. it falls back to an older editor service).
+   * settings change. The caller says why the first one failed, which is deliberately not shown here, because
+   * the backend falls back to schema version 5 of the editor service then (ex. for a dprint without the `lsp`
+   * subcommand), which shows its own error when that fails too.
    */
   #showStartFailure(err: Error) {
     if (this.#hasInitialized && !this.#disposed && !this.#closing) {
       this.#options.showMessage({
         type: MessageType.Error,
-        message: `${err.message} It's not started again until its settings change or dprint is restarted.`,
+        message: `It's not started again until its settings change or dprint is restarted. ${err.message}`,
       });
     }
   }
@@ -631,6 +653,9 @@ export class LspConnection {
     if (this.#server === server) {
       this.#server = undefined;
     }
+    if (server.isInitialized && !this.#disposed && !this.#closing) {
+      this.#delayRestart(server);
+    }
     this.#endProgress(server);
     if (err != null) {
       this.#rejectPendingRequests(server, err);
@@ -638,6 +663,25 @@ export class LspConnection {
       server.connection.dispose();
     }
     this.#notifyIdleListeners();
+  }
+
+  /**
+   * Delays starting a server again after one that was initialized exited (or was killed), by longer each time
+   * one exits soon after it started (ex. it crashes on a request that's sent again once it's started again).
+   */
+  #delayRestart(server: Server) {
+    this.#quickExitCount = Date.now() - server.startTime < QUICK_EXIT_TIME ? this.#quickExitCount + 1 : 0;
+    const ms = (this.#options.getRestartDelay ?? getRestartDelay)(this.#quickExitCount);
+    if (ms <= 0) {
+      return;
+    }
+    const restartDelay = new Promise<void>(resolve => setTimeout(resolve, ms));
+    this.#restartDelay = restartDelay;
+    restartDelay.then(() => {
+      if (this.#restartDelay === restartDelay) {
+        this.#restartDelay = undefined;
+      }
+    });
   }
 
   #rejectPendingRequests(server: Server, err: Error) {
@@ -795,6 +839,16 @@ export function combineIsOnAnotherMachine(results: readonly (boolean | undefined
   return results.includes(true) ? true : results.includes(false) ? false : undefined;
 }
 
+/**
+ * Gets how long to wait before starting a server again after one exited, which is right away unless servers
+ * keep exiting soon after they started, and then a second that doubles for each one up to 30 seconds.
+ *
+ * @param quickExitCount - How many servers in a row exited soon after they started.
+ */
+export function getRestartDelay(quickExitCount: number) {
+  return quickExitCount === 0 ? 0 : Math.min(1_000 * 2 ** (quickExitCount - 1), 30_000);
+}
+
 /** A started `dprint lsp` process. */
 interface Server {
   process: ServerProcess;
@@ -816,6 +870,8 @@ interface Server {
   progress: Map<number | string, ProgressHandle>;
   /** The end of what it wrote to stderr. */
   stderr: string;
+  /** When it was started (see `Date.now`). */
+  startTime: number;
 }
 
 interface PendingRequest {

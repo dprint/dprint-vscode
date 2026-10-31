@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { PathKind } from "../environment";
 import {
   DirWatchers,
+  getChangedVersions,
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
@@ -401,6 +402,14 @@ describe("DirWatchers", () => {
     await update;
     assert.deepStrictEqual(watched.map(([dirPath]) => dirPath), ["/p/a"]);
     assert.deepStrictEqual(disposed, ["/p/a"]);
+  });
+});
+
+describe("getChangedVersions", () => {
+  it("is the files with another version, including one that was deleted, and not one that's new", () => {
+    const previous = new Map([["a", "1"], ["b", "1"], ["c", "1"]]);
+    const next = new Map<string, string | undefined>([["a", "1"], ["b", "2"], ["c", undefined], ["d", "1"]]);
+    assert.deepStrictEqual(getChangedVersions(previous, next), ["b", "c"]);
   });
 });
 

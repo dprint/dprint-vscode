@@ -266,9 +266,12 @@ export function getWorkspaceFolderUnwatchedAncestors(
   const unwatched: { folderPath: string; dirPath: string; configFilePath: string | undefined }[] = [];
   for (const folderPath of folderPaths) {
     const ancestors = getUsedAncestors(env, folderPath, configFiles);
+    if (ancestors == null) {
+      continue;
+    }
     // the directories up to a config file below the home directory are all watched
-    const dirPath = ancestors?.dirPaths.find(dirPath => isHomeDirOrAncestor(env, dirPath));
-    if (ancestors != null && dirPath != null) {
+    const dirPath = ancestors.dirPaths.find(dirPath => isHomeDirOrAncestor(env, dirPath));
+    if (dirPath != null) {
       unwatched.push({ folderPath, dirPath, configFilePath: ancestors.ancestorConfigFile?.configFilePath });
     }
   }
@@ -417,7 +420,8 @@ function getSearchParent(env: Environment, dirPath: string) {
 
 /**
  * Gets the ancestor directories of a workspace folder up to the config file it uses, and that config file, which
- * is undefined when the workspace folder has a config file of its own.
+ * is undefined when there's none in an ancestor directory (ex. it uses the global config file). The result is
+ * undefined when the workspace folder has a config file of its own.
  */
 function getUsedAncestors(env: Environment, folderPath: string, configFiles: readonly WorkspaceFolderConfigFile[]) {
   const folderConfigFiles = configFiles.filter(configFile => path.relative(configFile.folderPath, folderPath) === "");
