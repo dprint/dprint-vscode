@@ -582,7 +582,9 @@ export class WorkspaceBackend implements vscode.Disposable {
     for (const uris of this.#diagnosticUris.values()) {
       for (const uri of [...uris]) {
         const fileUri = vscode.Uri.parse(uri);
-        if (fileUri.scheme === FILE_SCHEME && !await this.#environment.fileExists(fileUri.fsPath)) {
+        // a symlink isn't followed to find out whether it's there (ex. one to a share that replaced it),
+        // so its problems are kept until dprint publishes them again or it's gone
+        if (fileUri.scheme === FILE_SCHEME && await this.#environment.pathKind(fileUri.fsPath) == null) {
           uris.delete(uri);
           this.#diagnostics.delete(fileUri);
         }
