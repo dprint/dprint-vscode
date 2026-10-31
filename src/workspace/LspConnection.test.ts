@@ -271,9 +271,15 @@ describe("LspConnection", () => {
   it("doesn't start the server again while the one that couldn't be killed is running", async () => {
     const { connection, processes } = createConnection();
 
-    const process = await killWithUnreadableOutput(connection, processes);
-    // ex. killing it failed with EPERM
-    process.emit("error", new Error("kill EPERM"));
+    const configInfo = connection.configInfo({ configFile: { uri: "file:///dprint.json" } });
+    const process = processes[0];
+    // ex. killing it fails with EPERM, which node emits from within `kill()`
+    process.killError = new Error("kill EPERM");
+    await process.nextRequest("dprint/configInfo");
+    process.stdout.write("Content-Length: abc\r\n\r\n");
+    // its requests aren't rejected as if it failed to start
+    await assert.rejects(configInfo, /stopped while the request was in progress/);
+    assert.strictEqual(process.killCount, 1);
     connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
     await nextTick();
     assert.strictEqual(processes.length, 1);
@@ -612,6 +618,8 @@ class FakeProcess extends EventEmitter {
   readonly killSignals: (NodeJS.Signals | undefined)[] = [];
   /** The process id, which is undefined when it failed to spawn. */
   pid: number | undefined = 1234;
+  /** The error that killing it emits from within `kill()` like node does (ex. EPERM), which keeps it running. */
+  killError: Error | undefined;
 
   constructor(initializeResult: InitializeResult | null) {
     super();
@@ -646,6 +654,10 @@ class FakeProcess extends EventEmitter {
 
   kill(signal?: NodeJS.Signals) {
     this.killSignals.push(signal);
+    if (this.killError != null) {
+      this.emit("error", this.killError);
+      return false;
+    }
     return true;
   }
 

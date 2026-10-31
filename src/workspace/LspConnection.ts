@@ -444,11 +444,13 @@ export class LspConnection {
     });
     // a process that fails to spawn (ex. the executable or the cwd no longer exists) only emits this event
     process.on("error", err => {
-      // it's also emitted when the process couldn't be killed, which is still running then
-      if (process.pid == null) {
-        resolveExited();
-      }
       logger.logError("dprint language server process error:", err);
+      if (process.pid != null) {
+        // it couldn't be killed (it's emitted from within `kill()`), which is still running and
+        // is killed again with SIGKILL when it doesn't exit (see `#kill`)
+        return;
+      }
+      resolveExited();
       this.#onExit(server, new Error(`The dprint language server failed to start. ${err}`));
     });
 
