@@ -220,8 +220,10 @@ export interface ApprovalItem {
   /** The url, path, or npm specifier, or the setting of a proxy for "npmrcProxy". */
   specifier: string;
   /**
-   * "npmrcProxy" is a proxy of an `.npmrc` file that isn't the user's own, which the downloads would go through,
-   * and "networkPath" is a file or directory on another machine that's read.
+   * A config file is one that a config file extends, an npmrcProxy is a proxy that an `.npmrc` file sets, which downloads are sent
+   * through once it's allowed, and a networkPath is a file or directory on another machine that's read (ex. a plugin, a
+   * configuration file, an npm package, or an `.npmrc` file). Show a kind that isn't known by its specifier. An npm registry's item
+   * is `plugin` when what was downloaded from it isn't known (ex. a decision kept from another version of dprint).
    */
   kind: "plugin" | "config" | "npmrcProxy" | "networkPath" | (string & {});
   /**
@@ -297,18 +299,26 @@ export interface ApproveResult extends ConfigApprovals {
 
 /** The data of an error, which may be a kind that's newer than the extension. */
 export type ErrorData =
-  /** What needs to be approved for the config file of the approval now when it's known. */
+  /**
+   * What needs to be approved now for the configuration file the approval was for (`current`), which is missing when that isn't
+   * known (ex. the id isn't of an approval the server provided).
+   */
   | { kind: "approvalChanged"; current?: ConfigApprovals }
   | { kind: string & {} };
 
 /** Identifies a config file, with the directory it's used for. */
 export interface ConfigFileIdentifier {
   uri: string;
+  /**
+   * The directory it's used for (its `dirUri`), which is the root of the server's current directory for the global configuration
+   * file when not provided, and the directory to find the configuration file the server was started with from (`kind: "cli"`). For
+   * `dprint/decisions` and `dprint/forgetDecisions`, a configuration file without one is of each directory it's used for instead.
+   */
   dirUri?: string;
 }
 
 export interface PendingApprovalsParams {
-  /** The config file to get them for, which is every config file when not provided. */
+  /** The configuration file to get them for, which is every configuration file that was used when not provided. */
   configFile?: ConfigFileIdentifier;
 }
 
@@ -316,7 +326,10 @@ export interface PendingApprovalsParams {
 export type PendingApprovalsResult = { approvals: PendingApproval[] } | ConfigApprovals;
 
 export interface ForgetDecisionsParams {
-  /** The config file to forget the decisions of, which is every config file when not provided. */
+  /**
+   * The configuration file to forget the decisions of, which is every configuration file when not provided. Without a `dirUri`, it's
+   * the configuration file for each directory it's used for (ex. the global configuration file on each drive).
+   */
   configFile?: ConfigFileIdentifier;
 }
 
@@ -359,7 +372,10 @@ export interface Decision {
   always: boolean;
 }
 
-/** The error code of a request for something that changed (ex. an approval that isn't pending anymore). */
+/**
+ * The error code of `dprint/approve` when what it was sent for isn't pending anymore because what needs to be approved changed.
+ * Recognize it by its `data.kind` (see `ErrorData`), and treat it like `-32603` without it.
+ */
 export const APPROVAL_CHANGED_ERROR_CODE = -32803;
 
 export interface FileInfoParams extends DocumentParams {
@@ -381,17 +397,28 @@ export interface FilePlugin {
 }
 
 export interface ConfigFileInfo {
+  /** A file, https, or npm uri, which is the path it was found at for a config file that's a symlink. */
   uri: string;
-  /** The directory whose files it formats or that its patterns are relative to. */
+  /**
+   * The directory whose files it formats, which is the directory it's in unless that's a `.config` directory (other than the home
+   * directory's), even when it's a symlink to a file in another directory, and the directory it's used for when it's the global
+   * configuration file (ex. the root of a drive). It's the directory its patterns are relative to for a remote or npm configuration
+   * file.
+   */
   dirUri: string;
+  /**
+   * How it was chosen: found in an ancestor directory, the global configuration file, or the one the server was started
+   * with (`dprint lsp --config <path>`). Treat a kind that isn't known like "local".
+   */
   kind: "local" | "global" | "cli" | (string & {});
-  /** Whether it's in a workspace folder. */
+  /** Whether it's in a workspace folder, which the global configuration file and one in an ancestor directory of the workspace folders aren't. */
   inWorkspace: boolean;
   /**
    * Whether it was found on another machine and reading it isn't allowed yet (see "Approving"), which is left out otherwise. Don't
    * open or read it then (ex. with a button in the prompt or a command that opens the configuration file of a document), because
    * that reads it from the other machine, which the approval is for. Its directory is watched like any other, which is never when
-   * it's a symlink (see "Lifecycle"). The server sends `dprint/configChanged` once it's allowed.
+   * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
+   * once it's allowed.
    */
   onAnotherMachine?: boolean;
 }
@@ -410,7 +437,13 @@ export interface ConfigInfoResult {
   filePatterns: FilePattern[];
   /** The other files the config file formats, which only fileInfo says (ex. extensionless files with a shebang). */
   otherFiles: { kind: "shebangs" | "associations" | (string & {}); values: string[] }[];
-  /** The local files besides the config file that it was resolved from (ex. a config file it extends). */
+  /**
+   * The local files that it was resolved from (ex. a configuration file it extends), and its own canonical path when that isn't the
+   * path of `configFile.uri` (ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), because the
+   * `configFileGlobs` watcher doesn't report a change there. The editor watches them too, by their directories (see "Lifecycle"
+   * for when one that's a symlink isn't watched). A file whose directory may not be read (ex. it's on another machine now) is
+   * left out.
+   */
   watchUris: string[];
   status: FormatStatus;
 }

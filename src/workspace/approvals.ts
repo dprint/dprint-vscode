@@ -379,7 +379,10 @@ export function toVisibleText(text: string) {
 /**
  * What dprint escapes in what it provides from the project (see `ApprovalItem.specifier` in its spec):
  * a combining mark at the start, a character other than a plain space that's a control, format,
- * separator or default ignorable one (ex. a bidi override), and a backslash followed by `u{`.
+ * separator, default ignorable, or unassigned one (ex. a bidi override), and a backslash followed by `u{`.
+ * dprint currently uses Unicode 16, which a later version of dprint may raise, so a character that a
+ * later version of Unicode added is escaped by dprint (it's unassigned there) and may not be by this
+ * with newer tables, and this escapes more with older tables.
  */
 const ESCAPED_TEXT_PATTERN =
   /^[\p{Mn}\p{Me}]|(?! )[\p{Cc}\p{Cf}\p{Cn}\p{Z}\p{Default_Ignorable_Code_Point}]|\\(?=u\{)/gu;
