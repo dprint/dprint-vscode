@@ -247,11 +247,6 @@ export class WorkspaceBackend implements vscode.Disposable {
           info: undefined,
         };
       }));
-      for (const configFile of configFiles) {
-        if (configFile.isAncestor) {
-          state.watchAncestorConfigFile(configFile.configFilePath);
-        }
-      }
       // the processes that are kept may have been started with other settings or workspace folders
       for (const service of state.services) {
         service.connection.updateSettings(getSettings());
@@ -792,6 +787,12 @@ class WorkspaceState {
   setConfigs(configs: Config[]) {
     this.#configs = configs;
     this.#hasConfigs = true;
+    // the ones of a dprint process are watched once it says they aren't on another machine
+    for (const config of configs) {
+      if (config.isAncestor && config.service == null) {
+        this.#watchAncestorConfigFile(config.configFilePath);
+      }
+    }
   }
 
   /** Gets the dprint process of the executable, which is shared with the other config files that use it. */
@@ -1047,7 +1048,54 @@ class WorkspaceState {
     this.scheduleRefresh();
   }
 
-  watchAncestorConfigFile(configFilePath: string) {
+  /**
+   * Watches the files that the config files were resolved from (ex. a config file one extends),
+   * which dprint doesn't watch, so it's told when they change.
+   */
+  #updateWatchedFiles() {
+    // a state that was stopped while refreshing disposed its watchers
+    if (this.#disposed) {
+      return;
+    }
+    for (const config of this.#configs) {
+      // one on another machine isn't watched until it's allowed because watching it follows its symlink like
+      // reading it does, and dprint sends dprint/configChanged once it's allowed, which refreshes it
+      if (
+        config.isAncestor && config.service != null && config.info != null && !config.info.configFile?.onAnotherMachine
+      ) {
+        this.#watchAncestorConfigFile(config.configFilePath);
+      }
+    }
+    const uris = new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []));
+    for (const [uri, watcher] of [...this.#fileWatchers]) {
+      if (!uris.has(uri)) {
+        watcher.dispose();
+        this.#fileWatchers.delete(uri);
+      }
+    }
+    for (const uri of uris) {
+      if (this.#fileWatchers.has(uri)) {
+        continue;
+      }
+      const filePath = vscode.Uri.parse(uri).fsPath;
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(path.dirname(filePath)), path.basename(filePath)),
+      );
+      const onChange = (type: FileChangeType) => {
+        this.#logger.logDebug("File a configuration file was resolved from changed:", filePath);
+        for (const service of this.#resolvedServices) {
+          service.connection.configFileChanged(uri, type);
+        }
+      };
+      watcher.onDidCreate(() => onChange(FileChangeType.Created));
+      watcher.onDidChange(() => onChange(FileChangeType.Changed));
+      watcher.onDidDelete(() => onChange(FileChangeType.Deleted));
+      this.#fileWatchers.set(uri, watcher);
+    }
+  }
+
+  /** Watches the directory of a config file in an ancestor directory of a workspace folder for its changes. */
+  #watchAncestorConfigFile(configFilePath: string) {
     const dirPath = getConfigFileDir(this.#environment, configFilePath);
     // config files in workspace folders are already watched by the extension
     if (vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
@@ -1076,43 +1124,6 @@ class WorkspaceState {
     });
     watcher.onDidDelete(onCreateOrDelete);
     this.#disposables.push(watcher);
-  }
-
-  /**
-   * Watches the files that the config files were resolved from (ex. a config file one extends),
-   * which dprint doesn't watch, so it's told when they change.
-   */
-  #updateWatchedFiles() {
-    // a state that was stopped while refreshing disposed its watchers
-    if (this.#disposed) {
-      return;
-    }
-    const uris = new Set(this.#configs.flatMap(config => config.info?.watchUris ?? []));
-    for (const [uri, watcher] of [...this.#fileWatchers]) {
-      if (!uris.has(uri)) {
-        watcher.dispose();
-        this.#fileWatchers.delete(uri);
-      }
-    }
-    for (const uri of uris) {
-      if (this.#fileWatchers.has(uri)) {
-        continue;
-      }
-      const filePath = vscode.Uri.parse(uri).fsPath;
-      const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(vscode.Uri.file(path.dirname(filePath)), path.basename(filePath)),
-      );
-      const onChange = (type: FileChangeType) => {
-        this.#logger.logDebug("File a configuration file was resolved from changed:", filePath);
-        for (const service of this.#resolvedServices) {
-          service.connection.configFileChanged(uri, type);
-        }
-      };
-      watcher.onDidCreate(() => onChange(FileChangeType.Created));
-      watcher.onDidChange(() => onChange(FileChangeType.Changed));
-      watcher.onDidDelete(() => onChange(FileChangeType.Deleted));
-      this.#fileWatchers.set(uri, watcher);
-    }
   }
 
   async #refreshConfig(config: Config) {
