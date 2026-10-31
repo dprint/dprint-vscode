@@ -83,6 +83,8 @@ import {
 } from "./messages";
 import { getServerSettings } from "./serverSettings";
 import {
+  type ConfigFileNames,
+  getConfigFileNames,
   getServerSupport,
   getUnsupportedError,
   isUnknownSubcommandError,
@@ -440,8 +442,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   async #getService(executable: DprintExecutable): Promise<ServiceResolution> {
     const connection = this.#createConnection(executable);
     let support: ReturnType<typeof getServerSupport>;
+    let configFileNames: ConfigFileNames;
     try {
-      support = getServerSupport(await connection.initialize());
+      const result = await connection.initialize();
+      support = getServerSupport(result);
+      configFileNames = getConfigFileNames(result);
     } catch (err) {
       connection.dispose();
       return {
@@ -460,7 +465,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     let service = this.#services.get(key);
     if (service == null) {
       this.#logger.logInfo(`Initialized dprint ${support.version} (language server)\n  Command: ${executable.cmdPath}`);
-      service = Promise.resolve(this.#createService(key, connection));
+      service = Promise.resolve(this.#createService(key, connection, configFileNames));
       this.#services.set(key, service);
     } else {
       connection.dispose();
@@ -509,7 +514,7 @@ export class WorkspaceBackend implements vscode.Disposable {
     return connection;
   }
 
-  #createService(key: string, connection: LspConnection): Service {
+  #createService(key: string, connection: LspConnection, configFileNames: ConfigFileNames): Service {
     const approvals = new Approvals({
       ask: askApproval,
       approve: async params => {
@@ -538,7 +543,7 @@ export class WorkspaceBackend implements vscode.Disposable {
         );
       },
     });
-    return { key, connection, approvals };
+    return { key, connection, approvals, configFileNames };
   }
 
   /** The dprint processes the states use. */
@@ -679,6 +684,8 @@ interface Service {
   connection: LspConnection;
   /** Asks the user about what the process needs approved. */
   approvals: Approvals;
+  /** The names of the config files the process looks up (see `getConfigFileNames`). */
+  configFileNames: ConfigFileNames;
 }
 
 type ServiceResolution = Service | UnsupportedServer;
@@ -1141,15 +1148,16 @@ class WorkspaceState {
     if (this.#disposed) {
       return;
     }
-    const configFilePaths = this.#configs
+    const configFiles = this.#configs
       .filter(config => config.isAncestor)
-      .map(config => config.configFilePath)
       // config files in workspace folders are already watched by the extension
-      .filter(configFilePath => {
-        const dirPath = getConfigFileDir(this.#environment, configFilePath);
+      .filter(config => {
+        const dirPath = getConfigFileDir(this.#environment, config.configFilePath);
         return !vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath));
-      });
-    this.#ancestorWatchers.update(getAncestorConfigFileNamesByDir(this.#environment, configFilePaths))
+      })
+      // with the names that its dprint process looks up
+      .map(config => ({ configFilePath: config.configFilePath, names: config.service?.configFileNames }));
+    this.#ancestorWatchers.update(getAncestorConfigFileNamesByDir(this.#environment, configFiles))
       .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
   }
 

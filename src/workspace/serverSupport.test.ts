@@ -1,6 +1,8 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
+import { DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "../constants";
 import {
+  getConfigFileNames,
   getServerSupport,
   getUnsupportedError,
   isUnknownSubcommandError,
@@ -69,6 +71,32 @@ describe("getServerSupport", () => {
       isUnavailable: false,
       isVersionMismatch: true,
     });
+  });
+});
+
+describe("getConfigFileNames", () => {
+  it("is the names the server says it looks up", () => {
+    const capability = {
+      version: 1,
+      versions: [1],
+      configFileNames: ["dprint.json5"],
+      dotConfigFileNames: ["dprint.json5"],
+    };
+    assert.deepStrictEqual(getConfigFileNames({ capabilities: { experimental: { dprint: capability } } }), {
+      configFileNames: ["dprint.json5"],
+      dotConfigFileNames: ["dprint.json5"],
+    });
+  });
+
+  it("is the extension's own names when the server doesn't say", () => {
+    // ex. an older dprint
+    assert.deepStrictEqual(
+      getConfigFileNames({ capabilities: { experimental: { dprint: { version: 1, versions: [1] } } } }),
+      {
+        configFileNames: DPRINT_CONFIG_FILE_NAMES,
+        dotConfigFileNames: DOT_CONFIG_FILE_NAMES,
+      },
+    );
   });
 });
 

@@ -1,3 +1,4 @@
+import { DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "../constants";
 import { DPRINT_METHODS_VERSIONS, type InitializeResult } from "./messages";
 
 // note: this file should not import "vscode" so that it can be unit tested
@@ -16,6 +17,23 @@ export interface UnsupportedServer {
    * updated.
    */
   isVersionMismatch?: boolean;
+}
+
+/** The names of the config files that dprint looks up in a directory and in its `.config` directory. */
+export interface ConfigFileNames {
+  configFileNames: readonly string[];
+  dotConfigFileNames: readonly string[];
+}
+
+/**
+ * Gets the names of the config files that the server looks up, which are the extension's own when it doesn't
+ * say (ex. an older dprint, or one without a `version`).
+ */
+export function getConfigFileNames(result: InitializeResult): ConfigFileNames {
+  const capability = result.capabilities?.experimental?.dprint;
+  return capability?.configFileNames != null && capability.dotConfigFileNames != null
+    ? { configFileNames: capability.configFileNames, dotConfigFileNames: capability.dotConfigFileNames }
+    : { configFileNames: DPRINT_CONFIG_FILE_NAMES, dotConfigFileNames: DOT_CONFIG_FILE_NAMES };
 }
 
 /**

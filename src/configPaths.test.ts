@@ -262,10 +262,24 @@ describe("getAncestorConfigFileNamesByDir", () => {
     const env = new TestEnvironment({ homeDir });
     const projectDir = path.resolve("/project");
     assert.deepStrictEqual(
-      getAncestorConfigFileNamesByDir(env, [path.join(projectDir, ".config", "dprint.json")]),
+      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(projectDir, ".config", "dprint.json") }]),
       new Map([
         [projectDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc", ".config"]],
         [path.join(projectDir, ".config"), ["dprint.json", "dprint.jsonc"]],
+      ]),
+    );
+  });
+
+  it("has the names that dprint looks up when it says", () => {
+    // ex. a newer dprint that looks up another name too
+    const env = new TestEnvironment({ homeDir });
+    const projectDir = path.resolve("/project");
+    const names = { configFileNames: ["dprint.json", "dprint.json5"], dotConfigFileNames: ["dprint.json5"] };
+    assert.deepStrictEqual(
+      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(projectDir, "dprint.json"), names }]),
+      new Map([
+        [projectDir, ["dprint.json", "dprint.json5", ".config"]],
+        [path.join(projectDir, ".config"), ["dprint.json5"]],
       ]),
     );
   });
@@ -274,7 +288,7 @@ describe("getAncestorConfigFileNamesByDir", () => {
     // ex. it's where the user's configuration of other programs goes
     const env = new TestEnvironment({ homeDir });
     assert.deepStrictEqual(
-      getAncestorConfigFileNamesByDir(env, [path.join(homeDir, "dprint.json")]),
+      getAncestorConfigFileNamesByDir(env, [{ configFilePath: path.join(homeDir, "dprint.json") }]),
       new Map([[homeDir, ["dprint.json", "dprint.jsonc", ".dprint.json", ".dprint.jsonc"]]]),
     );
   });

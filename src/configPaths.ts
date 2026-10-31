@@ -206,17 +206,25 @@ export function isDotConfigDir(env: Environment, dirPath: string) {
  * ones of its `.config` directory, which is watched on its own because a watcher of a directory
  * doesn't watch its subdirectories. The home directory's `.config` isn't one (see `isDotConfigDir`).
  */
-export function getAncestorConfigFileNamesByDir(env: Environment, configFilePaths: Iterable<string>) {
+export function getAncestorConfigFileNamesByDir(
+  env: Environment,
+  configFiles: Iterable<
+    { configFilePath: string; names?: { configFileNames: readonly string[]; dotConfigFileNames: readonly string[] } }
+  >,
+) {
   const fileNamesByDir = new Map<string, readonly string[]>();
-  for (const configFilePath of configFilePaths) {
+  for (const { configFilePath, names } of configFiles) {
+    // the names that dprint looks up, which an older dprint doesn't say
+    const configFileNames = names?.configFileNames ?? DPRINT_CONFIG_FILE_NAMES;
+    const dotConfigFileNames = names?.dotConfigFileNames ?? DOT_CONFIG_FILE_NAMES;
     const dirPath = getConfigFileDir(env, configFilePath);
     const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
     if (isDotConfigDir(env, dotConfigDirPath)) {
       // creating or deleting the `.config` directory is a change of the directory
-      fileNamesByDir.set(dirPath, [...DPRINT_CONFIG_FILE_NAMES, DOT_CONFIG_DIR_NAME]);
-      fileNamesByDir.set(dotConfigDirPath, DOT_CONFIG_FILE_NAMES);
+      fileNamesByDir.set(dirPath, [...configFileNames, DOT_CONFIG_DIR_NAME]);
+      fileNamesByDir.set(dotConfigDirPath, dotConfigFileNames);
     } else {
-      fileNamesByDir.set(dirPath, DPRINT_CONFIG_FILE_NAMES);
+      fileNamesByDir.set(dirPath, configFileNames);
     }
   }
   return fileNamesByDir;

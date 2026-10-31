@@ -42,8 +42,15 @@ export interface ServerCapability {
   versions: number[];
   /** Where dprint's own files are, which are left out when their directory can't be found. */
   files?: { settingsUri?: string; approvalsUri?: string; globalConfigUri?: string };
-  /** The globs of the config files to watch in the workspace folders, which are empty for `dprint lsp --config`. */
+  /** The configuration files to watch in the workspace folders, which is missing without a `version`. */
   configFileGlobs?: string[];
+  /**
+   * The names of the configuration files that are looked up in a directory (ex. in the ancestor directories of the workspace
+   * folders), which may have names added later, are empty for `dprint lsp --config`, and are missing without a `version`.
+   */
+  configFileNames?: string[];
+  /** The names of the configuration files that are looked up in the `.config` directory of a directory, like `configFileNames`. */
+  dotConfigFileNames?: string[];
   /** What to tell the user when there isn't a `version` (ex. that dprint or the extension needs to be updated). */
   message?: string;
 }
@@ -431,14 +438,14 @@ export interface ConfigFileInfo {
    * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
    * once it's allowed, and when a configuration file becomes one on another machine (ex. a `git pull` replaced it with a symlink
    * to a share). So don't open a configuration file from an older result or action (ex. a notification's "Open Configuration
-   * File") when the latest result the editor extension has for it says it's on another machine, which is the latest `configFile`
-   * with its `uri` (and `dirUri`) that a `dprint/configInfo` or `dprint/fileInfo` result had, because both have the server's
-   * view of the configuration file, and otherwise open it as usual. That result isn't known anymore once `dprint/configChanged`
-   * names that configuration file (or no configuration file) or the server is started again. The server takes back the
-   * diagnostics it published for it then by publishing empty ones, and the ones it published through a directory the editor knew
-   * by another path once that doesn't lead where it did (when it also sends `dprint/configChanged` for the configuration files the
-   * editor knew through it, whose diagnostics are published again once they're resolved again), so don't drop them for this. This
-   * is a best effort (see "Security").
+   * File") when the latest result the editor extension has for it has `onAnotherMachine`, which is the latest `configFile` with
+   * its `uri` (and `dirUri`) of a `dprint/configInfo` or `dprint/fileInfo` result, because both have the server's view of the
+   * configuration file, and otherwise open it as usual. A `dprint/configChanged` that names it (or no configuration file) and
+   * a restart of the server make it unknown again. The server takes back the diagnostics it published for it then by
+   * publishing empty ones, and the ones it published through a directory the editor knew by another path once that doesn't lead
+   * where it did (when it also sends `dprint/configChanged` for the configuration files the editor knew through it, whose
+   * diagnostics are published again once they're resolved again), so don't drop them for this. This is a best effort (see
+   * "Security").
    */
   onAnotherMachine?: boolean;
 }
