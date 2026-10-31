@@ -719,8 +719,7 @@ class WorkspaceState {
     onChange: (filePath, change) => this.#onAncestorConfigFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
-    // the extension found them itself, so a symlink may point to another machine
-    watchesSymlinkedDirs: false,
+    isWorkspaceFolder: isWorkspaceFolderPath,
   });
   /** Watches the files the config files were resolved from (`watchUris`) by their directories. */
   readonly #fileWatchers = new DirWatchers({
@@ -729,8 +728,8 @@ class WorkspaceState {
     onChange: (filePath, change) => this.#onResolvedFromFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
-    // dprint checked them (ex. a workspace folder opened through a symlink)
-    watchesSymlinkedDirs: true,
+    // ex. a file a config file extends in a workspace folder opened through a symlink
+    isWorkspaceFolder: isWorkspaceFolderPath,
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
@@ -1997,6 +1996,15 @@ function watchDir(
   watcher.onDidChange(uri => onChange(uri.fsPath, "changed"));
   watcher.onDidDelete(uri => onChange(uri.fsPath, "deleted"));
   return watcher;
+}
+
+/** Gets whether the directory is one of the workspace folders. */
+function isWorkspaceFolderPath(dirPath: string) {
+  const key = getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM);
+  return vscode.workspace.workspaceFolders?.some(folder =>
+    folder.uri.scheme === FILE_SCHEME
+    && getWatchedPathKey(path.resolve(folder.uri.fsPath), IS_CASE_INSENSITIVE_FILE_SYSTEM) === key
+  ) ?? false;
 }
 
 /** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */

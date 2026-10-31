@@ -59,20 +59,27 @@ describe("DirWatchers", () => {
     assert.strictEqual(dirWatchCount(), 2);
   });
 
-  it("watches a directory that's a symlink when that's allowed", async () => {
-    // ex. the directory of a file dprint provided in a workspace folder opened through a symlink
-    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/linked": "symlink", "/p/shared": "dir" };
-    const { watchers, watched, disposed, emit } = createWatchers(kinds, { watchesSymlinkedDirs: true });
-    await watchers.update(new Map([["/p/linked", ["dprint.json"]], ["/p/shared", ["base.json"]]]));
-    const dirWatches = () => watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p");
-    assert.deepStrictEqual(dirWatches(), ["/p/linked", "/p/shared"]);
+  it("watches a workspace folder that's a symlink, but no other directory that's one", async () => {
+    // ex. a file a config file extends in a workspace folder opened through a symlink, and one
+    // dprint provided in a directory that was replaced with a symlink since
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/folder": "symlink", "/p/shared": "symlink" };
+    const { watchers, watched } = createWatchers(kinds, { workspaceFolders: ["/p/folder"] });
+    await watchers.update(new Map([["/p/folder", ["base.json"]], ["/p/shared", ["base.json"]]]));
+    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p"), ["/p/folder"]);
+  });
 
-    // one that's replaced with a symlink is still watched, with a new watcher
-    kinds["/p/shared"] = "symlink";
-    emit("/p", "/p/shared", "changed");
+  it("watches a workspace folder again that's replaced with a symlink", async () => {
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/folder": "dir" };
+    const { watchers, watched, disposed, emit } = createWatchers(kinds, { workspaceFolders: ["/p/folder"] });
+    await watchers.update(new Map([["/p/folder", ["base.json"]]]));
+    kinds["/p/folder"] = "symlink";
+    emit("/p", "/p/folder", "changed");
     await nextTicks();
-    assert.deepStrictEqual(disposed, ["/p/shared"]);
-    assert.deepStrictEqual(dirWatches(), ["/p/linked", "/p/shared", "/p/shared"]);
+    assert.deepStrictEqual(disposed, ["/p/folder"]);
+    assert.deepStrictEqual(watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p"), [
+      "/p/folder",
+      "/p/folder",
+    ]);
   });
 
   it("checks a watched directory again on each update", async () => {
@@ -155,7 +162,7 @@ function createWatchers(
   kinds: Record<string, PathKind | undefined>,
   options: {
     isCaseInsensitive?: boolean;
-    watchesSymlinkedDirs?: boolean;
+    workspaceFolders?: string[];
     beforeWatch?: () => void;
     /** Overrides the kind of a path, unless it's undefined. */
     pathKind?: (filePath: string) => Promise<PathKind | undefined> | undefined;
@@ -185,7 +192,7 @@ function createWatchers(
     onChange: (filePath, change) => changes.push([filePath, change]),
     onError: err => assert.fail(String(err)),
     isCaseInsensitive: options.isCaseInsensitive ?? false,
-    watchesSymlinkedDirs: options.watchesSymlinkedDirs ?? false,
+    isWorkspaceFolder: dirPath => (options.workspaceFolders ?? []).includes(toTestPath(dirPath)),
   });
   const emit = (dirPath: string, filePath: string, change: WatchedFileChange) => {
     for (const callback of callbacks.get(dirPath) ?? []) {
