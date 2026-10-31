@@ -298,8 +298,10 @@ export class WorkspaceBackend implements vscode.Disposable {
           info: undefined,
         };
       }));
-      // the processes that are kept may have been started with other settings or workspace folders
+      // the processes that are kept may have been started with other settings or workspace folders, and one
+      // that failed to start is started again now that the workspace changed (ex. its executable started now)
       for (const service of state.services) {
+        service.connection.startAgain();
         service.connection.updateSettings(getSettings());
         service.connection.updateWorkspaceFolders(getWorkspaceFolders());
       }
@@ -326,9 +328,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   }
 
   async onConfigFileChanged(uri?: vscode.Uri, type?: ConfigFileChangeType) {
-    // dprint doesn't watch the config files, so tell it (ex. to publish their problems)
+    // dprint doesn't watch the config files, so tell it (ex. to publish their problems), and a process that
+    // failed to start is started again for one that changed
     if (uri != null && type != null) {
       for (const service of this.#runningServices()) {
+        service.connection.startAgain();
         service.connection.configFileChanged(uri.toString(), getFileChangeType(type));
       }
     }
@@ -1884,6 +1888,8 @@ class WorkspaceState {
 
   #updateSettings() {
     for (const service of this.#resolvedServices) {
+      // one that failed to start is started again for its new settings
+      service.connection.startAgain();
       service.connection.updateSettings(getSettings());
     }
   }

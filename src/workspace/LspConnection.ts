@@ -81,7 +81,10 @@ export interface ConnectionCancellationToken {
 }
 
 export interface LspConnectionOptions {
-  /** Starts `dprint lsp`, which is done again on the next request after it exits. */
+  /**
+   * Starts `dprint lsp`, which is done again on the next request after it exits, unless it failed to start
+   * (see `hasFailedToStart`).
+   */
   spawn(): ServerProcess;
   /**
    * Kills the process with the processes it started (ex. the dprint that the shell of an npm `dprint.cmd`
@@ -141,7 +144,7 @@ const MAX_STDERR_LENGTH = 2_000;
  * Communicates with dprint's language server (`dprint lsp`) using the `dprint/*`
  * methods for editor extensions, where one process formats the files of a whole
  * workspace. The process is started on the first request and again on the next
- * request after it exits.
+ * request after it exits, unless it failed to start (see `hasFailedToStart`).
  */
 export class LspConnection {
   readonly #options: LspConnectionOptions;
@@ -153,6 +156,10 @@ export class LspConnection {
   #killedServerExit: Promise<void> | undefined;
   /** Whether a server was started, which is when starting another is a restart. */
   #hasStarted = false;
+  /** Whether a server responded to `initialize`, after which a server that fails to start is shown to the user. */
+  #hasInitialized = false;
+  /** Why the last server failed to start, which isn't started again until `startAgain` (see `hasFailedToStart`). */
+  #startFailure: Error | undefined;
   #interactionCount = 0;
   /** Whether it's waiting to shut down, which is when a server isn't started again. */
   #closing = false;
@@ -183,6 +190,20 @@ export class LspConnection {
   /** The number of requests that are waiting on a response. */
   get pendingRequestCount() {
     return this.#pendingRequests.size;
+  }
+
+  /**
+   * Whether the last server failed to start, which is when it exited before it responded to `initialize` (or
+   * couldn't be spawned). A restart doesn't fix that (ex. the executable was replaced with one that doesn't
+   * run), so the requests are rejected with why until `startAgain` is called (ex. its settings changed).
+   */
+  get hasFailedToStart() {
+    return this.#startFailure != null;
+  }
+
+  /** Has the next request start a server again after one failed to start (see `hasFailedToStart`). */
+  startAgain() {
+    this.#startFailure = undefined;
   }
 
   /** Starts the server when it's not running and resolves with the result of initializing it. */
@@ -354,6 +375,9 @@ export class LspConnection {
     const killedServerExit = this.#killedServerExit;
     if (killedServerExit != null && this.#server == null && !this.#disposed && !this.#closing) {
       return killedServerExit.then(() => this.#track(action, token));
+    }
+    if (this.#startFailure != null && this.#server == null) {
+      return Promise.reject(this.#startFailure);
     }
     const server = this.#ensureServer();
     if (server == null) {
@@ -528,16 +552,22 @@ export class LspConnection {
         this.#onExit(server, new Error("The dprint language server exited while the request was in progress."));
         return;
       }
-      // the next request starts it again, while the requests are rejected with what it wrote,
-      // which says why it exited (ex. an older dprint without the subcommand)
+      // it failed to start, which a restart doesn't fix, so it isn't started again until its settings change,
+      // while the requests are rejected with what it wrote, which says why (ex. an older dprint without the
+      // subcommand, which the backend falls back from when it's the first start)
       this.#onExit(server, undefined);
+      this.#startFailure = new Error("The dprint language server exited before it was initialized.");
       waitForEnd(process.stderr, STDERR_TIMEOUT).then(() => {
         const stderr = server.stderr.trim();
-        this.#rejectPendingRequests(
-          server,
-          new Error(`The dprint language server exited before it was initialized.${stderr ? ` ${stderr}` : ""}`),
+        const err = new Error(
+          `The dprint language server exited before it was initialized.${stderr ? ` ${stderr}` : ""}`,
         );
+        if (this.#startFailure != null) {
+          this.#startFailure = err;
+        }
+        this.#rejectPendingRequests(server, err);
         connection.dispose();
+        this.#showStartFailure(err);
       });
     });
     // a process that fails to spawn (ex. the executable or the cwd no longer exists) only emits this event
@@ -549,7 +579,10 @@ export class LspConnection {
         return;
       }
       resolveExited();
-      this.#onExit(server, new Error(`The dprint language server failed to start. ${err}`));
+      const startFailure = new Error(`The dprint language server failed to start. ${err}`);
+      this.#startFailure = startFailure;
+      this.#onExit(server, startFailure);
+      this.#showStartFailure(startFailure);
     });
 
     connection.listen();
@@ -561,6 +594,7 @@ export class LspConnection {
       },
     }).then(result => {
       server.isInitialized = true;
+      this.#hasInitialized = true;
       // an older dprint without the dprint methods is shut down instead
       if (isSupportedServer(result)) {
         connection.sendNotification("initialized", {}).catch(() => {/* the requests fail too */});
@@ -570,6 +604,19 @@ export class LspConnection {
     // the requests that wait on it are rejected with why
     server.initialized.catch(() => {/* ignore */});
     return server;
+  }
+
+  /**
+   * Shows the user why a server that was started again failed to start, which isn't started again until its
+   * settings change. The caller says why the first one failed (ex. it falls back to an older editor service).
+   */
+  #showStartFailure(err: Error) {
+    if (this.#hasInitialized && !this.#disposed && !this.#closing) {
+      this.#options.showMessage({
+        type: MessageType.Error,
+        message: `${err.message} It's not started again until its settings change or dprint is restarted.`,
+      });
+    }
   }
 
   /**

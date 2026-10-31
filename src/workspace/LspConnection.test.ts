@@ -11,14 +11,15 @@ import {
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
 import { combineIsOnAnotherMachine, FileChangeType, LspConnection, type ServerProcess } from "./LspConnection";
-import type {
-  ClientInitializeParams,
-  ConfigChangedParams,
-  ConfigFileInfo,
-  InitializeResult,
-  MessageParams,
-  PublishDiagnosticsParams,
-  WorkspaceFolder,
+import {
+  type ClientInitializeParams,
+  type ConfigChangedParams,
+  type ConfigFileInfo,
+  type InitializeResult,
+  type MessageParams,
+  MessageType,
+  type PublishDiagnosticsParams,
+  type WorkspaceFolder,
 } from "./messages";
 
 describe("combineIsOnAnotherMachine", () => {
@@ -253,20 +254,17 @@ describe("LspConnection", () => {
 
     // a crash keeps the session
     processes[0].exit(1);
-    connection.initialize().catch(() => {/* ignore */});
-    await waitUntil(() => processes.length === 2);
+    await connection.initialize();
     assert.strictEqual(await sessionIdOf(processes[1]), firstSessionId);
     // and so does a death by a signal, which node reports without an exit code
     processes[1].exit(null, "SIGSEGV");
-    connection.initialize().catch(() => {/* ignore */});
-    await waitUntil(() => processes.length === 3);
+    await connection.initialize();
     assert.strictEqual(await sessionIdOf(processes[2]), firstSessionId);
     assert.strictEqual(sessionEnds, 0);
 
     // ex. something else sent shutdown and exit
     processes[2].exit(0);
-    connection.initialize().catch(() => {/* ignore */});
-    await waitUntil(() => processes.length === 4);
+    await connection.initialize();
     assert.notStrictEqual(await sessionIdOf(processes[3]), firstSessionId);
     assert.strictEqual(sessionEnds, 1);
   });
@@ -339,9 +337,48 @@ describe("LspConnection", () => {
     await assert.rejects(fileInfo, /failed to start\. Error: spawn dprint ENOENT/);
     assert.strictEqual(connection.pendingRequestCount, 0);
 
-    // it's started again on the next request
+    // a restart doesn't fix it, so it's only started again once it's told to (ex. its settings changed)
+    assert.strictEqual(connection.hasFailedToStart, true);
+    await assert.rejects(connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }), /spawn dprint ENOENT/);
+    assert.strictEqual(processes.length, 1);
+    connection.startAgain();
     connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
     assert.strictEqual(processes.length, 2);
+  });
+
+  it("doesn't start a server again that exited before it was initialized, which it shows after a restart", async () => {
+    const shownMessages: MessageParams[] = [];
+    const { connection, processes } = createConnection({
+      initializeResult: null,
+      showMessage: params => shownMessages.push(params),
+    });
+    const respondToInitialize = async (process: FakeProcess) =>
+      (await process.nextRequest("initialize")).respond(SUPPORTED_RESULT);
+    const initialize = connection.initialize();
+    await respondToInitialize(processes[0]);
+    await initialize;
+
+    // it crashed, and the one that's started again exits before it's initialized (ex. the executable was replaced)
+    processes[0].exit(1);
+    const fileInfo = connection.fileInfo({ textDocument: { uri: "file:///file.ts" } });
+    await processes[1].nextRequest("initialize");
+    processes[1].stderr.write("error: something went wrong\n");
+    processes[1].exit(1);
+    await assert.rejects(fileInfo, /exited before it was initialized\. error: something went wrong$/);
+    assert.strictEqual(connection.hasFailedToStart, true);
+    assert.deepStrictEqual(shownMessages, [{
+      type: MessageType.Error,
+      message: "The dprint language server exited before it was initialized. error: something went wrong It's not "
+        + "started again until its settings change or dprint is restarted.",
+    }]);
+    await assert.rejects(connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }), /something went wrong/);
+    assert.strictEqual(processes.length, 2);
+
+    connection.startAgain();
+    const started = connection.initialize();
+    await respondToInitialize(processes[2]);
+    await started;
+    assert.strictEqual(connection.hasFailedToStart, false);
   });
 
   it("kills the process when its output can't be read", async () => {
