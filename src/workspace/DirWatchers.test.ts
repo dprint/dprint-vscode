@@ -59,6 +59,22 @@ describe("DirWatchers", () => {
     assert.strictEqual(dirWatchCount(), 2);
   });
 
+  it("watches a directory that's a symlink when that's allowed", async () => {
+    // ex. the directory of a file dprint provided in a workspace folder opened through a symlink
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/linked": "symlink", "/p/shared": "dir" };
+    const { watchers, watched, disposed, emit } = createWatchers(kinds, { watchesSymlinkedDirs: true });
+    await watchers.update(new Map([["/p/linked", ["dprint.json"]], ["/p/shared", ["base.json"]]]));
+    const dirWatches = () => watched.map(([dirPath]) => dirPath).filter(dirPath => dirPath !== "/p");
+    assert.deepStrictEqual(dirWatches(), ["/p/linked", "/p/shared"]);
+
+    // one that's replaced with a symlink is still watched, with a new watcher
+    kinds["/p/shared"] = "symlink";
+    emit("/p", "/p/shared", "changed");
+    await nextTicks();
+    assert.deepStrictEqual(disposed, ["/p/shared"]);
+    assert.deepStrictEqual(dirWatches(), ["/p/linked", "/p/shared", "/p/shared"]);
+  });
+
   it("checks a watched directory again on each update", async () => {
     const kinds: Record<string, PathKind | undefined> = { "/p/a": "dir" };
     const { watchers, disposed } = createWatchers(kinds);
@@ -139,6 +155,7 @@ function createWatchers(
   kinds: Record<string, PathKind | undefined>,
   options: {
     isCaseInsensitive?: boolean;
+    watchesSymlinkedDirs?: boolean;
     beforeWatch?: () => void;
     /** Overrides the kind of a path, unless it's undefined. */
     pathKind?: (filePath: string) => Promise<PathKind | undefined> | undefined;
@@ -168,6 +185,7 @@ function createWatchers(
     onChange: (filePath, change) => changes.push([filePath, change]),
     onError: err => assert.fail(String(err)),
     isCaseInsensitive: options.isCaseInsensitive ?? false,
+    watchesSymlinkedDirs: options.watchesSymlinkedDirs ?? false,
   });
   const emit = (dirPath: string, filePath: string, change: WatchedFileChange) => {
     for (const callback of callbacks.get(dirPath) ?? []) {

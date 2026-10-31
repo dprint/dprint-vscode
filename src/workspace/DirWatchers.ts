@@ -24,18 +24,25 @@ export interface DirWatchersOptions {
   onError(err: unknown): void;
   /** Whether file names are compared without their case (ex. on Windows and macOS). */
   isCaseInsensitive: boolean;
+  /**
+   * Whether a directory that's a symlink is watched, which is for the directories of the uris that
+   * dprint provides (ex. `watchUris`), which it checked, and not for the ones the extension found
+   * itself (ex. a `.config` directory), whose symlink may point to another machine.
+   */
+  watchesSymlinkedDirs: boolean;
 }
 
 /**
- * Watches files by watching their directories, so a watcher never follows a symlink: one that's a
- * file in the directory isn't followed, and a directory that's itself a symlink isn't watched (a
- * watcher of it, ex. vscode's, watches what it points to). Following one reaches what it points to,
- * which may be on another machine that the user didn't allow reading (ex. a config file that a
- * `git pull` replaced with a symlink to a share).
+ * Watches files by watching their directories, so a watcher doesn't follow the symlinks in the
+ * directory it watches. Following one reaches what it points to, which may be on another machine
+ * that the user didn't allow reading (ex. a config file that a `git pull` replaced with a symlink
+ * to a share). A directory that's itself a symlink is only watched when `watchesSymlinkedDirs` says
+ * so, because a watcher of it (ex. vscode's) watches what it points to.
  *
  * A directory is checked again on each update, and when its parent directory (which is watched for
  * its name) says it was created, deleted, or replaced, so one that's replaced with a symlink stops
- * being watched and one that's created again is watched again with a new watcher.
+ * being watched unless that's allowed, and one that's created again is watched again with a new
+ * watcher.
  */
 export class DirWatchers {
   readonly #options: DirWatchersOptions;
@@ -50,8 +57,8 @@ export class DirWatchers {
 
   /**
    * Watches the directories for the names of the files in them and stops watching the others. A
-   * directory that doesn't exist or is a symlink isn't watched (ex. a `.config` directory that's a
-   * symlink) until it's a directory.
+   * directory that doesn't exist isn't watched until it does, and neither is one that's a symlink
+   * unless `watchesSymlinkedDirs` allows it (ex. a `.config` directory that's a symlink).
    */
   update(fileNamesByDir: ReadonlyMap<string, readonly string[]>): Promise<void> {
     return this.#enqueue(() => this.#apply(fileNamesByDir));
@@ -106,7 +113,8 @@ export class DirWatchers {
   }
 
   /**
-   * Watches the directory when it's a directory and stops watching it otherwise. One that was
+   * Watches the directory when it's a directory (or a symlink that may be watched) and stops
+   * watching it otherwise. One that was
    * created or replaced is watched with a new watcher, because the old one may watch what a
    * symlink that replaced it points to.
    */
@@ -122,7 +130,7 @@ export class DirWatchers {
     if (this.#isStale(dirPath, entry)) {
       return;
     }
-    if (kind !== "dir") {
+    if (kind !== "dir" && !(kind === "symlink" && this.#options.watchesSymlinkedDirs)) {
       entry.dirWatcher?.dispose();
       entry.dirWatcher = undefined;
     } else if (entry.dirWatcher == null) {

@@ -719,6 +719,8 @@ class WorkspaceState {
     onChange: (filePath, change) => this.#onAncestorConfigFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
+    // the extension found them itself, so a symlink may point to another machine
+    watchesSymlinkedDirs: false,
   });
   /** Watches the files the config files were resolved from (`watchUris`) by their directories. */
   readonly #fileWatchers = new DirWatchers({
@@ -727,6 +729,8 @@ class WorkspaceState {
     onChange: (filePath, change) => this.#onResolvedFromFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
+    // dprint checked them (ex. a workspace folder opened through a symlink)
+    watchesSymlinkedDirs: true,
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
