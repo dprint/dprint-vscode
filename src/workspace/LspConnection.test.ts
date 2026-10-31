@@ -342,6 +342,28 @@ describe("LspConnection", () => {
     );
   });
 
+  it("doesn't kill the process again with SIGKILL itself when it's given how to kill it", async t => {
+    // `killProcess` escalates the kill itself (ex. the process tree with SIGKILL)
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const signals: (NodeJS.Signals | undefined)[] = [];
+    const { connection, processes } = createConnection({
+      killProcess: (_process, signal) => {
+        signals.push(signal);
+        return new Promise(() => {/* never finishes */});
+      },
+    });
+
+    await killWithUnreadableOutput(connection, processes);
+    connection.fileInfo({ textDocument: { uri: "file:///file.ts" } }).catch(() => {/* ignore */});
+    // the process never exits
+    t.mock.timers.tick(1_000);
+    await nextTick();
+    t.mock.timers.tick(1_000);
+    await waitUntil(() => processes.length === 2);
+    assert.strictEqual(processes.length, 2);
+    assert.deepStrictEqual(signals, [undefined]);
+  });
+
   it("doesn't start the server again when disposed while the one that was killed exits", async () => {
     for (const dispose of [(c: LspConnection) => c.dispose(), (c: LspConnection) => c.disposeWhenIdle()]) {
       const { connection, processes } = createConnection();

@@ -12,15 +12,6 @@ import {
 import type { ApprovalDecision, ApproveParams, ConfigFileInfo, FormatStatus, PendingApproval } from "./messages";
 
 const READY: FormatStatus = { kind: "ready" };
-const APPROVAL_REQUIRED: FormatStatus = {
-  kind: "notFormatted",
-  reason: "approvalRequired",
-  message: "",
-  show: "command",
-  severity: "warning",
-  claim: true,
-};
-
 describe("Approvals", () => {
   it("asks about the approval and what else needs to be approved after it", async () => {
     const extended = approval("extended");
