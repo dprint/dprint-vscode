@@ -1,4 +1,6 @@
 import * as assert from "node:assert";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { PathKind } from "../environment";
@@ -7,7 +9,9 @@ import {
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
-  isWorkspaceFolderOrAncestorPath,
+  getWorkspaceFolderAndAncestorKeys,
+  lstatPath,
+  lstatWithoutSymlinks,
   type WatchedFileChange,
 } from "./DirWatchers";
 
@@ -111,7 +115,7 @@ describe("DirWatchers", () => {
     kinds["/p/shared"] = undefined;
     emit("/p/shared", "/p/shared/configs", "deleted");
     await nextTicks();
-    assert.deepStrictEqual(disposed, ["/p/shared/configs", "/p/shared"]);
+    assert.deepStrictEqual(disposed, ["/p/shared", "/p/shared/configs"]);
 
     // it comes back as a symlink, which isn't watched, and then as a directory, which is
     kinds["/p/shared"] = "symlink";
@@ -180,6 +184,41 @@ describe("DirWatchers", () => {
     const { watchers, lstatCalls } = createWatchers({ "/p": "dir", "/p/x": "dir", "/p/x/a": "dir", "/p/x/b": "dir" });
     await watchers.update(new Map([["/p/x/a", ["base.json"]], ["/p/x/b", ["base.json"]]]));
     assert.deepStrictEqual(lstatCalls.filter(call => call === "/p/x").length, 1);
+  });
+
+  it("watches a directory again that was replaced with another one, and reports its files", async () => {
+    // ex. `npm install` created a package directory again with its files, which a new watcher doesn't report
+    const kinds: Record<string, PathKind | undefined> = {
+      "/p": "dir",
+      "/p/pkg": "dir",
+      "/p/pkg/dprint.json": "file",
+    };
+    const identities: Record<string, string> = { "/p/pkg": "old" };
+    const { watchers, watched, disposed, changes, emit } = createWatchers(kinds, { identities });
+    await watchers.update(new Map([["/p/pkg", ["dprint.json", "base.json"]]]));
+    assert.strictEqual(changes.length, 0);
+
+    identities["/p/pkg"] = "new";
+    emit("/p", "/p/pkg", "created");
+    await nextTicks();
+    assert.deepStrictEqual(disposed, ["/p/pkg"]);
+    assert.strictEqual(watched.filter(([dirPath]) => dirPath === "/p/pkg").length, 2);
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/pkg/dprint.json", "created"],
+      ["/p/pkg/base.json", "deleted"],
+    ]);
+  });
+
+  it("reports the files of a directory that's gone as deleted", async () => {
+    const kinds: Record<string, PathKind | undefined> = { "/p": "dir", "/p/pkg": "dir" };
+    const { watchers, changes, emit } = createWatchers(kinds);
+    await watchers.update(new Map([["/p/pkg", ["dprint.json"]]]));
+    kinds["/p/pkg"] = undefined;
+    emit("/p", "/p/pkg", "deleted");
+    await nextTicks();
+    assert.deepStrictEqual(changes.map(([filePath, change]) => [toTestPath(filePath), change]), [
+      ["/p/pkg/dprint.json", "deleted"],
+    ]);
   });
 
   it("checks a watched directory again on each update", async () => {
@@ -260,20 +299,67 @@ describe("getWatchPattern", () => {
   });
 });
 
-describe("isWorkspaceFolderOrAncestorPath", () => {
-  it("compares the paths without their case when the file system does", () => {
-    const folder = path.resolve("/ws/Project");
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/ws/project"), [folder], true), true);
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/ws/project"), [folder], false), false);
-  });
-
-  it("matches the ancestor directories of a workspace folder, but not its descendants", () => {
+describe("getWorkspaceFolderAndAncestorKeys", () => {
+  it("has the workspace folders and their ancestor directories, but not their descendants", () => {
     // ex. macOS's `/tmp`, which is a symlink to `/private/tmp`, for a workspace folder in it
     const folder = path.resolve("/tmp/project");
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/tmp"), [folder], false), true);
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/"), [folder], false), true);
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.join(folder, "sub"), [folder], false), false);
-    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/other"), [folder], false), false);
+    const keys = getWorkspaceFolderAndAncestorKeys([folder], false);
+    assert.ok(keys.has(folder));
+    assert.ok(keys.has(path.resolve("/tmp")));
+    assert.ok(keys.has(path.resolve("/")));
+    assert.ok(!keys.has(path.join(folder, "sub")));
+    assert.ok(!keys.has(path.resolve("/other")));
+  });
+
+  it("has the keys without their case when the file system does", () => {
+    const keys = getWorkspaceFolderAndAncestorKeys([path.resolve("/ws/Project")], true);
+    assert.ok(keys.has(getWatchedPathKey(path.resolve("/ws/project"), true)));
+  });
+});
+
+describe("lstatWithoutSymlinks", () => {
+  it("can't reach what's below a symlink, so a config file's problems there are kept", async () => {
+    const calls: string[] = [];
+    const kinds: Record<string, PathKind> = { "/p/link": "symlink" };
+    const result = await lstatWithoutSymlinks("/p/link/dprint.json", {
+      lstat: async filePath => {
+        calls.push(toTestPath(filePath));
+        const kind = kinds[toTestPath(filePath)];
+        return kind == null ? undefined : { kind, identity: filePath };
+      },
+      isWorkspaceFolderOrAncestor: dirPath => toTestPath(dirPath) === "/p",
+    });
+    assert.deepStrictEqual(result, { isReachable: false });
+    assert.deepStrictEqual(calls, ["/p/link"]);
+  });
+
+  it("looks at each directory from the root of another drive", { skip: process.platform !== "win32" }, async () => {
+    const calls: string[] = [];
+    const result = await lstatWithoutSymlinks("D:\\a\\b", {
+      lstat: async filePath => {
+        calls.push(filePath);
+        return { kind: "dir", identity: filePath };
+      },
+      isWorkspaceFolderOrAncestor: () => false,
+    });
+    assert.deepStrictEqual(result, { isReachable: true, stat: { kind: "dir", identity: "D:\\a\\b" } });
+    assert.deepStrictEqual(calls, ["D:\\", "D:\\a", "D:\\a\\b"]);
+  });
+});
+
+describe("lstatPath", () => {
+  it("keeps the identity of a directory when a file is created in it", async () => {
+    const dirPath = await fs.promises.mkdtemp(path.join(os.tmpdir(), "dprint-vscode-"));
+    try {
+      const before = await lstatPath(dirPath);
+      assert.strictEqual(before?.kind, "dir");
+      await fs.promises.writeFile(path.join(dirPath, "dprint.json"), "{}");
+      assert.deepStrictEqual(await lstatPath(dirPath), before);
+      assert.strictEqual((await lstatPath(path.join(dirPath, "dprint.json")))?.kind, "file");
+      assert.strictEqual(await lstatPath(path.join(dirPath, "missing")), undefined);
+    } finally {
+      await fs.promises.rm(dirPath, { recursive: true, force: true });
+    }
   });
 });
 
@@ -294,6 +380,8 @@ function createWatchers(
     /** Overrides the kind of a path, unless it's undefined. */
     pathKind?: (filePath: string) => Promise<PathKind | undefined> | undefined;
     onError?: (err: unknown) => void;
+    /** Overrides the identity of a path (ex. a directory that was replaced with another one). */
+    identities?: Record<string, string>;
   } = {},
 ) {
   // the identity of a path changes whenever its kind is seen to change (ex. it was deleted and created again)
@@ -311,7 +399,7 @@ function createWatchers(
       const last = generations.get(key);
       const generation = last == null ? 0 : last.kind === kind ? last.generation : last.generation + 1;
       generations.set(key, { kind, generation });
-      return kind == null ? undefined : { kind, identity: `${key}#${generation}` };
+      return kind == null ? undefined : { kind, identity: options.identities?.[key] ?? `${key}#${generation}` };
     },
     watchDir: (dirPath, fileNames, onChange) => {
       options.beforeWatch?.();

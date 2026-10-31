@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
@@ -53,9 +52,9 @@ import {
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
-  isWorkspaceFolderOrAncestorPath,
+  getWorkspaceFolderAndAncestorKeys,
+  lstatPath,
   lstatWithoutSymlinks,
-  type PathStat,
   type StatCache,
   type WatchedFileChange,
 } from "./DirWatchers";
@@ -2022,25 +2021,24 @@ function watchDir(
   return watcher;
 }
 
+/** The keys of the workspace folders and their ancestors, which are made again when the workspace folders change. */
+let workspaceFolderAndAncestorKeys:
+  | { folders: readonly vscode.WorkspaceFolder[] | undefined; keys: Set<string> }
+  | undefined;
+
 /** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
 function isWorkspaceFolderOrAncestor(dirPath: string) {
-  const folderPaths = (vscode.workspace.workspaceFolders ?? [])
-    .filter(folder => folder.uri.scheme === FILE_SCHEME)
-    .map(folder => folder.uri.fsPath);
-  return isWorkspaceFolderOrAncestorPath(dirPath, folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM);
-}
-
-/** Gets what's at the path without following a symlink at the end of it, with what identifies it. */
-async function lstatPath(filePath: string): Promise<PathStat | undefined> {
-  try {
-    const stat = await fs.promises.lstat(filePath, { bigint: true });
-    return {
-      kind: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file",
-      identity: `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`,
-    };
-  } catch {
-    return undefined;
+  // vscode provides another array once the workspace folders changed
+  const folders = vscode.workspace.workspaceFolders;
+  let cached = workspaceFolderAndAncestorKeys;
+  if (cached == null || cached.folders !== folders) {
+    const folderPaths = (folders ?? []).filter(folder => folder.uri.scheme === FILE_SCHEME).map(folder =>
+      folder.uri.fsPath
+    );
+    cached = { folders, keys: getWorkspaceFolderAndAncestorKeys(folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM) };
+    workspaceFolderAndAncestorKeys = cached;
   }
+  return cached.keys.has(getWatchedPathKey(path.resolve(dirPath), IS_CASE_INSENSITIVE_FILE_SYSTEM));
 }
 
 /** Gets text that's shown as it is in a quick pick, which shows `$(name)` as an icon otherwise. */

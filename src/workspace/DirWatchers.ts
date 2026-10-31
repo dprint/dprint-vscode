@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PathKind } from "../environment";
 
@@ -14,7 +15,7 @@ export interface PathStat {
 }
 
 export interface DirWatchersOptions {
-  /** Gets what's at the path without following a symlink at the end of it (ex. `lstat`). */
+  /** Gets what's at the path without following a symlink at the end of it (ex. `lstatPath`). */
   lstat(path: string): Promise<PathStat | undefined>;
   /**
    * Watches the files with the names in the directory without its subdirectories (ex. a vscode watcher
@@ -44,23 +45,18 @@ export interface DirWatchersOptions {
  * Watches files by watching their directories, so a watcher doesn't follow the symlinks in the
  * directory it watches. Following one reaches what it points to, which may be on another machine
  * that the user didn't allow reading (ex. a config file that a `git pull` replaced with a symlink
- * to a share). A directory that's itself a symlink isn't watched either, because a watcher of it
- * (ex. vscode's) watches what it points to, apart from a workspace folder or one of its ancestor
- * directories, which the user opened it through.
- * That holds for a directory that dprint provided too, because it may have been replaced with a
- * symlink since.
+ * to a share). A directory that's itself a symlink, or that's reached through one, isn't watched or
+ * looked in either (see `lstatWithoutSymlinks`), apart from a workspace folder or one of its ancestor
+ * directories, which the user opened it through. That holds for a directory that dprint provided too,
+ * because it may have been replaced with a symlink since.
  *
- * The directories above one are looked at too, from the nearest workspace folder (or one of its
- * ancestors) down, because `lstat` follows a symlink before the last part of a path, so one that's
- * reached through a symlink isn't watched or looked at either.
- *
- * Each directory, and its parent (which is watched for the directory's name), is checked again on
- * each update, and the directory is checked again when its parent's watcher reports it, so one
- * that's replaced (ex. with a symlink) stops being watched or is watched with a new watcher, and
- * one that's created again is watched again. Note that vscode polls a watched directory that was
- * deleted until it exists again and then watches it again by itself (following a symlink that
- * replaced it), which can't be turned off, so a parent whose directory is gone stops being watched
- * once that's noticed (on the next update, or when the directory's check finds it gone).
+ * A directory and its parent (which is watched for the directory's name) are checked again on each
+ * update and when the parent's watcher reports the directory, and a watcher is replaced when what it
+ * watches was replaced. When the watcher of a directory is replaced or removed, its files are reported
+ * as created or deleted, because the files that were created with it aren't reported by the new
+ * watcher. Note that vscode polls a watched directory that was deleted until it exists again and then
+ * watches it again by itself (following a symlink that replaced it), which can't be turned off, so the
+ * watcher of a parent that's gone is disposed once that's noticed.
  */
 export class DirWatchers {
   readonly #options: DirWatchersOptions;
@@ -91,8 +87,6 @@ export class DirWatchers {
   }
 
   async #apply(fileNamesByDir: ReadonlyMap<string, readonly string[]>) {
-    // the directories that are looked at for each update, which the entries share
-    const statCache: StatCache = new Map();
     for (const [dirPath, entry] of [...this.#entries]) {
       const fileNames = fileNamesByDir.get(dirPath);
       if (fileNames == null || !this.#isSameNames(entry.fileNames, fileNames)) {
@@ -100,86 +94,104 @@ export class DirWatchers {
         this.#entries.delete(dirPath);
       }
     }
+    // the directories that are looked at, which the entries share
+    const statCache: StatCache = new Map();
     for (const [dirPath, fileNames] of fileNamesByDir) {
-      if (this.#disposed) {
-        return;
-      }
       let entry = this.#entries.get(dirPath);
       if (entry == null) {
         entry = { fileNames: new Set(fileNames.map(name => this.#normalizeName(name))), originalNames: fileNames };
         this.#entries.set(dirPath, entry);
       }
-      await this.#checkParent(dirPath, entry, statCache);
       await this.#check(dirPath, entry, statCache);
     }
   }
 
-  /**
-   * Watches the parent directory for the directory's name while it's a directory (or a workspace
-   * folder or one of its ancestors that's a symlink), with a new watcher when it was replaced, and
-   * stops watching it otherwise.
-   */
-  async #checkParent(dirPath: string, entry: DirEntry, statCache: StatCache) {
+  /** Watches the directory and its parent while each may be watched, with a new watcher when it was replaced. */
+  async #check(dirPath: string, entry: DirEntry, statCache: StatCache) {
     const parentPath = path.dirname(dirPath);
-    if (parentPath === dirPath) {
-      return;
+    if (parentPath !== dirPath) {
+      const name = this.#normalizeName(path.basename(dirPath));
+      entry.parentWatcher = await this.#replaceWatcher(
+        entry.parentWatcher,
+        parentPath,
+        statCache,
+        dirPath,
+        entry,
+        () =>
+          this.#options.watchDir(parentPath, [path.basename(dirPath)], filePath => {
+            if (this.#normalizeName(getFileName(filePath)) === name) {
+              this.#enqueue(() => this.#check(dirPath, entry, new Map())).catch(err => this.#options.onError(err));
+            }
+          }),
+      );
     }
-    const stat = await this.#lstat(parentPath, statCache);
-    if (this.#isStale(dirPath, entry)) {
-      return;
+    const previous = entry.dirWatcher;
+    entry.dirWatcher = await this.#replaceWatcher(
+      previous,
+      dirPath,
+      statCache,
+      dirPath,
+      entry,
+      () =>
+        this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
+          if (entry.fileNames.has(this.#normalizeName(getFileName(filePath)))) {
+            this.#options.onChange(filePath, change);
+          }
+        }),
+    );
+    if (entry.dirWatcher !== previous && entry.wasWatched && !this.#isStale(dirPath, entry)) {
+      await this.#reportFiles(dirPath, entry);
     }
-    const identity = stat != null && this.#isWatchable(parentPath, stat.kind) ? stat.identity : undefined;
-    if (entry.parentWatcher != null && entry.parentWatcher.identity === identity) {
-      return;
-    }
-    entry.parentWatcher?.dispose();
-    entry.parentWatcher = undefined;
-    if (identity == null) {
-      return;
-    }
-    const name = path.basename(dirPath);
-    const watcher = this.#options.watchDir(parentPath, [name], filePath => {
-      if (this.#normalizeName(getFileName(filePath)) === this.#normalizeName(name)) {
-        this.#enqueue(() => this.#check(dirPath, entry, new Map())).catch(err => this.#options.onError(err));
-      }
-    });
-    entry.parentWatcher = { identity, dispose: () => watcher.dispose() };
+    entry.wasWatched ||= entry.dirWatcher != null;
   }
 
   /**
-   * Watches the directory while it's a directory (or a workspace folder or one of its ancestors that's a
-   * symlink), with a new
-   * watcher when it was replaced, because the old one may watch what a symlink that replaced it points
-   * to, and stops watching it otherwise. Its parent is checked again when it's gone, because a parent
-   * that was deleted too doesn't report the directory being created again.
+   * Gets the watcher of a directory while it may be watched (see `#isWatchable`), which is the current
+   * one unless what it watches was replaced, and undefined otherwise.
    */
-  async #check(dirPath: string, entry: DirEntry, statCache: StatCache) {
-    if (this.#isStale(dirPath, entry)) {
-      return;
+  async #replaceWatcher(
+    current: IdentifiedWatcher | undefined,
+    watchedPath: string,
+    statCache: StatCache,
+    entryPath: string,
+    entry: DirEntry,
+    watch: () => { dispose(): void },
+  ): Promise<IdentifiedWatcher | undefined> {
+    if (this.#isStale(entryPath, entry)) {
+      return current;
     }
-    const stat = await this.#lstat(dirPath, statCache);
-    if (this.#isStale(dirPath, entry)) {
-      return;
+    const result = await lstatWithoutSymlinks(watchedPath, this.#options, statCache);
+    if (this.#isStale(entryPath, entry)) {
+      return current; // it was disposed with the entry
     }
-    const identity = stat != null && this.#isWatchable(dirPath, stat.kind) ? stat.identity : undefined;
+    const stat = result.isReachable ? result.stat : undefined;
+    const identity = stat != null && this.#isWatchable(watchedPath, stat.kind) ? stat.identity : undefined;
     // ex. it only changed because a file in it was saved, which is a change of it on Windows
-    if (entry.dirWatcher != null && entry.dirWatcher.identity === identity) {
-      return;
+    if (current?.identity === identity) {
+      return current;
     }
-    entry.dirWatcher?.dispose();
-    entry.dirWatcher = undefined;
+    current?.dispose();
     if (identity == null) {
-      if (stat == null) {
-        await this.#checkParent(dirPath, entry, statCache);
-      }
-      return;
+      return undefined;
     }
-    const watcher = this.#options.watchDir(dirPath, entry.originalNames, (filePath, change) => {
-      if (entry.fileNames.has(this.#normalizeName(getFileName(filePath)))) {
-        this.#options.onChange(filePath, change);
+    const watcher = watch();
+    return { identity, dispose: () => watcher.dispose() };
+  }
+
+  /**
+   * Reports the files of a directory whose watcher was replaced or removed as created or deleted, which
+   * dprint checks itself (ex. a package directory that `npm install` created again with its files).
+   */
+  async #reportFiles(dirPath: string, entry: DirEntry) {
+    for (const name of entry.originalNames) {
+      const filePath = path.join(dirPath, name);
+      // the directory was looked at, so its files are looked at without following a symlink
+      const stat = entry.dirWatcher == null ? undefined : await this.#options.lstat(filePath).catch(() => undefined);
+      if (this.#isStale(dirPath, entry)) {
+        return;
       }
-    });
-    entry.dirWatcher = { identity, dispose: () => watcher.dispose() };
+      this.#options.onChange(filePath, stat == null ? "deleted" : "created");
+    }
   }
 
   /**
@@ -195,12 +207,6 @@ export class DirWatchers {
     const run = this.#queue.then(task);
     this.#queue = run.catch(() => {/* the caller handles it */});
     return run;
-  }
-
-  /** Gets what's at the path, which is undefined when it's gone or reached through a symlink that may not be followed. */
-  async #lstat(filePath: string, statCache: StatCache) {
-    const result = await lstatWithoutSymlinks(filePath, this.#options, statCache);
-    return result.isReachable ? result.stat : undefined;
   }
 
   /** Whether the entry isn't used anymore (ex. it was disposed while its directory was checked). */
@@ -254,6 +260,23 @@ export async function lstatWithoutSymlinks(
 }
 
 /**
+ * Gets what's at the path without following a symlink at the end of it. Its identity is its device and
+ * inode, which a directory that replaced another may reuse, but vscode watches one that's deleted and
+ * created again by itself, and one that's replaced with a symlink is told apart by its kind.
+ */
+export async function lstatPath(filePath: string): Promise<PathStat | undefined> {
+  try {
+    const stat = await fs.promises.lstat(filePath, { bigint: true });
+    return {
+      kind: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : "file",
+      identity: `${stat.dev}:${stat.ino}`,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Gets the names of the files by their directories (ex. for the files the config files were resolved
  * from, which are watched by their directories).
  */
@@ -278,26 +301,21 @@ export function getWatchPattern(fileNames: readonly string[]) {
   return fileNames.length === 1 ? fileNames[0] : `{${fileNames.join(",")}}`;
 }
 
-/** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
-export function isWorkspaceFolderOrAncestorPath(
-  dirPath: string,
-  folderPaths: readonly string[],
-  isCaseInsensitive: boolean,
-) {
-  const key = getWatchedPathKey(path.resolve(dirPath), isCaseInsensitive);
-  return folderPaths.some(folderPath => {
-    let currentPath = path.resolve(folderPath);
-    while (true) {
-      if (getWatchedPathKey(currentPath, isCaseInsensitive) === key) {
-        return true;
+/**
+ * Gets the keys (see `getWatchedPathKey`) of the workspace folders and their ancestor directories, which
+ * a directory that's a symlink may be watched for.
+ */
+export function getWorkspaceFolderAndAncestorKeys(folderPaths: readonly string[], isCaseInsensitive: boolean) {
+  const keys = new Set<string>();
+  for (const folderPath of folderPaths) {
+    for (let current = path.resolve(folderPath);; current = path.dirname(current)) {
+      keys.add(getWatchedPathKey(current, isCaseInsensitive));
+      if (path.dirname(current) === current) {
+        break;
       }
-      const parentPath = path.dirname(currentPath);
-      if (parentPath === currentPath) {
-        return false;
-      }
-      currentPath = parentPath;
     }
-  });
+  }
+  return keys;
 }
 
 /** Gets what identifies a watched file's path, which is without its case when the file system is. */
@@ -313,6 +331,8 @@ interface DirEntry {
   parentWatcher?: IdentifiedWatcher;
   /** Watches the directory (whose identity it has), which is undefined while it isn't watched. */
   dirWatcher?: IdentifiedWatcher;
+  /** Whether the directory was watched, after which a new or removed watcher reports its files. */
+  wasWatched?: boolean;
 }
 
 interface IdentifiedWatcher {
