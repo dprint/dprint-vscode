@@ -25,11 +25,8 @@ export interface ApprovalChoice {
 export interface ApprovalsOptions {
   /** Asks the user about the approval, which resolves to undefined when they dismissed it. */
   ask(approval: PendingApproval, choices: ApprovalChoice[]): Promise<ApprovalDecision | undefined>;
-  /**
-   * Sends what the user decided to dprint, which is sent again without the user doing anything
-   * when `isResent` is true (ex. after dprint was started again).
-   */
-  approve(params: ApproveParams, options?: { isResent?: boolean }): Promise<ApproveResult>;
+  /** Sends what the user decided to dprint. */
+  approve(params: ApproveParams): Promise<ApproveResult>;
   /** Gets what needs to be approved for the config file and whether it's used. */
   pendingApprovals(configFile: ConfigFileIdentifier): Promise<ConfigApprovals>;
   /**
@@ -50,17 +47,6 @@ export class Approvals {
   readonly #asked = new Set<string>();
   /** The approvals being asked about, which the formats of the other documents of the config file share. */
   readonly #inProgress = new Map<string, Promise<boolean>>();
-  /**
-   * What the user decided for the session by approval id, which a dprint process that was started
-   * again after it exited doesn't know.
-   */
-  readonly #sessionDecisions = new Map<string, SessionDecision>();
-  /**
-   * The "Always" decisions that dprint didn't say were stored or not yet, which a later result says
-   * (ex. an "Always Allow" of process plugins that's stored once allowing the download sets them up,
-   * which may be asked about on its own).
-   */
-  #pendingAlwaysDecisions: [PendingApproval, ApprovalDecision][] = [];
   /** Whether what the user answers isn't used anymore (see `cancel`). */
   #isCancelled = false;
 
@@ -79,37 +65,6 @@ export class Approvals {
   /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
   forget() {
     this.#asked.clear();
-    this.#sessionDecisions.clear();
-    this.#pendingAlwaysDecisions = [];
-  }
-
-  /**
-   * Sends what the user decided for the session again for the approvals that are pending again
-   * without asking (ex. for a dprint process that was started again after it exited, which doesn't
-   * know it), which resolves to whether any was sent.
-   */
-  async sendSessionDecisionsAgain(pending: PendingApproval[]) {
-    let isSent = false;
-    const queue = [...pending];
-    const sent = new Set<string>();
-    while (queue.length > 0 && !this.#isCancelled) {
-      const approval = queue.shift()!;
-      const decision = sent.has(approval.id) ? undefined : this.#getSessionDecision(approval);
-      if (decision == null) {
-        continue;
-      }
-      sent.add(approval.id);
-      try {
-        const result = await this.#options.approve({ id: approval.id, decision }, { isResent: true });
-        this.#onDecisionGroups(result);
-        isSent = true;
-        // what a decision that was sent again reveals may have a decision for the session too
-        queue.push(...result.approvals);
-      } catch {
-        // it's asked about again
-      }
-    }
-    return isSent;
   }
 
   /**
@@ -150,24 +105,15 @@ export class Approvals {
         return false;
       }
       askedNow.add(approval.id);
-      // what the user decided for the session is sent again (ex. to a dprint process that was
-      // started again after it exited, which doesn't know it) instead of asking, except that a
-      // command asks about what they denied again
+      // the user's decision is sent again for an approval that's pending again after it changed
       let decision = decisionsToSendAgain.get(approval.id);
       decisionsToSendAgain.delete(approval.id);
       if (decision != null && approval.denied && isAllowed(approval, decision)) {
         // dprint knows it was denied since (ex. in another window), which is newer
         decision = undefined;
       }
-      decision ??= this.#getSessionDecision(approval);
-      if (options.isExplicit && decision != null && !isAllowed(approval, decision)) {
-        decision = undefined;
-      }
       if (decision == null) {
-        // an approval of process plugins that were set up since was asked about by the id it had before
-        const wasAsked = this.#asked.has(approval.id)
-          || getPreviousIds(approval).some(id => this.#asked.has(id));
-        if (!options.isExplicit && (approval.denied || wasAsked)) {
+        if (!options.isExplicit && (approval.denied || this.#asked.has(approval.id))) {
           // the others are still asked about
           isSkipped = true;
           continue;
@@ -185,10 +131,8 @@ export class Approvals {
       const allows = isAllowed(approval, decision);
       const configFile = { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri };
       lastConfigFile = configFile;
-      this.#rememberSessionDecision(approval, decision);
       try {
         const result = await this.#options.approve({ id: approval.id, decision });
-        this.#onDecisionGroups(result);
         pending = result.approvals;
         status = result.status;
       } catch (err) {
@@ -222,10 +166,6 @@ export class Approvals {
           const denial = replacement?.decisions.find(option => option.decision === decision);
           if (replacement != null && denial != null) {
             await this.#options.approve({ id: replacement.id, decision })
-              .then(result => {
-                this.#rememberSessionDecision(replacement, decision);
-                this.#onDecisionGroups(result);
-              })
               .catch(() => {/* it's asked about later */});
           }
           return false;
@@ -243,98 +183,6 @@ export class Approvals {
     }
     return !isSkipped && notFormatted == null;
   }
-
-  /**
-   * Gets what the user decided for the session about the approval when it's still what's used,
-   * which isn't an allow that the user denied since (ex. with "Always Deny" in another window).
-   */
-  #getSessionDecision(approval: PendingApproval) {
-    // an approval may have had other ids before (ex. before its process plugins were set up),
-    // where the one for its id wins and then the earlier ones in order
-    const ids = [approval.id, ...getPreviousIds(approval)];
-    // an "Always" decision that isn't known to be stored yet is sent again like one for the session
-    // (ex. dprint exited before it set up the process plugins, which is when it's stored)
-    const decision = ids.map(id => this.#sessionDecisions.get(id)).find(decision => decision != null)?.decision
-      ?? this.#pendingAlwaysDecisions.find(([pending]) => ids.includes(pending.id))?.[1];
-    if (decision == null || !approval.decisions.some(option => option.decision === decision)) {
-      return undefined;
-    }
-    if (approval.denied) {
-      // dprint knows it's denied, which is newer than an allow
-      if (isAllowed(approval, decision)) {
-        this.#forgetSessionDecision(approval);
-      }
-      return undefined;
-    }
-    return decision;
-  }
-
-  /**
-   * Remembers what the user decided for the session, which replaces what was decided before in its
-   * group. An "Always" decision is pending until dprint says whether it stored it.
-   */
-  #rememberSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
-    this.#forgetSessionDecision(approval);
-    if (approval.decisions.find(option => option.decision === decision)?.always) {
-      this.#forgetGroup(getDecisionGroup(approval));
-      this.#pendingAlwaysDecisions.push([approval, decision]);
-    } else {
-      this.#setSessionDecision(approval, decision);
-    }
-  }
-
-  /**
-   * Stops waiting on the "Always" decisions dprint says it stored, and uses the ones it says it
-   * couldn't store for the session.
-   */
-  #onDecisionGroups(result: ApproveResult) {
-    const stored = new Set(result.storedDecisionGroups ?? []);
-    const unstored = new Set(result.unstoredDecisionGroups ?? []);
-    for (const [approval, decision] of [...this.#pendingAlwaysDecisions]) {
-      const decisionGroup = getDecisionGroup(approval);
-      if (unstored.has(decisionGroup)) {
-        this.#setSessionDecision(approval, decision);
-      } else if (stored.has(decisionGroup)) {
-        this.#pendingAlwaysDecisions = this.#pendingAlwaysDecisions.filter(([pending]) => pending !== approval);
-      }
-    }
-  }
-
-  /**
-   * Uses the decision for the session, which replaces what was decided before in its group (ex. a
-   * denial replaces an allow of an earlier configuration of a config file's process plugins).
-   */
-  #setSessionDecision(approval: PendingApproval, decision: ApprovalDecision) {
-    const decisionGroup = getDecisionGroup(approval);
-    this.#forgetGroup(decisionGroup);
-    this.#sessionDecisions.set(approval.id, { decision, decisionGroup });
-  }
-
-  /** Forgets what the user decided for the session in the group, including the pending "Always" decisions. */
-  #forgetGroup(decisionGroup: string) {
-    for (const [id, existing] of this.#sessionDecisions) {
-      if (existing.decisionGroup === decisionGroup) {
-        this.#sessionDecisions.delete(id);
-      }
-    }
-    this.#pendingAlwaysDecisions = this.#pendingAlwaysDecisions.filter(([pending]) =>
-      getDecisionGroup(pending) !== decisionGroup
-    );
-  }
-
-  /** Forgets what the user decided for the session about the approval, including by its earlier ids. */
-  #forgetSessionDecision(approval: PendingApproval) {
-    for (const id of [approval.id, ...getPreviousIds(approval)]) {
-      this.#sessionDecisions.delete(id);
-    }
-  }
-}
-
-/** What the user decided for the session about an approval. */
-interface SessionDecision {
-  decision: ApprovalDecision;
-  /** The decisions it replaces have the same group. */
-  decisionGroup: string;
 }
 
 /**
@@ -377,14 +225,14 @@ export function getApprovalDetails(approval: PendingApproval) {
     .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
   if (configurations.length > 0) {
     sections.push(
-      `// what the process plugins run with\n${JSON.stringify(Object.fromEntries(configurations), undefined, 2)}`,
+      `// what the process plugins run with\n${toVisibleJson(Object.fromEntries(configurations))}`,
     );
   }
   // what a process plugin that wasn't set up before runs with, which includes what the config file extends
   if (approval.trustedConfiguration != null) {
     sections.push(
       `// what the process plugins that weren't set up before run with\n${
-        JSON.stringify(approval.trustedConfiguration, undefined, 2)
+        toVisibleJson(approval.trustedConfiguration)
       }`,
     );
   }
@@ -401,14 +249,12 @@ function toCommentLine(text: string) {
   return text.replace(/\r\n|[\r\n\u2028\u2029]/g, " ");
 }
 
-/** Gets the group of the approval's decisions, which is its own when dprint doesn't say. */
-function getDecisionGroup(approval: PendingApproval) {
-  return approval.decisionGroup ?? approval.id;
-}
-
-/** Gets the earlier ids of the approval, which are like its id. */
-function getPreviousIds(approval: PendingApproval) {
-  return approval.previousIds ?? [];
+/**
+ * Gets the JSON text of what's from the project (ex. the configuration of a process plugin), where
+ * its strings are escaped like other text from the project apart from the line breaks of the JSON.
+ */
+function toVisibleJson(value: unknown) {
+  return JSON.stringify(value, undefined, 2).split("\n").map(toVisibleText).join("\n");
 }
 
 /** Gets the text of an approval's item, which has where it's from. */
@@ -419,7 +265,7 @@ function getItemText(item: ApprovalItem) {
     return `the proxy ${item.specifier}${npmrc}`;
   }
   if (item.kind === "networkPath") {
-    const reachedFrom = item.uri == null ? "" : `, which ${getDisplayPath(item.uri)} in the project reaches`;
+    const reachedFrom = item.localUri == null ? "" : `, which ${getDisplayPath(item.localUri)} in the project reaches`;
     return `${item.specifier} (read from another machine${reachedFrom})`;
   }
   return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
@@ -460,7 +306,8 @@ export function toVisibleText(text: string) {
  * a combining mark at the start, a character other than a plain space that's a control, format,
  * separator or default ignorable one (ex. a bidi override), and a backslash followed by `u{`.
  */
-const ESCAPED_TEXT_PATTERN = /^[\p{Mn}\p{Me}]|(?! )[\p{Cc}\p{Cf}\p{Z}\p{Default_Ignorable_Code_Point}]|\\(?=u\{)/gu;
+const ESCAPED_TEXT_PATTERN =
+  /^[\p{Mn}\p{Me}]|(?! )[\p{Cc}\p{Cf}\p{Cn}\p{Z}\p{Default_Ignorable_Code_Point}]|\\(?=u\{)/gu;
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */
 export function getApprovalChoices(approval: Pick<PendingApproval, "decisions">): ApprovalChoice[] {

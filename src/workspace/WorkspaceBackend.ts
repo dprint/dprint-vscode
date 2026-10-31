@@ -490,7 +490,6 @@ export class WorkspaceBackend implements vscode.Disposable {
       // again for what's pending once the config files were gotten again
       onRestart: () => {
         this.onConfigFileChanged()
-          .then(() => this.#sendSessionDecisionsAgain(connection))
           .catch(err => this.#logger.logError("Error refreshing:", err));
       },
       logger: this.#logger,
@@ -501,13 +500,11 @@ export class WorkspaceBackend implements vscode.Disposable {
   #createService(key: string, connection: LspConnection): Service {
     const approvals = new Approvals({
       ask: askApproval,
-      approve: async (params, options) => {
+      approve: async params => {
         const result = await connection.approve(params);
-        // ex. the decision couldn't be stored, which isn't shown when the user didn't do anything
-        if (result.notice != null && !options?.isResent) {
+        // ex. the decision couldn't be stored
+        if (result.notice != null) {
           showSeverityMessage(result.notice);
-        } else if (result.notice != null) {
-          this.#logger.logWarn(result.notice.message);
         }
         return result;
       },
@@ -521,18 +518,6 @@ export class WorkspaceBackend implements vscode.Disposable {
       },
     });
     return { key, connection, approvals };
-  }
-
-  /** Sends what the user decided for the session again to a dprint process that was started again. */
-  async #sendSessionDecisionsAgain(connection: LspConnection) {
-    const service = this.#state?.services.find(service => service.connection === connection);
-    if (service == null) {
-      return;
-    }
-    const { approvals } = await connection.pendingApprovals();
-    if (await service.approvals.sendSessionDecisionsAgain(approvals)) {
-      this.#state?.scheduleRefresh();
-    }
   }
 
   /** The dprint processes the states use. */
@@ -998,7 +983,7 @@ class WorkspaceState {
               return `the proxy ${specifier} of ${getDisplayPath(item.npmrcUri)}`;
             }
             if (item?.kind === "networkPath") {
-              const reachedFrom = item.uri == null ? "" : `, which ${getDisplayPath(item.uri)} reaches`;
+              const reachedFrom = item.localUri == null ? "" : `, which ${getDisplayPath(item.localUri)} reaches`;
               return `${specifier} (on another machine${reachedFrom})`;
             }
             return specifier;

@@ -207,10 +207,6 @@ export interface PendingApproval {
   previousDecision?: ApprovalDecision;
   /** The message to show the user when asking, which has everything to see apart from the configuration. */
   message: string;
-  /** Earlier ids of the same approval (ex. before its process plugins were set up), which are like `id` in that order. */
-  previousIds?: string[];
-  /** The decisions of the session that a decision about it replaces have the same group (ex. a config file's process plugins). */
-  decisionGroup?: string;
   /** What the process plugins that weren't set up before run with once they're allowed, which includes what it extends. */
   trustedConfiguration?: { [key: string]: unknown };
 }
@@ -224,7 +220,7 @@ export interface ApprovalItem {
    */
   kind: "plugin" | "config" | "npmrcProxy" | "networkPath" | (string & {});
   /** The editor's uri of the project's path of a `networkPath` that reaches another machine through a symlink, which isn't opened. */
-  uri?: string;
+  localUri?: string;
   /** The npm registry of an npm plugin when it isn't the default one. */
   registry?: string;
   /** The `.npmrc` file of a proxy. */
@@ -273,13 +269,6 @@ export interface ConfigApprovals {
 }
 
 export interface ApproveResult extends ConfigApprovals {
-  /**
-   * The groups of the "Always" decisions that couldn't be stored (ex. an "Always Allow" of process
-   * plugins that's stored once they're set up, which may be when approving something else).
-   */
-  unstoredDecisionGroups?: string[];
-  /** The groups of the "Always" decisions that were stored, which may be ones decided before like `unstoredDecisionGroups`. */
-  storedDecisionGroups?: string[];
   /** What to tell the user about the decision (ex. it couldn't be stored). */
   notice?: Notice;
 }
@@ -366,6 +355,8 @@ export interface ConfigFileInfo {
   kind: "local" | "global" | "cli" | (string & {});
   /** Whether it's in a workspace folder. */
   inWorkspace: boolean;
+  /** Whether it's on another machine and wasn't allowed to be read yet, which is when it isn't opened. */
+  onAnotherMachine?: boolean;
 }
 
 /** Either the config file itself, with the directory it's used for, or a document it's used for. */

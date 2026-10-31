@@ -27,9 +27,12 @@ describe("LspConnection", () => {
     const process = processes[0];
     const initialize = await process.nextMessage();
     assert.strictEqual(initialize.method, "initialize");
+    // the session id identifies the session to dprint, which keeps what the user decided when it's started again
+    const sessionId = initialize.params.capabilities.experimental.dprint.sessionId;
+    assert.match(sessionId, /^[0-9a-f-]{36}$/);
     assert.deepStrictEqual(initialize.params, {
       ...INITIALIZE_PARAMS,
-      capabilities: { experimental: { dprint: { versions: [1] } }, window: { workDoneProgress: true } },
+      capabilities: { experimental: { dprint: { versions: [1], sessionId } }, window: { workDoneProgress: true } },
     });
     assert.strictEqual((await process.nextMessage()).method, "initialized");
     const request = await process.nextMessage();

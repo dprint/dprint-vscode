@@ -1,4 +1,5 @@
 import type { ChildProcessByStdio } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import {
   CancellationTokenSource,
@@ -133,6 +134,11 @@ export class LspConnection {
   /** Whether it's waiting to shut down, which is when a server isn't started again. */
   #closing = false;
   #disposed = false;
+  /**
+   * Identifies the session to dprint, which keeps what the user decided for it when a server that
+   * exited is started again (a new connection is a new session, ex. for the restart command).
+   */
+  readonly #sessionId = randomUUID();
 
   constructor(options: LspConnectionOptions) {
     this.#options = options;
@@ -436,7 +442,7 @@ export class LspConnection {
     server.initialized = connection.sendRequest<InitializeResult>("initialize", {
       ...initializeParams,
       capabilities: {
-        experimental: { dprint: { versions: DPRINT_METHODS_VERSIONS } },
+        experimental: { dprint: { versions: DPRINT_METHODS_VERSIONS, sessionId: this.#sessionId } },
         window: { workDoneProgress: true },
       },
     }).then(result => {

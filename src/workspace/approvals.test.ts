@@ -273,38 +273,6 @@ describe("Approvals", () => {
     assert.deepStrictEqual(created.approved, []);
   });
 
-  it("sends what the user decided for the session again for the id an approval had before it was set up", async () => {
-    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    approved.length = 0;
-    const setUp = { ...approval("processPlugins"), id: "setUp", previousIds: ["processPlugins"] };
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([setUp]), true);
-    assert.deepStrictEqual(approved, [{ id: "setUp", decision: "allow" }]);
-    assert.deepStrictEqual(asked, ["processPlugins"]);
-  });
-
-  it("sends what the user decided for the session again for what a decision that was sent again reveals", async () => {
-    const { approvals, approved } = createApprovals({
-      decide: () => "allow",
-      approvalsAfter: { download: [approval("processPlugins")] },
-    });
-    await approvals.request([approval("download")], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("download")]), true);
-    assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }, {
-      id: "processPlugins",
-      decision: "allow",
-    }]);
-  });
-
-  it("doesn't ask again about an approval that was asked about before it was set up", async () => {
-    const { approvals, asked } = createApprovals({ decide: () => undefined });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    const setUp = { ...approval("processPlugins"), id: "setUp", previousIds: ["processPlugins"] };
-    assert.strictEqual(await approvals.request([setUp], { isExplicit: false }), false);
-    assert.deepStrictEqual(asked, ["processPlugins"]);
-  });
-
   it("sends a decision again only once when its approval keeps being pending again", async () => {
     let sends = 0;
     const approvals = new Approvals({
@@ -345,19 +313,6 @@ describe("Approvals", () => {
     assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }]);
   });
 
-  it("only keeps the most recent decision for the session about the process plugins of a config file", async () => {
-    const { approvals, approved } = createApprovals({ decide: approval => approval.id === "first" ? "allow" : "deny" });
-    await approvals.request([{ ...approval("processPlugins"), id: "first" }], { isExplicit: false });
-    // a denial of another configuration of them replaces the allow
-    await approvals.request([{ ...approval("processPlugins"), id: "second" }], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(
-      await approvals.sendSessionDecisionsAgain([{ ...approval("processPlugins"), id: "first" }]),
-      false,
-    );
-    assert.deepStrictEqual(approved, []);
-  });
-
   it("shows why the config file isn't used after what the user allowed", async () => {
     const shown: string[] = [];
     const configError = {
@@ -378,171 +333,11 @@ describe("Approvals", () => {
     assert.deepStrictEqual(shown, ["The config file has an error."]);
   });
 
-  it("keeps an \"Always\" decision for the session when a later result says it couldn't be stored", async () => {
-    const approved: ApproveParams[] = [];
-    const notice = { message: "Failed storing it.", show: "always", severity: "warning" };
-    const approvals = new Approvals({
-      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "allow",
-      approve: async params => {
-        approved.push(params);
-        // the process plugins are set up once the download is allowed, which is when it's stored
-        return params.id === "processPlugins"
-          ? { configFile: null, approvals: [approval("download")], status: APPROVAL_REQUIRED }
-          : {
-            configFile: null,
-            approvals: [],
-            status: READY,
-            notice,
-            unstoredDecisionGroups: [approval("processPlugins").decisionGroup!],
-          };
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), true);
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
-    // and what it reveals that was decided for the session
-    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }, {
-      id: "download",
-      decision: "allow",
-    }]);
-  });
-
-  it("keeps an \"Always\" decision for the session when a result of another request says it couldn't be stored", async () => {
-    const approved: ApproveParams[] = [];
-    const notice = { message: "Failed storing it.", show: "always", severity: "warning" };
-    const approvals = new Approvals({
-      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "allow",
-      approve: async params => {
-        approved.push(params);
-        return params.id === "processPlugins"
-          ? {
-            configFile: null,
-            approvals: [],
-            status: {
-              kind: "notFormatted",
-              reason: "approvalRequired",
-              message: "",
-              show: "command",
-              severity: "warning",
-              claim: true,
-            },
-          }
-          : {
-            configFile: null,
-            approvals: [],
-            status: READY,
-            notice,
-            unstoredDecisionGroups: [approval("processPlugins").decisionGroup!],
-          };
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    // ex. the user asked about each with the status bar item
-    await approvals.request([approval("processPlugins")], { isExplicit: true });
-    await approvals.request([approval("download")], { isExplicit: true });
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
-    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
-  });
-
-  it("sends an \"Always\" decision that isn't known to be stored again to a dprint process that was started again", async () => {
-    const approved: ApproveParams[] = [];
-    const approvals = new Approvals({
-      ask: async () => "alwaysAllow",
-      approve: async params => {
-        approved.push(params);
-        // the download that sets up the process plugins is still pending
-        return { configFile: null, approvals: [], status: APPROVAL_REQUIRED };
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), true);
-    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "alwaysAllow" }]);
-  });
-
-  it("doesn't send an \"Always\" decision again once dprint says it stored it", async () => {
-    const approved: ApproveParams[] = [];
-    const approvals = new Approvals({
-      ask: async () => "alwaysDeny",
-      approve: async params => {
-        approved.push(params);
-        return {
-          configFile: null,
-          approvals: [],
-          status: APPROVAL_REQUIRED,
-          storedDecisionGroups: [approval("processPlugins").decisionGroup!],
-        };
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), false);
-    assert.deepStrictEqual(approved, []);
-  });
-
-  it("replaces an \"Always\" decision that isn't known to be stored with a newer decision in its group", async () => {
-    const approved: ApproveParams[] = [];
-    const approvals = new Approvals({
-      ask: async pending => pending.id === "processPlugins" ? "alwaysAllow" : "deny",
-      approve: async params => {
-        approved.push(params);
-        return { configFile: null, approvals: [], status: APPROVAL_REQUIRED };
-      },
-      pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
-    });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    // ex. the configuration of the process plugins changed since
-    await approvals.request([{ ...approval("processPlugins"), id: "changed" }], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([approval("processPlugins")]), false);
-    assert.deepStrictEqual(approved, []);
-  });
-
   it("asks about the other approvals when one was denied", async () => {
     const { approvals, asked } = createApprovals({ decide: () => "allow" });
     const denied = { ...approval("download"), denied: true };
     assert.strictEqual(await approvals.request([denied, approval("processPlugins")], { isExplicit: false }), false);
     assert.deepStrictEqual(asked, ["processPlugins"]);
-  });
-
-  it("sends what the user decided for the session again without asking", async () => {
-    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    approved.length = 0;
-    assert.strictEqual(
-      await approvals.sendSessionDecisionsAgain([approval("processPlugins"), approval("other")]),
-      true,
-    );
-    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "allow" }]);
-    assert.deepStrictEqual(asked, ["processPlugins"]);
-    // not an allow for what was denied since
-    approved.length = 0;
-    const denied = { ...approval("processPlugins"), denied: true };
-    assert.strictEqual(await approvals.sendSessionDecisionsAgain([denied]), false);
-    assert.deepStrictEqual(approved, []);
-  });
-
-  it("sends what the user decided for the session again to a dprint process that was started again", async () => {
-    const { approvals, approved, asked } = createApprovals({ decide: () => "allow" });
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    approved.length = 0;
-    // it's pending again because the new process doesn't know it
-    assert.strictEqual(await approvals.request([approval("processPlugins")], { isExplicit: false }), true);
-    assert.deepStrictEqual(approved, [{ id: "processPlugins", decision: "allow" }]);
-    assert.deepStrictEqual(asked, ["processPlugins"]);
-    // not when it was denied since
-    approved.length = 0;
-    const denied = { ...approval("processPlugins"), denied: true };
-    assert.strictEqual(await approvals.request([denied], { isExplicit: false }), false);
-    assert.deepStrictEqual(approved, []);
-    // forgetting them asks again
-    approvals.forget();
-    await approvals.request([approval("processPlugins")], { isExplicit: false });
-    assert.deepStrictEqual(asked, ["processPlugins", "processPlugins"]);
   });
 
   it("denies what replaced an approval the user denied, but never allows it", async () => {
@@ -673,6 +468,8 @@ describe("toVisibleText", () => {
     // so it can't look like an escape, and a combining mark at the start can't change what's before it
     assert.strictEqual(toVisibleText("C:\\u{a}"), "C:\\u{5c}u{a}");
     assert.strictEqual(toVisibleText("\u0301a"), "\\u{301}a");
+    // and the ones that aren't assigned yet
+    assert.strictEqual(toVisibleText("a͸b"), "a\\u{378}b");
     // the invisible ones that aren't format characters too
     assert.strictEqual(toVisibleText("a\u034Fb\u3164c\uFE0Fd\u{E0041}"), "a\\u{34f}b\\u{3164}c\\u{fe0f}d\\u{e0041}");
   });
@@ -768,8 +565,6 @@ function approval(id: string): PendingApproval {
     id,
     kind: isProcessPlugins ? "processPlugins" : "downloads",
     title: id,
-    // the process plugins of a config file are one group, and a download is its own
-    decisionGroup: isProcessPlugins ? "processPlugins:file:///dprint.json" : id,
     configFile: configFile("file:///dprint.json"),
     items: [{ specifier: `https://example.com/${id}`, kind: "plugin" }],
     decisions: (isProcessPlugins ? ["allow", "alwaysAllow", "deny", "alwaysDeny"] : ["allow", "deny"]).map(id => ({
