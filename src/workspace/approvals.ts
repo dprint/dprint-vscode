@@ -406,12 +406,15 @@ function getPreviousIds(approval: PendingApproval) {
 
 /** Gets the text of an approval's item, which has where it's from. */
 function getItemText(item: ApprovalItem) {
-  const specifier = toVisibleText(item.specifier);
+  // dprint escaped the specifier and registry already
   if (item.kind === "npmrcProxy") {
     const npmrc = item.npmrcUri == null ? "" : ` that ${getDisplayPath(item.npmrcUri)} sets`;
-    return `the proxy ${specifier}${npmrc}`;
+    return `the proxy ${item.specifier}${npmrc}`;
   }
-  return item.registry == null ? specifier : `${specifier} (from the npm registry ${toVisibleText(item.registry)})`;
+  if (item.kind === "networkPath") {
+    return `${item.specifier} (read from another machine)`;
+  }
+  return item.registry == null ? item.specifier : `${item.specifier} (from the npm registry ${item.registry})`;
 }
 
 /**
@@ -438,10 +441,13 @@ export function getDisplayPath(uri: string) {
 /**
  * Gets text from the project that's shown with the extension's own text, where the characters that
  * change how text around them looks are escaped (ex. a line break or one that reverses the text
- * after it) like dprint escapes them in its messages.
+ * after it) like dprint escapes the text it provides (see `ApprovalItem.specifier` in its spec).
  */
 export function toVisibleText(text: string) {
-  return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, char => `\\u{${char.codePointAt(0)!.toString(16)}}`);
+  return text.replace(
+    /^\p{M}|[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|(?! )\p{Zs}|\\(?=u\{)/gu,
+    char => `\\u{${char.codePointAt(0)!.toString(16)}}`,
+  );
 }
 
 /** Gets what the user can decide about the approval, which are the decisions dprint says it has. */

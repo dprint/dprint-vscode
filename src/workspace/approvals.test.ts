@@ -612,8 +612,11 @@ function escapeRegExp(text: string) {
 
 describe("toVisibleText", () => {
   it("escapes what changes how the text around it looks", () => {
-    assert.strictEqual(toVisibleText("a\nb\u202Ec\u2028d"), "a\\u{a}b\\u{202e}c\\u{2028}d");
-    assert.strictEqual(toVisibleText("C:\\Users\\Jörg"), "C:\\Users\\Jörg");
+    assert.strictEqual(toVisibleText("a\nb\u202Ec\u2028d\u00A0e"), "a\\u{a}b\\u{202e}c\\u{2028}d\\u{a0}e");
+    assert.strictEqual(toVisibleText("C:\\Users\\Jörg\\new"), "C:\\Users\\Jörg\\new");
+    // so it can't look like an escape, and a combining mark at the start can't change what's before it
+    assert.strictEqual(toVisibleText("C:\\u{a}"), "C:\\u{5c}u{a}");
+    assert.strictEqual(toVisibleText("\u0301a"), "\\u{301}a");
   });
 });
 

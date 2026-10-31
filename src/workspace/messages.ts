@@ -218,8 +218,13 @@ export interface PendingApproval {
 export interface ApprovalItem {
   /** The url, path, or npm specifier, or the setting of a proxy for "npmrcProxy". */
   specifier: string;
-  /** "npmrcProxy" is a proxy of an `.npmrc` file that isn't the user's own, which the downloads would go through. */
-  kind: "plugin" | "config" | "npmrcProxy" | (string & {});
+  /**
+   * "npmrcProxy" is a proxy of an `.npmrc` file that isn't the user's own, which the downloads would go through,
+   * and "networkPath" is a file or directory on another machine that's read.
+   */
+  kind: "plugin" | "config" | "npmrcProxy" | "networkPath" | (string & {});
+  /** The editor's uri of the project's path of a `networkPath` that reaches another machine through a symlink, which isn't opened. */
+  uri?: string;
   /** The npm registry of an npm plugin when it isn't the default one. */
   registry?: string;
   /** The `.npmrc` file of a proxy. */
