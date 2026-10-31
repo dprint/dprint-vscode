@@ -694,6 +694,7 @@ class WorkspaceState {
   readonly #getServiceForExecutable: (executable: DprintExecutable) => Promise<ServiceResolution>;
   readonly #onActivate: () => void;
   readonly #session: WorkspaceSession;
+  /** Watches the config files in ancestor directories, which the workspace folders in the same directory share. */
   readonly #ancestorWatchers = new AncestorConfigFileWatchers(dirPath => this.#watchAncestorConfigFileDir(dirPath));
   /** The watchers of the files the config files were resolved from by their uri. */
   readonly #fileWatchers = new Map<string, vscode.Disposable>();
