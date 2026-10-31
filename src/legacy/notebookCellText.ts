@@ -1,4 +1,4 @@
-import type { OffsetRange } from "./rangeFormat";
+import type { OffsetRange } from "../textRange";
 
 // note: this file should not import "vscode" so that it can be unit tested
 

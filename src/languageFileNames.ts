@@ -7,6 +7,28 @@ export interface LanguageContribution {
   filenames?: string[];
 }
 
+/**
+ * Gets the file extensions (ex. `.ts`) and file names (ex. `Dockerfile`) contributed
+ * for the language, which is what dprint names a document of the language that isn't
+ * on the file system after so that it can pick a plugin.
+ */
+export function getLanguageFiles(contributions: Iterable<LanguageContribution>, languageId: string) {
+  const fileExtensions: string[] = [];
+  const fileNames: string[] = [];
+  for (const contribution of contributions) {
+    if (contribution.id !== languageId) {
+      continue;
+    }
+    for (const extension of contribution.extensions ?? []) {
+      if (extension.startsWith(".") && extension.length > 1) {
+        fileExtensions.push(extension);
+      }
+    }
+    fileNames.push(...contribution.filenames ?? []);
+  }
+  return { fileExtensions: [...new Set(fileExtensions)], fileNames: [...new Set(fileNames)] };
+}
+
 /** Gets the file names to try when formatting an untitled document of the language. */
 export function getUntitledFileNames(contributions: Iterable<LanguageContribution>, languageId: string) {
   return getLanguageFileNames(contributions, languageId, "Untitled");
@@ -28,18 +50,6 @@ export function getNotebookCellFileNames(contributions: Iterable<LanguageContrib
  * (ex. json's `.code-profile`), so the first file name a plugin handles should be used.
  */
 function getLanguageFileNames(contributions: Iterable<LanguageContribution>, languageId: string, baseName: string) {
-  const extensionFileNames: string[] = [];
-  const fileNames: string[] = [];
-  for (const contribution of contributions) {
-    if (contribution.id !== languageId) {
-      continue;
-    }
-    for (const extension of contribution.extensions ?? []) {
-      if (extension.startsWith(".") && extension.length > 1) {
-        extensionFileNames.push(`${baseName}${extension}`);
-      }
-    }
-    fileNames.push(...contribution.filenames ?? []);
-  }
-  return [...new Set([...extensionFileNames, ...fileNames])];
+  const { fileExtensions, fileNames } = getLanguageFiles(contributions, languageId);
+  return [...new Set([...fileExtensions.map(extension => `${baseName}${extension}`), ...fileNames])];
 }

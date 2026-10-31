@@ -76,6 +76,21 @@ export function getCommandDisplayText(command: DprintCommand) {
 }
 
 /**
+ * Identifies the command and how it's launched, which is the same for the
+ * commands that can share a dprint process.
+ */
+export function getProcessKey(
+  command: DprintCommand,
+  options: { cwd: string; env: NodeJS.ProcessEnv | undefined; verbose: boolean },
+) {
+  const displayText = getCommandDisplayText(command);
+  // a relative path in the setting may resolve from the cwd (ex. `bin/dprint` on posix)
+  const isCwdRelative = command.kind === "setting" && /[\\/]/.test(displayText) && !path.isAbsolute(displayText);
+  const cwd = isCwdRelative ? options.cwd : null;
+  return JSON.stringify([displayText, cwd, options.env ?? null, options.verbose]);
+}
+
+/**
  * Gets how to launch a command so that its arguments are passed as-is.
  *
  * On Windows, a shell is only used to launch a batch file such as an npm `dprint.cmd`
@@ -110,6 +125,139 @@ export function getCommandLaunchInfo(
   } else {
     return { command: command.path, args, shell: false };
   }
+}
+
+/** How to kill a process together with the processes it started. */
+export type ProcessTreeKill =
+  /** A command to run. */
+  | { kind: "command"; command: string; args: string[] }
+  /** The process group to signal, which is the negative process id of its leader. */
+  | { kind: "group"; pid: number };
+
+/**
+ * Gets how to kill a process together with the processes it started, because killing only a shell,
+ * a batch file such as an npm `dprint.cmd`, or npm's Node.js wrapper leaves dprint running. That's
+ * `taskkill /T /F` on Windows, by its absolute path so it isn't looked for in the workspace folder,
+ * and the process group elsewhere, which needs the process to be started in its own group.
+ */
+export function getProcessTreeKill(
+  pid: number,
+  platform: NodeJS.Platform,
+  systemRoot: string | undefined,
+): ProcessTreeKill {
+  if (platform === "win32") {
+    return {
+      kind: "command",
+      command: path.win32.join(systemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+      args: ["/T", "/F", "/PID", String(pid)],
+    };
+  }
+  return { kind: "group", pid: -pid };
+}
+
+/** The parts of a child process that killing it uses, which is a subset so this can be unit tested. */
+export interface KillableProcess {
+  readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  /** Kills it by its handle, which never reaches another process that has its pid once it exited. */
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+/** What killing a process tree uses, which is provided so it can be unit tested. */
+export interface ProcessTreeKillEnvironment {
+  platform: NodeJS.Platform;
+  systemRoot: string | undefined;
+  /** Sends a signal to a process or a process group like `process.kill`, which throws when there's none. */
+  signal(pid: number, signal: NodeJS.Signals | 0): void;
+  /** Runs a command, which resolves with whether it succeeded. */
+  run(command: string, args: string[]): Promise<boolean>;
+  delay(ms: number): Promise<void>;
+}
+
+/** How long to wait for the processes of a group to exit after it's signalled (see `killProcessTreeWith`). */
+const GROUP_EXIT_TIMEOUT = 5_000;
+/** How often to check whether the processes of a group exited. */
+const GROUP_EXIT_POLL_INTERVAL = 50;
+/** How long the processes of a group get to exit after a signal before they're killed with SIGKILL. */
+const GROUP_KILL_GRACE = 1_000;
+
+/**
+ * Kills a process with the processes it started (see `getProcessTreeKill`), which resolves once that
+ * was done: once `taskkill` finished on Windows, and once every process of the group exited (or after
+ * a timeout) elsewhere, where the group is killed with SIGKILL when it doesn't exit in time (ex. a
+ * process that a plugin started ignores SIGTERM). Only the process is killed when that fails, which is
+ * killed with SIGKILL the same way. This is where a kill is escalated, so the caller doesn't. Nothing
+ * is done once the process exited, because its pid (and so the root of the tree) may be another
+ * process's then, apart from the group, which isn't reused while it has a process.
+ *
+ * Note that `taskkill` opens the process by its pid a little after it's checked that it's running,
+ * so a process that exits in between may have its pid reused by then, which this can't rule out.
+ */
+export async function killProcessTreeWith(
+  childProcess: KillableProcess,
+  signal: NodeJS.Signals | undefined,
+  env: ProcessTreeKillEnvironment,
+): Promise<void> {
+  const pid = childProcess.pid;
+  if (pid == null || hasExited(childProcess)) {
+    childProcess.kill(signal); // by its handle, which does nothing once it exited
+    return;
+  }
+  const treeKill = getProcessTreeKill(pid, env.platform, env.systemRoot);
+  if (treeKill.kind === "command") {
+    if (!await env.run(treeKill.command, treeKill.args) && !hasExited(childProcess)) {
+      // ex. taskkill wasn't found
+      childProcess.kill(signal);
+    }
+    return;
+  }
+  // only the process is killed (by its handle) when the group can't be signalled
+  let isGroup = true;
+  try {
+    env.signal(treeKill.pid, signal ?? "SIGTERM");
+  } catch {
+    isGroup = false;
+    childProcess.kill(signal);
+  }
+  // the group isn't reused while any of its processes is running, so it's safe to check and signal it
+  // after its leader exited as long as it still has a process
+  const isRunning = () => {
+    if (!isGroup) {
+      return !hasExited(childProcess);
+    }
+    try {
+      env.signal(treeKill.pid, 0);
+      return true;
+    } catch {
+      return false; // every process of the group exited
+    }
+  };
+  let isKilled = signal === "SIGKILL";
+  for (let waited = 0; waited < GROUP_EXIT_TIMEOUT && isRunning(); waited += GROUP_EXIT_POLL_INTERVAL) {
+    if (!isKilled && waited >= GROUP_KILL_GRACE) {
+      isKilled = true;
+      killForcibly(isGroup ? undefined : childProcess, treeKill.pid, env);
+    }
+    await env.delay(GROUP_EXIT_POLL_INTERVAL);
+  }
+}
+
+/** Kills the process group with SIGKILL, or the process by its handle when the group can't be signalled. */
+function killForcibly(childProcess: KillableProcess | undefined, groupPid: number, env: ProcessTreeKillEnvironment) {
+  if (childProcess != null) {
+    childProcess.kill("SIGKILL");
+    return;
+  }
+  try {
+    env.signal(groupPid, "SIGKILL");
+  } catch {
+    // every process of the group exited
+  }
+}
+
+function hasExited(childProcess: KillableProcess) {
+  return childProcess.exitCode != null || childProcess.signalCode != null;
 }
 
 function getWindowsCommandPath(command: DprintCommand) {

@@ -1,53 +1,7 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { RacyCacheTextDownloader, type TextDownloader } from "../utils/TextDownloader";
-import { downloadConfigSchema, getDefaultConfigSchema } from "./configSchema";
-import { defaultPluginConfigSchema } from "./pluginConfigSchema";
-
-describe("getDefaultConfigSchema", () => {
-  const schema = getDefaultConfigSchema("dprint://schemas/config.json");
-
-  it("uses the provided id", () => {
-    assert.strictEqual(schema.$id, "dprint://schemas/config.json");
-  });
-
-  it("has the properties the cli handles itself", () => {
-    // these are the properties the cli takes out of the config before
-    // treating what remains as plugin configuration
-    assert.deepStrictEqual(Object.keys(schema.properties).sort(), [
-      "$schema",
-      "excludes",
-      "extends",
-      "includes",
-      "incremental",
-      "indentWidth",
-      "inherit",
-      "lineWidth",
-      "newLineKind",
-      "plugins",
-      "shebangs",
-      "useTabs",
-    ]);
-  });
-
-  it("accepts a boolean for inherit", () => {
-    assert.strictEqual(schema.properties.inherit.type, "boolean");
-  });
-
-  it("maps shebang lines to file extensions", () => {
-    assert.deepStrictEqual(schema.properties.shebangs.propertyNames, { pattern: "^#!" });
-    assert.strictEqual(schema.properties.shebangs.additionalProperties.type, "string");
-  });
-
-  it("treats the other properties as plugin configuration", () => {
-    assert.strictEqual(schema.additionalProperties, defaultPluginConfigSchema);
-  });
-
-  it("returns a new object each time because the caller modifies it", () => {
-    assert.notStrictEqual(getDefaultConfigSchema("id"), getDefaultConfigSchema("id"));
-    assert.notStrictEqual(getDefaultConfigSchema("id").properties, getDefaultConfigSchema("id").properties);
-  });
-});
+import { downloadConfigSchema } from "./configSchema";
+import { RacyCacheTextDownloader, type TextDownloader } from "./TextDownloader";
 
 describe("downloadConfigSchema", () => {
   const url = "https://dprint.dev/schemas/v0.json";

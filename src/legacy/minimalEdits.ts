@@ -1,6 +1,7 @@
 // note: this file should not import "vscode" so that it can be unit tested
 
-import { normalizeToSourceLineEndings, type OffsetRange } from "./rangeFormat";
+import type { OffsetRange } from "../textRange";
+import { normalizeToSourceLineEndings } from "./rangeFormat";
 
 /** An edit that replaces a range of the original text. */
 export interface OffsetEdit extends OffsetRange {

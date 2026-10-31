@@ -1,18 +1,21 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import { getDprintConfig } from "../config";
+import { getConfigFileDir } from "../configPaths";
 import { type Environment, RealEnvironment } from "../environment";
-import { type ConfigDiscovery, DprintExecutable, type EditorInfo } from "../executable/DprintExecutable";
 import type { FormatDocumentResult } from "../ExtensionBackend";
 import { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { ObjectDisposedError } from "../utils";
+import { expandToLines } from "../textRange";
 import { createEditorService, type EditorService } from "./editor-service";
 import { getUtf8ByteRange } from "./editor-service/byteRange";
 import { type FormatFile, getCannotFormatReason } from "./formatFile";
+import { type ConfigDiscovery, type EditorInfo, LegacyDprintExecutable } from "./LegacyDprintExecutable";
 import { getMinimalEdits } from "./minimalEdits";
 import { trimFormattedCellText } from "./notebookCellText";
-import { expandToLines, getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
+import { ObjectDisposedError } from "./ObjectDisposedError";
+import { getRangeFormatEdit, isNoChangeEdit } from "./rangeFormat";
 
 export interface FolderServiceOptions {
   approvedPaths: ApprovedConfigPaths;
@@ -42,7 +45,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #editorService: EditorService | undefined;
   #editorInfo: EditorInfo | undefined;
-  #dprintExecutable: DprintExecutable | undefined;
+  #dprintExecutable: LegacyDprintExecutable | undefined;
 
   constructor(opts: FolderServiceOptions) {
     this.#approvedPaths = opts.approvedPaths;
@@ -57,7 +60,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   get uri() {
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      // the directory the config file applies to (ex. the parent of a `.config` directory)
+      const configFilePath = this.#configUri.fsPath;
+      const isInConfigFileDir = getConfigFileDir(this.#environment, configFilePath) === path.dirname(configFilePath);
+      return vscode.Uri.joinPath(this.#configUri, isInConfigFileDir ? "../" : "../../");
     }
     return this.#cwd;
   }
@@ -304,7 +310,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
-    return DprintExecutable.create({
+    return LegacyDprintExecutable.create({
       approvedPaths: this.#approvedPaths,
       pathInfo: config.pathInfo,
       cwd: this.#cwd,
