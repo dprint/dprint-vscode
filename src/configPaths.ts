@@ -208,16 +208,54 @@ export function isDotConfigDir(env: Environment, dirPath: string) {
  */
 export function getAncestorConfigFileNamesByDir(
   env: Environment,
-  configFiles: Iterable<
-    { configFilePath: string; names?: { configFileNames: readonly string[]; dotConfigFileNames: readonly string[] } }
-  >,
+  configFiles: Iterable<{ configFilePath: string; names?: ConfigFileNamesOfDprint }>,
+) {
+  return getConfigFileNamesByDir(
+    env,
+    Array.from(configFiles, ({ configFilePath, names }) => ({ dirPath: getConfigFileDir(env, configFilePath), names })),
+  );
+}
+
+/** The names of the config files that dprint looks up, which an older dprint doesn't say. */
+export interface ConfigFileNamesOfDprint {
+  configFileNames: readonly string[];
+  dotConfigFileNames: readonly string[];
+}
+
+/**
+ * Gets the ancestor directories of a workspace folder to look in for a config file that's created there,
+ * which are the ones above it up to the one that has the config file the folder uses, or up to where the
+ * search of the ancestor directories stops without one (ex. it uses the global config file).
+ */
+export function getWorkspaceFolderAncestorDirs(
+  env: Environment,
+  folderPath: string,
+  configDirPath: string | undefined,
+) {
+  const dirPaths: string[] = [];
+  for (let dirPath = getSearchParent(env, folderPath); dirPath != null; dirPath = getSearchParent(env, dirPath)) {
+    dirPaths.push(dirPath);
+    if (configDirPath != null && path.relative(dirPath, configDirPath) === "") {
+      break;
+    }
+  }
+  return dirPaths;
+}
+
+/**
+ * Gets the names of the config files to watch in each of the directories, which are the names dprint looks
+ * up in a directory, and in its `.config` directory, which is watched on its own because a watcher of a
+ * directory doesn't watch its subdirectories. The home directory's `.config` isn't one (see `isDotConfigDir`).
+ */
+export function getConfigFileNamesByDir(
+  env: Environment,
+  dirs: Iterable<{ dirPath: string; names?: ConfigFileNamesOfDprint }>,
 ) {
   const fileNamesByDir = new Map<string, readonly string[]>();
-  for (const { configFilePath, names } of configFiles) {
+  for (const { dirPath, names } of dirs) {
     // the names that dprint looks up, which an older dprint doesn't say
     const configFileNames = names?.configFileNames ?? DPRINT_CONFIG_FILE_NAMES;
     const dotConfigFileNames = names?.dotConfigFileNames ?? DOT_CONFIG_FILE_NAMES;
-    const dirPath = getConfigFileDir(env, configFilePath);
     const dotConfigDirPath = path.join(dirPath, DOT_CONFIG_DIR_NAME);
     if (isDotConfigDir(env, dotConfigDirPath)) {
       // creating or deleting the `.config` directory is a change of the directory

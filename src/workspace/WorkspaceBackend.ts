@@ -10,8 +10,9 @@ import {
   findClosestFolder,
   findWorkspaceFolderAncestorConfigFile,
   getAncestorConfigFileChangeAction,
-  getAncestorConfigFileNamesByDir,
   getConfigFileDir,
+  getConfigFileNamesByDir,
+  getWorkspaceFolderAncestorDirs,
   isPathWithin,
 } from "../configPaths";
 import { combineConfigSchemas } from "../configSchema";
@@ -505,6 +506,15 @@ export class WorkspaceBackend implements vscode.Disposable {
         } else {
           this.#session.shownConfigErrors.forget(params.configFile);
         }
+        // one that's created that the extension doesn't know about is found again, and the others are ignored
+        // apart from refreshing what the known ones format (ex. it's in a directory the extension doesn't watch)
+        if (
+          params.change === "created" && params.configFile != null
+          && !this.#state?.isKnownConfigFile(params.configFile.uri)
+        ) {
+          this.#options.onAncestorConfigFileCreatedOrDeleted();
+          return;
+        }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
@@ -869,6 +879,12 @@ class WorkspaceState {
     return Promise.race([Promise.all(formats), delay(RETIRED_FORMAT_TIMEOUT)]).then(() => this.#disposeLegacyFolders());
   }
 
+  /** Gets whether the config file is one the extension found (see `#findConfigFiles`). */
+  isKnownConfigFile(uri: string) {
+    const key = getConfigFileKey(uri);
+    return this.#configs.some(config => getConfigFileKey(vscode.Uri.file(config.configFilePath).toString()) === key);
+  }
+
   setConfigs(configs: Config[]) {
     this.#configs = configs;
     this.#hasConfigs = true;
@@ -1149,24 +1165,46 @@ class WorkspaceState {
       .catch(err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err));
   }
 
-  /** Watches the directories of the config files in ancestor directories of the workspace folders. */
+  /**
+   * Watches the ancestor directories of the workspace folders for the config files in them, which are the
+   * ones up to the config file a workspace folder uses.
+   */
   #updateAncestorWatchers() {
     // a state that was stopped disposed its watchers
     if (this.#disposed) {
       return;
     }
-    const configFiles = this.#configs
-      .filter(config => config.isAncestor)
-      // config files in workspace folders are already watched by the extension
-      .filter(config => {
-        const dirPath = getConfigFileDir(this.#environment, config.configFilePath);
-        return !vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath));
-      })
-      // with the names that its dprint process looks up, which only make the config files be found again when one
-      // is created (the search of the ancestor directories and the workspace watcher use the extension's names,
-      // because they run before a dprint process is started)
-      .map(config => ({ configFilePath: config.configFilePath, names: config.service?.configFileNames }));
-    this.#ancestorWatchers.update(getAncestorConfigFileNamesByDir(this.#environment, configFiles))
+    // the ancestor directories of each workspace folder without a config file of its own, up to the one with the
+    // config file it uses (ex. a config file that's created closer to it, or one for a folder that uses the global
+    // config file), whose creation makes the config files be found again
+    const dirs: { dirPath: string; names?: ConfigFileNames }[] = [];
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      if (folder.uri.scheme !== FILE_SCHEME) {
+        continue;
+      }
+      const folderPath = folder.uri.fsPath;
+      const configs = this.#configs.filter(config => path.relative(config.folderUri.fsPath, folderPath) === "");
+      const hasOwnConfigFile = configs.some(config =>
+        !config.isAncestor
+        && path.relative(getConfigFileDir(this.#environment, config.configFilePath), folderPath) === ""
+      );
+      if (hasOwnConfigFile) {
+        continue;
+      }
+      // with the names that its dprint process looks up (the search of the ancestor directories and the workspace
+      // watcher use the extension's names, because they run before a dprint process is started)
+      const ancestorConfig = configs.find(config => config.isAncestor);
+      const configDirPath = ancestorConfig == null
+        ? undefined
+        : getConfigFileDir(this.#environment, ancestorConfig.configFilePath);
+      for (const dirPath of getWorkspaceFolderAncestorDirs(this.#environment, folderPath, configDirPath)) {
+        // config files in workspace folders are already watched by the extension
+        if (!vscode.workspace.workspaceFolders?.some(folder => isPathWithin(folder.uri.fsPath, dirPath))) {
+          dirs.push({ dirPath, names: ancestorConfig?.service?.configFileNames });
+        }
+      }
+    }
+    this.#ancestorWatchers.update(getConfigFileNamesByDir(this.#environment, dirs))
       .catch(err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err));
   }
 

@@ -11,6 +11,7 @@ import {
   getAncestorConfigFileChangeAction,
   getAncestorConfigFileNamesByDir,
   getConfigFileDir,
+  getWorkspaceFolderAncestorDirs,
   isPathWithin,
 } from "./configPaths";
 import type { Environment } from "./environment";
@@ -253,6 +254,27 @@ describe("findConfigFileInAncestorDirectories", () => {
     assert.strictEqual(
       await findConfigFileInAncestorDirectories(env, path.resolve("/other/src"), options),
       rootConfigPath,
+    );
+  });
+});
+
+describe("getWorkspaceFolderAncestorDirs", () => {
+  const env = new TestEnvironment({ homeDir });
+
+  it("is the ancestor directories up to the one with the config file the folder uses", () => {
+    // ex. a config file that's created closer to the folder is noticed
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorDirs(env, path.resolve("/repo/packages/app"), path.resolve("/repo")),
+      [path.resolve("/repo/packages"), path.resolve("/repo")],
+    );
+  });
+
+  it("is every ancestor directory up to where the search stops without a config file", () => {
+    // ex. the folder uses the global config file, and one in `/net/dprint.json` would be a host
+    assert.deepStrictEqual(getWorkspaceFolderAncestorDirs(env, "/net/host/proj", undefined), ["/net/host"]);
+    assert.deepStrictEqual(
+      getWorkspaceFolderAncestorDirs(env, path.resolve("/repo/app"), undefined),
+      [path.resolve("/repo"), path.parse(path.resolve("/")).root],
     );
   });
 });
