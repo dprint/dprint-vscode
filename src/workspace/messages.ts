@@ -191,10 +191,10 @@ export type FormatFailedReason = "formatError" | "pluginError" | (string & {});
 /** Something the user needs to approve before dprint uses a config file. */
 export interface PendingApproval {
   /**
-   * Identifies exactly what's approved, which changes when what's shown does (ex. the configuration of a process plugin, or
-   * once its process plugins are set up) and is the same in another server of the same version of dprint, but may change
-   * between versions, so the same approval is recognized by what it approves instead (its config file, kind, and the
-   * specifiers of its items).
+   * Identifies exactly what's approved, which changes when what's shown does (ex. the configuration of a process plugin, or once its
+   * process plugins are set up) and is the same in another server of the same version of dprint, but may change between versions, so
+   * recognize the same approval by what it approves instead (see "Approving"). Only send a decision for the id that was shown to the
+   * user.
    */
   id: string;
   kind: ApprovalKind;
@@ -390,9 +390,8 @@ export interface ConfigFileInfo {
   /**
    * Whether it was found on another machine and reading it isn't allowed yet (see "Approving"), which is left out otherwise. Don't
    * open or read it then (ex. with a button in the prompt or a command that opens the configuration file of a document), because
-   * that reads it from the other machine, which the approval is for. Watch it only like any file, with a watcher of its directory that
-   * doesn't follow symlinks, which doesn't watch the directory when it's a symlink itself (ex. a `.config` directory that's a symlink
-   * to a share, see "Lifecycle"). The server sends `dprint/configChanged` once it's allowed.
+   * that reads it from the other machine, which the approval is for. Its directory is watched like any other, which is never when
+   * it's a symlink (see "Lifecycle"). The server sends `dprint/configChanged` once it's allowed.
    */
   onAnotherMachine?: boolean;
 }
