@@ -112,13 +112,9 @@ export class Approvals {
         return false;
       }
       askedNow.add(approval.id);
-      // the user's decision is sent again for an approval that's pending again after it changed
+      // the user's decision is sent again for an approval that's still pending after sending it failed
       let decision = decisionsToSendAgain.get(approval.id);
       decisionsToSendAgain.delete(approval.id);
-      if (decision != null && approval.denied && isAllowed(approval, decision)) {
-        // dprint knows it was denied since (ex. in another window), which is newer
-        decision = undefined;
-      }
       if (decision == null) {
         const askedKey = getAskedKey(approval);
         if (!options.isExplicit && (approval.denied || this.#asked.has(askedKey))) {
@@ -159,10 +155,11 @@ export class Approvals {
         } catch {
           throw err;
         }
-        const same = pending.find(other => other.id === approval.id && !other.denied);
-        if (same != null && !sentAgain.has(approval.id)) {
+        const same = pending.find(other => other.id === approval.id);
+        if (same != null && !same.denied && !sentAgain.has(approval.id)) {
           // the same approval is pending again, which is exactly what the user saw, so the decision is sent again
-          // once instead of asking
+          // once instead of asking (an allow isn't sent for one that's denied, which would replace a denial made
+          // since, ex. in another window)
           askedNow.delete(approval.id);
           sentAgain.add(approval.id);
           decisionsToSendAgain.set(approval.id, decision);
@@ -171,8 +168,8 @@ export class Approvals {
         if (!allows) {
           await this.#forwardDenial(approval, decision, pending, sentAgain);
         }
-        if (same != null) {
-          // it still wasn't used after it was sent again
+        if (same != null && (allows || !same.denied)) {
+          // the decision still wasn't used, because it couldn't be sent again or that failed too
           throw err;
         }
         if (!allows) {

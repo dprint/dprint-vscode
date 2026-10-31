@@ -462,7 +462,7 @@ describe("Approvals", () => {
     }
   });
 
-  it("doesn't send an allow again for an approval that was denied since", async () => {
+  it("doesn't send an allow again for an approval that was denied since, which is said", async () => {
     const approved: ApproveParams[] = [];
     const approvals = new Approvals({
       ask: async () => "allow",
@@ -478,8 +478,27 @@ describe("Approvals", () => {
       },
       pendingApprovals: async () => ({ configFile: null, approvals: [], status: READY }),
     });
-    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    // the user's allow wasn't used
+    await assert.rejects(approvals.request([approval("download")], { isExplicit: false }), /Changed/);
     assert.deepStrictEqual(approved, [{ id: "download", decision: "allow" }]);
+  });
+
+  it("doesn't say a denial failed when its approval is denied afterwards", async () => {
+    const approved: ApproveParams[] = [];
+    const approvals = new Approvals({
+      ask: async () => "deny",
+      approve: async params => {
+        approved.push(params);
+        throw new Error("Failed.");
+      },
+      pendingApprovals: async () => ({
+        configFile: null,
+        approvals: [{ ...approval("download"), denied: true }],
+        status: READY,
+      }),
+    });
+    assert.strictEqual(await approvals.request([approval("download")], { isExplicit: false }), false);
+    assert.deepStrictEqual(approved, [{ id: "download", decision: "deny" }]);
   });
 
   it("shows why the config file isn't used after what the user allowed", async () => {
