@@ -498,17 +498,22 @@ export class WorkspaceBackend implements vscode.Disposable {
           this.#state?.refreshSchema();
           return;
         }
-        // an error that's still there is shown again
+        // an error that's still there is shown again, and what's known about whether it's on another machine
+        // isn't anymore, which the results that are gotten again say (ex. one that's a symlink to a share now)
         if (params.configFile == null) {
           this.#session.shownConfigErrors.clear();
+          this.#configFilesOnAnotherMachine.clear();
         } else {
           this.#session.shownConfigErrors.forget(params.configFile);
+          this.#configFilesOnAnotherMachine.delete(getConfigFileKey(params.configFile.uri));
         }
         this.onConfigFileChanged().catch(err => this.#logger.logError("Error refreshing:", err));
       },
       // the new server doesn't know what the config files were resolved from, which getting them again
       // tells it (it keeps what the user decided for the session by the connection's session id)
       onRestart: () => {
+        // the new server's results say again whether the config files are on another machine
+        this.#configFilesOnAnotherMachine.clear();
         this.onConfigFileChanged()
           .catch(err => this.#logger.logError("Error refreshing:", err));
       },

@@ -423,12 +423,12 @@ export interface ConfigFileInfo {
    * open or read it then (ex. with a button in the prompt or a command that opens the configuration file of a document), because
    * that reads it from the other machine, which the approval is for. Its directory is watched like any other, which is never when
    * it's a symlink that isn't a workspace folder or one of its ancestors (see "Lifecycle"). The server sends `dprint/configChanged`
-   * once it's allowed. A configuration file's uri is only known to be safe to open while it's current, because a `git pull` may
-   * replace the file (or a symlink in its path) with a symlink to another machine since. So once a configuration file is reported
-   * with `onAnotherMachine`, drop what's held for its uri (ex. diagnostics, an "Open Configuration File" action, or a button of a
-   * prompt that's still shown), and get `dprint/configInfo` for it again before opening it from an older result (ex. a
-   * notification's action), not opening it when it's `onAnotherMachine`. The server takes back the diagnostics it published for
-   * it then, and the ones it published through a directory the editor knew by another path once that doesn't lead where it did.
+   * once it's allowed, and when a configuration file becomes one on another machine (ex. a `git pull` replaced it with a symlink
+   * to a share). So before opening a configuration file from an older result or action (ex. a notification's "Open
+   * Configuration File"), check the latest result the editor extension has for it, and don't open it when that has
+   * `onAnotherMachine` or when there's no result for it. The server takes back the diagnostics it published for it then by
+   * publishing empty ones (and moves the ones it published through a directory the editor knew by another path once that
+   * doesn't lead where it did), so don't drop them for this.
    */
   onAnotherMachine?: boolean;
 }
@@ -448,9 +448,10 @@ export interface ConfigInfoResult {
   /** The other files the config file formats, which only fileInfo says (ex. extensionless files with a shebang). */
   otherFiles: { kind: "shebangs" | "associations" | (string & {}); values: string[] }[];
   /**
-   * The local files that it was resolved from (ex. a configuration file it extends), and what it points to when it's a local
-   * configuration file that's a symlink (or is in a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a
-   * `base.json` or to a file in `node_modules`), because the `configFileGlobs` watcher doesn't report a change there. The editor
+   * The local files that it was resolved from (ex. a configuration file it extends), and the canonical path of a local
+   * configuration file when the `configFileGlobs` watcher doesn't report a change there, which is when it's a symlink (or is in
+   * a `.config` directory that's one, ex. a `dprint.json` that's a symlink to a `base.json` or to a file in `node_modules`), and
+   * when it's reached through a directory that's a symlink the editor doesn't watch through. The editor
    * watches them too, by their directories (see "Lifecycle" for when one that's a symlink isn't watched). Each is the editor's path
    * when that's through a workspace folder or one of its ancestors that it knows by another path, and the canonical path otherwise,
    * which the editor may watch. A file whose directory may not be read (ex. it's on another machine now) is left out.

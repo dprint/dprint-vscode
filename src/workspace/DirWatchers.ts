@@ -315,7 +315,9 @@ export async function getFileAccess(
  * Gets whether a config file can be opened from an older message, which is when it can be without
  * following a symlink, or when it's a symlink or reached through one and dprint's latest result for it
  * is known and doesn't say it's on another machine (ex. a config file in a dotfiles directory that a
- * symlink in the project points to).
+ * symlink in the project points to). One whose path has no symlink is opened without a result too, which
+ * is more than the spec allows ("don't open it when there's no result for it"), because nothing in its path
+ * can lead to another machine.
  *
  * @param isOnAnotherMachine - What dprint's latest result for it says, which is undefined when there's none.
  */
