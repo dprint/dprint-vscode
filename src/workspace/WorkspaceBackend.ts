@@ -53,7 +53,7 @@ import {
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
-  isWorkspaceFolderPath,
+  isWorkspaceFolderOrAncestorPath,
   type PathStat,
   type WatchedFileChange,
 } from "./DirWatchers";
@@ -730,7 +730,7 @@ class WorkspaceState {
     onChange: (filePath, change) => this.#onAncestorConfigFileChanged(filePath, change),
     onError: err => this.#logger.logError("Error watching the configuration files in ancestor directories:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
-    isWorkspaceFolder: isWorkspaceFolder,
+    isWorkspaceFolderOrAncestor,
   });
   /** Watches the files the config files were resolved from (`watchUris`) by their directories. */
   readonly #fileWatchers = new DirWatchers({
@@ -740,7 +740,7 @@ class WorkspaceState {
     onError: err => this.#logger.logError("Error watching the files the configuration files were resolved from:", err),
     isCaseInsensitive: IS_CASE_INSENSITIVE_FILE_SYSTEM,
     // ex. a file a config file extends in a workspace folder opened through a symlink
-    isWorkspaceFolder: isWorkspaceFolder,
+    isWorkspaceFolderOrAncestor,
   });
   /** The `watchUris` that are watched by their path (see `getWatchedPathKey`). */
   #watchUrisByPath = new Map<string, string>();
@@ -2003,12 +2003,12 @@ function watchDir(
   return watcher;
 }
 
-/** Gets whether the directory is one of the workspace folders. */
-function isWorkspaceFolder(dirPath: string) {
+/** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
+function isWorkspaceFolderOrAncestor(dirPath: string) {
   const folderPaths = (vscode.workspace.workspaceFolders ?? [])
     .filter(folder => folder.uri.scheme === FILE_SCHEME)
     .map(folder => folder.uri.fsPath);
-  return isWorkspaceFolderPath(dirPath, folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM);
+  return isWorkspaceFolderOrAncestorPath(dirPath, folderPaths, IS_CASE_INSENSITIVE_FILE_SYSTEM);
 }
 
 /** Gets what's at the path without following a symlink at the end of it, with what identifies it. */

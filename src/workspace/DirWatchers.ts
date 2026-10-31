@@ -32,10 +32,12 @@ export interface DirWatchersOptions {
   /** Whether file names are compared without their case (ex. on Windows and macOS). */
   isCaseInsensitive: boolean;
   /**
-   * Gets whether the directory is a workspace folder, which is watched even when it's a symlink
-   * because the user opened it (ex. a workspace folder opened through a symlink).
+   * Gets whether the directory is a workspace folder or one of its ancestor directories, which is
+   * watched even when it's a symlink because the user opened the workspace folder through it (ex. a
+   * workspace folder opened through a symlink, or macOS's `/tmp`, which is `/private/tmp`), where
+   * dprint provides the paths the editor knows.
    */
-  isWorkspaceFolder(dirPath: string): boolean;
+  isWorkspaceFolderOrAncestor(dirPath: string): boolean;
 }
 
 /**
@@ -43,7 +45,8 @@ export interface DirWatchersOptions {
  * directory it watches. Following one reaches what it points to, which may be on another machine
  * that the user didn't allow reading (ex. a config file that a `git pull` replaced with a symlink
  * to a share). A directory that's itself a symlink isn't watched either, because a watcher of it
- * (ex. vscode's) watches what it points to, apart from a workspace folder, which the user opened.
+ * (ex. vscode's) watches what it points to, apart from a workspace folder or one of its ancestor
+ * directories, which the user opened it through.
  * That holds for a directory that dprint provided too, because it may have been replaced with a
  * symlink since.
  *
@@ -69,7 +72,7 @@ export class DirWatchers {
   /**
    * Watches the directories for the names of the files in them and stops watching the others. A
    * directory that doesn't exist isn't watched until it does, and neither is one that's a symlink
-   * apart from a workspace folder (ex. a `.config` directory that's a symlink).
+   * apart from a workspace folder or one of its ancestors (ex. a `.config` directory that's a symlink).
    */
   update(fileNamesByDir: ReadonlyMap<string, readonly string[]>): Promise<void> {
     return this.#enqueue(() => this.#apply(fileNamesByDir));
@@ -107,7 +110,8 @@ export class DirWatchers {
 
   /**
    * Watches the parent directory for the directory's name while it's a directory (or a workspace
-   * folder that's a symlink), with a new watcher when it was replaced, and stops watching it otherwise.
+   * folder or one of its ancestors that's a symlink), with a new watcher when it was replaced, and
+   * stops watching it otherwise.
    */
   async #checkParent(dirPath: string, entry: DirEntry) {
     const parentPath = path.dirname(dirPath);
@@ -137,7 +141,8 @@ export class DirWatchers {
   }
 
   /**
-   * Watches the directory while it's a directory (or a workspace folder that's a symlink), with a new
+   * Watches the directory while it's a directory (or a workspace folder or one of its ancestors that's a
+   * symlink), with a new
    * watcher when it was replaced, because the old one may watch what a symlink that replaced it points
    * to, and stops watching it otherwise. Its parent is checked again when it's gone, because a parent
    * that was deleted too doesn't report the directory being created again.
@@ -171,9 +176,12 @@ export class DirWatchers {
     entry.dirWatcher = { identity, dispose: () => watcher.dispose() };
   }
 
-  /** Whether a directory may be watched, which isn't one that's a symlink apart from a workspace folder. */
+  /**
+   * Whether a directory may be watched, which isn't one that's a symlink apart from a workspace folder
+   * or one of its ancestors.
+   */
   #isWatchable(dirPath: string, kind: PathKind) {
-    return kind === "dir" || (kind === "symlink" && this.#options.isWorkspaceFolder(dirPath));
+    return kind === "dir" || (kind === "symlink" && this.#options.isWorkspaceFolderOrAncestor(dirPath));
   }
 
   /** Runs the task after the ones before it, whether or not they failed. */
@@ -227,10 +235,26 @@ export function getWatchPattern(fileNames: readonly string[]) {
   return fileNames.length === 1 ? fileNames[0] : `{${fileNames.join(",")}}`;
 }
 
-/** Gets whether the directory is one of the workspace folders. */
-export function isWorkspaceFolderPath(dirPath: string, folderPaths: readonly string[], isCaseInsensitive: boolean) {
+/** Gets whether the directory is one of the workspace folders or one of their ancestor directories. */
+export function isWorkspaceFolderOrAncestorPath(
+  dirPath: string,
+  folderPaths: readonly string[],
+  isCaseInsensitive: boolean,
+) {
   const key = getWatchedPathKey(path.resolve(dirPath), isCaseInsensitive);
-  return folderPaths.some(folderPath => getWatchedPathKey(path.resolve(folderPath), isCaseInsensitive) === key);
+  return folderPaths.some(folderPath => {
+    let currentPath = path.resolve(folderPath);
+    while (true) {
+      if (getWatchedPathKey(currentPath, isCaseInsensitive) === key) {
+        return true;
+      }
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        return false;
+      }
+      currentPath = parentPath;
+    }
+  });
 }
 
 /** Gets what identifies a watched file's path, which is without its case when the file system is. */

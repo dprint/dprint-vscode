@@ -7,7 +7,7 @@ import {
   getFileNamesByDir,
   getWatchedPathKey,
   getWatchPattern,
-  isWorkspaceFolderPath,
+  isWorkspaceFolderOrAncestorPath,
   type WatchedFileChange,
 } from "./DirWatchers";
 
@@ -237,12 +237,20 @@ describe("getWatchPattern", () => {
   });
 });
 
-describe("isWorkspaceFolderPath", () => {
+describe("isWorkspaceFolderOrAncestorPath", () => {
   it("compares the paths without their case when the file system does", () => {
     const folder = path.resolve("/ws/Project");
-    assert.strictEqual(isWorkspaceFolderPath(path.resolve("/ws/project"), [folder], true), true);
-    assert.strictEqual(isWorkspaceFolderPath(path.resolve("/ws/project"), [folder], false), false);
-    assert.strictEqual(isWorkspaceFolderPath(path.join(folder, "sub"), [folder], true), false);
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/ws/project"), [folder], true), true);
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/ws/project"), [folder], false), false);
+  });
+
+  it("matches the ancestor directories of a workspace folder, but not its descendants", () => {
+    // ex. macOS's `/tmp`, which is a symlink to `/private/tmp`, for a workspace folder in it
+    const folder = path.resolve("/tmp/project");
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/tmp"), [folder], false), true);
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/"), [folder], false), true);
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.join(folder, "sub"), [folder], false), false);
+    assert.strictEqual(isWorkspaceFolderOrAncestorPath(path.resolve("/other"), [folder], false), false);
   });
 });
 
@@ -295,7 +303,7 @@ function createWatchers(
     onChange: (filePath, change) => changes.push([filePath, change]),
     onError: options.onError ?? (err => assert.fail(String(err))),
     isCaseInsensitive: options.isCaseInsensitive ?? false,
-    isWorkspaceFolder: dirPath => (options.workspaceFolders ?? []).includes(toTestPath(dirPath)),
+    isWorkspaceFolderOrAncestor: dirPath => (options.workspaceFolders ?? []).includes(toTestPath(dirPath)),
   });
   const emit = (dirPath: string, filePath: string, change: WatchedFileChange) => {
     for (const callback of callbacks.get(dirPath) ?? []) {
