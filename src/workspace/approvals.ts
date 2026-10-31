@@ -38,13 +38,17 @@ export interface ApprovalsOptions {
 
 /**
  * Asks the user about what a config file needs approved for one dprint process. Each
- * approval is only asked about once unless the user asks for it (ex. with a command),
- * because the editor formats without the user doing anything in between (ex. on save).
+ * approval is only asked about once until the user decides about it, unless the user asks
+ * for it (ex. with a command), because the editor formats without the user doing anything
+ * in between (ex. on save).
  */
 export class Approvals {
   readonly #options: ApprovalsOptions;
-  /** The approvals the user was asked about. */
-  readonly #asked = new Set<string>();
+  /**
+   * The config files of the approvals the user was asked about without deciding (ex. they dismissed
+   * the prompt) by what identifies them (see `getAskedKey`).
+   */
+  readonly #asked = new Map<string, ConfigFileIdentifier>();
   /** The approvals being asked about, which the formats of the other documents of the config file share. */
   readonly #inProgress = new Map<string, Promise<boolean>>();
   /** Whether what the user answers isn't used anymore (see `cancel`). */
@@ -62,9 +66,26 @@ export class Approvals {
     this.#isCancelled = true;
   }
 
-  /** Forgets which approvals the user was asked about (ex. they forgot their decisions), so they're asked again. */
-  forget() {
-    this.#asked.clear();
+  /**
+   * Forgets which approvals of the config file the user was asked about, or of every config file
+   * when not provided (ex. they forgot their decisions), so they're asked again.
+   *
+   * @param configFile - The config file, whose approvals of every directory are forgotten when it
+   * doesn't have a `dirUri`.
+   */
+  forget(configFile?: ConfigFileIdentifier) {
+    if (configFile == null) {
+      this.#asked.clear();
+      return;
+    }
+    for (const [key, askedConfigFile] of this.#asked) {
+      if (
+        askedConfigFile.uri === configFile.uri
+        && (configFile.dirUri == null || askedConfigFile.dirUri === configFile.dirUri)
+      ) {
+        this.#asked.delete(key);
+      }
+    }
   }
 
   /**
@@ -90,8 +111,6 @@ export class Approvals {
     // whether the config file is used now, which is only known after something was approved
     let status: FormatStatus | undefined;
     const askedNow = new Set<string>();
-    // what was asked about in this request (see `getAskedKey`)
-    const askedKeysNow = new Set<string>();
     // the decisions to send again for an approval that's pending again after it changed, which is
     // only done once for an approval
     const decisionsToSendAgain = new Map<string, ApprovalDecision>();
@@ -115,11 +134,8 @@ export class Approvals {
         decision = undefined;
       }
       if (decision == null) {
-        // one asked about earlier in this request that's pending again is what replaced it (ex. after
-        // the user denied it), which is still asked about
         const askedKey = getAskedKey(approval);
-        const wasAskedBefore = this.#asked.has(askedKey) && !askedKeysNow.has(askedKey);
-        if (!options.isExplicit && (approval.denied || wasAskedBefore)) {
+        if (!options.isExplicit && (approval.denied || this.#asked.has(askedKey))) {
           // the others are still asked about
           isSkipped = true;
           continue;
@@ -127,9 +143,14 @@ export class Approvals {
         if (this.#isCancelled) {
           return false;
         }
-        this.#asked.add(askedKey);
-        askedKeysNow.add(askedKey);
+        this.#asked.set(askedKey, { uri: approval.configFile.uri, dirUri: approval.configFile.dirUri });
         decision = await this.#options.ask(approval, getApprovalChoices(approval));
+        if (decision != null) {
+          // the user decided, so it's asked about again when it's pending again later whatever dprint did
+          // with the decision (ex. a changed process plugin configuration, a server that didn't keep the
+          // session, or a forget in another window)
+          this.#asked.delete(askedKey);
+        }
         if (decision == null || this.#isCancelled) {
           // it stays pending, so the user can still approve it with the command
           return false;

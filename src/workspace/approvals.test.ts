@@ -395,6 +395,59 @@ describe("Approvals asked about", () => {
     );
     assert.deepStrictEqual(asked, ["processPlugins"]);
   });
+
+  it("asks on save again about an approval the user decided once it's pending again", async () => {
+    for (const decision of ["allow", "deny"]) {
+      const { approvals, asked } = createApprovals({ decide: () => decision });
+      await approvals.request([approval("processPlugins")], { isExplicit: false });
+      // ex. its process plugin's configuration changed, or a server that didn't keep the session
+      await approvals.request([{ ...approval("processPlugins"), id: "changed" }], { isExplicit: false });
+      assert.deepStrictEqual(asked, ["processPlugins", "changed"]);
+    }
+  });
+
+  it("doesn't ask on save again about a dismissed approval with a new id and its items in another order", async () => {
+    const items = [
+      { specifier: "https://example.com/a", kind: "plugin" },
+      { specifier: "https://example.com/b", kind: "plugin" },
+    ];
+    const { approvals, asked } = createApprovals({ decide: () => undefined });
+    await approvals.request([{ ...approval("processPlugins"), items }], { isExplicit: false });
+    // ex. its process plugin's configuration changed
+    const changed = { ...approval("processPlugins"), id: "changed", items: [...items].reverse() };
+    assert.strictEqual(await approvals.request([changed], { isExplicit: false }), false);
+    assert.deepStrictEqual(asked, ["processPlugins"]);
+  });
+
+  it("forgets which approvals of a config file were asked about", async () => {
+    const download = (id: string, uri: string, dirUri: string) => ({
+      ...approval("download"),
+      id,
+      configFile: { ...configFile(uri), dirUri },
+    });
+    const pending = [
+      download("a", "file:///a/dprint.json", "file:///a"),
+      download("aSub", "file:///a/dprint.json", "file:///a/sub"),
+      download("b", "file:///b/dprint.json", "file:///b"),
+    ];
+    const { approvals, asked } = createApprovals({ decide: () => undefined });
+    const requestEach = async () => {
+      for (const approval of pending) {
+        await approvals.request([approval], { isExplicit: false });
+      }
+      return asked.splice(0);
+    };
+    assert.deepStrictEqual(await requestEach(), ["a", "aSub", "b"]);
+
+    approvals.forget({ uri: "file:///a/dprint.json", dirUri: "file:///a/sub" });
+    assert.deepStrictEqual(await requestEach(), ["aSub"]);
+    // of every directory when it doesn't have one
+    approvals.forget({ uri: "file:///a/dprint.json" });
+    assert.deepStrictEqual(await requestEach(), ["a", "aSub"]);
+    // of every config file without one
+    approvals.forget();
+    assert.deepStrictEqual(await requestEach(), ["a", "aSub", "b"]);
+  });
 });
 
 describe("getApprovalMessage", () => {

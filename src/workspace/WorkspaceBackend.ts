@@ -1021,10 +1021,14 @@ class WorkspaceState {
     }
     // each process forgets what was decided for its session, and the stored decisions are shared
     const results = await Promise.allSettled(this.#resolvedServices.map(async service => {
-      // the user is asked again even about what they were asked about before
-      service.approvals.forget();
-      const result = await service.connection.forgetDecisions();
-      return result.notice;
+      try {
+        const result = await service.connection.forgetDecisions();
+        return result.notice;
+      } finally {
+        // the user is asked again even about what they were asked about before once dprint responds, which
+        // is for every config file because it's sent without one (a failure may have forgotten them too)
+        service.approvals.forget();
+      }
     }));
     const failure = results.find(result => result.status === "rejected");
     // ex. the stored decisions couldn't be forgotten, which is the same for each process
