@@ -279,7 +279,7 @@ suite("Extension Test Suite", function() {
       assert.equal(prompts.length, 1);
       assert.match(
         prompts[0].message,
-        /downloads from domains that aren't trusted \(`https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/,
+        /needs to download from domains that aren't trusted \(`https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/,
       );
       // the message names what's downloaded, so there are no details to show
       assert.deepStrictEqual(prompts[0].buttons, ["Allow", "Deny"]);
