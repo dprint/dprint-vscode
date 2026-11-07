@@ -728,11 +728,7 @@ describe("getForgettableConfigFiles", () => {
 
 describe("getApprovalMessage", () => {
   it("has the config file", () => {
-    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\? /);
-  });
-
-  it("says how to see what's approved", () => {
-    assert.match(getApprovalMessage(approval("processPlugins")), /Choose "Show Details" to see what's approved\.$/);
+    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\?$/);
   });
 
   it("says when the config file is outside the workspace", () => {
@@ -741,14 +737,6 @@ describe("getApprovalMessage", () => {
       configFile: { ...configFile("file:///tmp/dprint.json"), inWorkspace: false },
     };
     assert.match(getApprovalMessage(download), /^The configuration file is outside the workspace: .*dprint\.json\. /);
-  });
-
-  it("has the descriptions of the decisions", () => {
-    const download = approval("download");
-    download.decisions = download.decisions.map(option =>
-      option.decision === "allow" ? { ...option, description: "Downloads it." } : option
-    );
-    assert.match(getApprovalMessage(download), / \(allow: Downloads it\.\)$/);
   });
 });
 
