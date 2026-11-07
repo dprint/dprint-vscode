@@ -234,16 +234,11 @@ export class Approvals {
 }
 
 /**
- * Gets the message to ask the user with, which has the config file (dprint's message doesn't) and
- * says when it's outside the workspace. What's approved is shown with "Show Details".
+ * Gets the message to ask the user with, which is dprint's message with its lines joined because a
+ * notification doesn't show line breaks.
  */
 export function getApprovalMessage(approval: PendingApproval) {
-  // the config file is first because a notification is cut off after 1000 characters, and the
-  // message may have long urls from the config file
-  const configFilePath = getDisplayPath(approval.configFile.uri);
-  return approval.configFile.inWorkspace
-    ? `Configuration file: ${configFilePath}. ${approval.message}`
-    : `The configuration file is outside the workspace: ${configFilePath}. ${approval.message}`;
+  return approval.message.split("\n").filter(line => line.length > 0).join(" · ");
 }
 
 /** The title of the button that shows what's approved and what the process plugins run with. */

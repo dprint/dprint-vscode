@@ -727,16 +727,15 @@ describe("getForgettableConfigFiles", () => {
 });
 
 describe("getApprovalMessage", () => {
-  it("has the config file", () => {
-    assert.match(getApprovalMessage(approval("download")), /^Configuration file: .*dprint\.json\. Approve download\?$/);
-  });
-
-  it("says when the config file is outside the workspace", () => {
-    const download = {
-      ...approval("download"),
-      configFile: { ...configFile("file:///tmp/dprint.json"), inWorkspace: false },
+  it("joins the lines of dprint's message", () => {
+    const processPlugins = {
+      ...approval("processPlugins"),
+      message: "Allow them?\n\nConfig file: `/project/dprint.json`\nPlugins: `exec`",
     };
-    assert.match(getApprovalMessage(download), /^The configuration file is outside the workspace: .*dprint\.json\. /);
+    assert.strictEqual(
+      getApprovalMessage(processPlugins),
+      "Allow them? · Config file: `/project/dprint.json` · Plugins: `exec`",
+    );
   });
 });
 
