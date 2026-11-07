@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
+import type { ConfigJsonSchemaProvider } from "../ConfigJsonSchemaProvider";
 import {
   FILE_SCHEME,
   isDprintExtensionId,
@@ -10,14 +11,28 @@ import {
 import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { hasPluginForFile } from "../pluginFiles";
-import { ActivatedDisposables, delay, HttpsTextDownloader, ObjectDisposedError } from "../utils";
+import { ActivatedDisposables, delay } from "../utils";
 import { CoalescingQueue } from "../utils/CoalescingQueue";
-import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
+import { EditorInfoConfigSchemaSource } from "./EditorInfoConfigSchemaSource";
+import { ObjectDisposedError } from "./ObjectDisposedError";
+import { HttpsTextDownloader, RacyCacheTextDownloader } from "./TextDownloader";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
+
+/**
+ * The settings that the backend is reinitialized for when they change. The other
+ * settings are read when they're used (ex. `dprint.showNoConfigNotification`).
+ */
+const REINITIALIZE_SETTINGS = [
+  "dprint.ensureStableFormat",
+  "dprint.path",
+  "dprint.useGlobalConfig",
+  "dprint.verbose",
+];
 
 export function activateLegacy(
   logger: Logger,
   approvedPaths: ApprovedConfigPaths,
+  configSchemaProvider: ConfigJsonSchemaProvider,
 ): ExtensionBackend {
   const resourceDisposables = new ActivatedDisposables(logger);
   const initializationDisposables = new ActivatedDisposables(logger);
@@ -30,13 +45,6 @@ export function activateLegacy(
   });
   resourceDisposables.push(workspaceService);
 
-  // todo: add an "onDidOpen" for dprint.json and use the appropriate EditorInfo
-  // for ConfigJsonSchemaProvider based on the file that's shown
-  const configSchemaProvider = new ConfigJsonSchemaProvider(logger, new HttpsTextDownloader());
-  resourceDisposables.push(
-    vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
-  );
-
   let disposed = false;
   let folderInfos: FolderInfos = [];
   let registrationKey: string | undefined;
@@ -48,6 +56,7 @@ export function activateLegacy(
   });
   let userDataFilePaths: string[] = [];
   let userDataFilePathsUpdate = Promise.resolve();
+  const schemaTextDownloader = new RacyCacheTextDownloader(new HttpsTextDownloader());
 
   // update the formatting registration when the default formatter settings or languages change
   resourceDisposables.push(vscode.workspace.onDidChangeConfiguration(() => scheduleFormattingRegistrationUpdate()));
@@ -57,9 +66,29 @@ export function activateLegacy(
 
   return {
     reInitialize,
+    affectsInitialization(evt) {
+      return REINITIALIZE_SETTINGS.some(setting => evt.affectsConfiguration(setting));
+    },
     onConfigFileChanged: scheduleConfigFileRefresh,
     provideGlobalConfigFormattingEdits(document, range, options, token) {
       return workspaceService.provideGlobalConfigFormattingEdits(document, range, options, token);
+    },
+    // the extension finds the config file of the document itself
+    canFormatWithGlobalConfig: () => Promise.resolve(undefined),
+    // the installed version of dprint reads a symlinked config file without the user allowing it anyway
+    followsConfigFileSymlinks: true,
+    approve() {
+      // the installed version of dprint doesn't need anything to be approved
+      vscode.window.showInformationMessage("Nothing needs to be approved for the configuration files.");
+      return Promise.resolve();
+    },
+    forgetDecisions() {
+      vscode.window.showInformationMessage("The installed version of dprint doesn't ask to approve anything.");
+      return Promise.resolve();
+    },
+    showDecisions() {
+      vscode.window.showInformationMessage("The installed version of dprint doesn't ask to approve anything.");
+      return Promise.resolve();
     },
     dispose() {
       disposed = true;
@@ -72,7 +101,7 @@ export function activateLegacy(
   async function reInitialize() {
     try {
       folderInfos = await workspaceService.initializeFolders();
-      configSchemaProvider.setFolderInfos(folderInfos);
+      updateConfigSchema();
       await scheduleFormattingRegistrationUpdate();
       // don't wait for this because it may need to start dprint for a config outside the workspace
       scheduleUserDataFilePathsUpdate();
@@ -95,7 +124,7 @@ export function activateLegacy(
   async function refreshAfterConfigFileChange() {
     try {
       folderInfos = await workspaceService.refreshFolders();
-      configSchemaProvider.setFolderInfos(folderInfos);
+      updateConfigSchema();
       await scheduleFormattingRegistrationUpdate();
       scheduleUserDataFilePathsUpdate();
       logger.logDebug("Refreshed the plugin information.");
@@ -104,6 +133,13 @@ export function activateLegacy(
         logger.logError("Error refreshing:", err);
       }
     }
+  }
+
+  /** Provides the config schema that's built from the editor info of the folders. */
+  function updateConfigSchema() {
+    configSchemaProvider.setSource(
+      new EditorInfoConfigSchemaSource(folderInfos.map(info => info.editorInfo), logger, schemaTextDownloader),
+    );
   }
 
   // Updates run one at a time because getting the languages is async and

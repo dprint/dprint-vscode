@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { TextDecoder, TextEncoder } from "node:util";
 import type * as vscode from "vscode";
-import type { DprintExecutable } from "../../../executable/DprintExecutable";
 import type { Logger } from "../../../logger";
+import type { LegacyDprintExecutable } from "../../LegacyDprintExecutable";
 import type { ByteRange } from "../byteRange";
 import { EditorProcess, SerialExecutor } from "../common";
 import type { EditorService } from "../EditorService";
@@ -14,7 +14,7 @@ export class EditorService4 implements EditorService {
   private _process: EditorProcess;
   private _serialExecutor = new SerialExecutor();
 
-  constructor(logger: Logger, dprintExecutable: DprintExecutable) {
+  constructor(logger: Logger, dprintExecutable: LegacyDprintExecutable) {
     this._process = new EditorProcess(logger, dprintExecutable);
     this._process.onExit(() => this._serialExecutor.clear());
   }

@@ -1,0 +1,108 @@
+import type { ConfigFileNames } from "../configPaths";
+import { DOT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILE_NAMES } from "../constants";
+import { DPRINT_METHODS_VERSIONS, type InitializeResult } from "./messages";
+
+// note: this file should not import "vscode" so that it can be unit tested
+
+/** Why the language server of an executable can't be used. */
+export interface UnsupportedServer {
+  error: string;
+  /**
+   * Whether the executable couldn't be run at all (ex. dprint isn't installed), as
+   * opposed to being a version of dprint that doesn't have the `dprint/*` methods.
+   */
+  isUnavailable: boolean;
+  /**
+   * Whether dprint has the `dprint/*` methods but not a version of them the extension
+   * supports, which the user is told about because dprint or the extension needs to be
+   * updated.
+   */
+  isVersionMismatch?: boolean;
+}
+
+/**
+ * Gets the names of the config files that the server looks up, which are the extension's own when it doesn't
+ * say (ex. an older dprint, or one without a `version`).
+ */
+export function getConfigFileNames(result: InitializeResult): ConfigFileNames {
+  const capability = result.capabilities?.experimental?.dprint;
+  return capability?.configFileNames != null && capability.dotConfigFileNames != null
+    ? { configFileNames: capability.configFileNames, dotConfigFileNames: capability.dotConfigFileNames }
+    : { configFileNames: DPRINT_CONFIG_FILE_NAMES, dotConfigFileNames: DOT_CONFIG_FILE_NAMES };
+}
+
+/**
+ * Gets the version of dprint when its language server has the `dprint/*` methods
+ * the extension uses, or otherwise why it can't be used.
+ */
+export function getServerSupport(result: InitializeResult): { version: string } | UnsupportedServer {
+  const version = result.serverInfo?.version ?? "unknown";
+  if (!isSupportedServer(result)) {
+    // a server that has the methods says what to tell the user, or at least which versions of them it supports
+    const capability = result.capabilities?.experimental?.dprint;
+    if (capability?.message != null) {
+      return { error: capability.message, isUnavailable: false, isVersionMismatch: true };
+    }
+    const serverVersions = capability?.versions ?? [];
+    if (serverVersions.length === 0) {
+      return {
+        error: `dprint ${version} doesn't support the dprint methods of its language server.`,
+        isUnavailable: false,
+        // a server with the capability has the methods, so it isn't used with an older protocol
+        isVersionMismatch: capability != null,
+      };
+    }
+    const update = Math.max(...serverVersions) > Math.max(...DPRINT_METHODS_VERSIONS)
+      ? "Update the dprint extension to use it."
+      : "Update dprint to use it with this version of the extension.";
+    return {
+      error: `dprint ${version} doesn't support the versions of the dprint methods that the extension does. ${update}`,
+      isUnavailable: false,
+      isVersionMismatch: true,
+    };
+  }
+  return { version };
+}
+
+/** Gets if the language server has the `dprint/*` methods the extension uses. */
+export function isSupportedServer(result: InitializeResult) {
+  // the server responds with the version it uses of the ones the extension supports
+  const methodsVersion = result.capabilities?.experimental?.dprint?.version;
+  return typeof methodsVersion === "number" && DPRINT_METHODS_VERSIONS.includes(methodsVersion);
+}
+
+/**
+ * Gets why the workspace can't be formatted with the language server, which is
+ * undefined when it can.
+ *
+ * The config files whose executable doesn't support it are formatted with schema
+ * version 5 of the editor service on their own, but the default executable, which
+ * formats the files without a config file in the workspace, needs to support it when
+ * it runs so that those files aren't left unformatted because it's an older dprint.
+ * One that can't run doesn't matter unless there's nothing else to format with,
+ * because the files it would format can't be formatted either way.
+ */
+export function getUnsupportedError<TServer extends object>(
+  defaultServer: TServer | UnsupportedServer,
+  hasConfigFiles: boolean,
+): string | undefined {
+  if (isUnsupportedServer(defaultServer) && (!defaultServer.isUnavailable || !hasConfigFiles)) {
+    return defaultServer.error;
+  }
+  return undefined;
+}
+
+export function isUnsupportedServer<TServer extends object>(
+  server: TServer | UnsupportedServer,
+): server is UnsupportedServer {
+  return "error" in server;
+}
+
+/**
+ * Gets if starting `dprint lsp` failed because it's a version of dprint without the
+ * subcommand, as opposed to dprint not running at all (ex. it's not installed), which
+ * is when dprint says it doesn't know the subcommand.
+ */
+export function isUnknownSubcommandError(err: unknown) {
+  return /subcommand '?lsp\b|'lsp' which wasn't expected/i.test(String(err));
+}
