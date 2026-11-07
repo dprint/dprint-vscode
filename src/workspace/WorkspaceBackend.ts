@@ -50,7 +50,6 @@ import {
   Approvals,
   combineDecisions,
   getApprovalDetails,
-  getApprovalMessage,
   getDisplayPath,
   getForgettableConfigFiles,
   SHOW_DETAILS_TITLE,
@@ -154,8 +153,6 @@ export class WorkspaceBackend implements vscode.Disposable {
   readonly #restartedServices = new Set<Promise<ServiceResolution>>();
   /** The problems with the config files. */
   readonly #diagnostics: vscode.DiagnosticCollection;
-  /** Provides the read-only documents of what process plugins run with (see `askApproval`). */
-  readonly #approvalConfigurationProvider: vscode.Disposable;
   /**
    * What looks in the ancestor directories of the workspace folders again (see `#checkAncestorConfigFilesAgain`),
    * and forgets the keys of the workspace folders when they change (see `isWorkspaceFolderOrAncestor`).
@@ -179,10 +176,6 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#logger = options.logger;
     this.#environment = new RealEnvironment(options.logger);
     this.#diagnostics = vscode.languages.createDiagnosticCollection("dprint");
-    this.#approvalConfigurationProvider = vscode.workspace.registerTextDocumentContentProvider(
-      APPROVAL_CONFIGURATION_SCHEME,
-      { provideTextDocumentContent: uri => approvalConfigurations.get(uri.path) },
-    );
     // the home directory and its ancestors aren't watched for config files, so they're looked in again when
     // one may have been created, deleted, or changed there (see `WorkspaceState.checkAncestorConfigFilesAgain`)
     this.#listeners = [
@@ -395,7 +388,6 @@ export class WorkspaceBackend implements vscode.Disposable {
     this.#state = undefined;
     this.#disposeUnusedServices();
     this.#diagnostics.dispose();
-    this.#approvalConfigurationProvider.dispose();
     this.#session.pendingApprovalsItem.dispose();
     for (const listener of this.#listeners) {
       listener.dispose();
@@ -2070,33 +2062,22 @@ async function waitUnlessCancelled(promise: Promise<boolean>, token: vscode.Canc
   }
 }
 
-/** The scheme of the read-only documents of what's approved. */
-const APPROVAL_CONFIGURATION_SCHEME = "dprint-approval";
-/** What's approved by the path of its document, which is the approval's id, while it's asked about. */
-const approvalConfigurations = new Map<string, string>();
-
-/** Asks the user about what dprint needs approved with the message dprint provides. */
+/**
+ * Asks the user about what dprint needs approved with the message dprint provides, and shows what the
+ * process plugins run with in a dialog when they ask for it, which they decide in. A dialog stays until
+ * they decide, unlike a notification, which VS Code hides after a while.
+ */
 async function askApproval(approval: PendingApproval, choices: ApprovalChoice[]) {
   const titles = choices.map(choice => choice.title);
-  const documentPath = `/${approval.id}.jsonc`;
-  try {
-    while (true) {
-      const selection = await vscode.window.showWarningMessage(
-        toPlainNotificationText(getApprovalMessage(approval)),
-        ...titles,
-        SHOW_DETAILS_TITLE,
-      );
-      if (selection !== SHOW_DETAILS_TITLE) {
-        return choices.find(choice => choice.title === selection)?.decision;
-      }
-      // it's asked about again once the user has seen what's approved, which is a read-only document
-      approvalConfigurations.set(documentPath, getApprovalDetails(approval));
-      const uri = vscode.Uri.from({ scheme: APPROVAL_CONFIGURATION_SCHEME, path: documentPath });
-      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
-    }
-  } finally {
-    approvalConfigurations.delete(documentPath);
+  const message = toPlainNotificationText(approval.message);
+  const details = getApprovalDetails(approval);
+  let selection = details == null
+    ? await vscode.window.showWarningMessage(message, ...titles)
+    : await vscode.window.showWarningMessage(message, ...titles, SHOW_DETAILS_TITLE);
+  if (selection === SHOW_DETAILS_TITLE) {
+    selection = await vscode.window.showWarningMessage(message, { modal: true, detail: details }, ...titles);
   }
+  return choices.find(choice => choice.title === selection)?.decision;
 }
 
 /** Gets the settings to send to dprint. */

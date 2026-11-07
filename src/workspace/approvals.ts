@@ -2,7 +2,6 @@ import { fileURLToPath } from "node:url";
 import {
   APPROVAL_CHANGED_ERROR_CODE,
   type ApprovalDecision,
-  type ApprovalItem,
   type ApproveParams,
   type ApproveResult,
   type ConfigApprovals,
@@ -233,43 +232,32 @@ export class Approvals {
   }
 }
 
-/**
- * Gets the message to ask the user with, which is dprint's message with its lines joined because a
- * notification doesn't show line breaks.
- */
-export function getApprovalMessage(approval: PendingApproval) {
-  return approval.message.split("\n").filter(line => line.length > 0).join(" · ");
-}
-
-/** The title of the button that shows what's approved and what the process plugins run with. */
+/** The title of the button that shows what the process plugins run with. */
 export const SHOW_DETAILS_TITLE = "Show Details";
 
 /**
- * Gets what's approved (each item, and what the process plugins run with) as text to show the
- * user before they decide.
+ * Gets what the process plugins run with as text to show the user before they decide, which is
+ * `undefined` when there's nothing to show besides the message (ex. for downloads, which it names).
  */
-export function getApprovalDetails(approval: PendingApproval) {
-  const sections = [`// ${toCommentLine(approval.title)}\n${toCommentLines(approval.message)}`];
-  sections.push(
-    `// what's approved\n${approval.items.map(item => `// - ${toCommentLine(getItemText(item))}`).join("\n")}`,
-  );
+export function getApprovalDetails(approval: PendingApproval): string | undefined {
+  const sections = [];
   const configurations = approval.items
     .filter(item => item.configuration != null)
     .map(item => [item.plugin?.configKey ?? item.specifier, item.configuration]);
   if (configurations.length > 0) {
     sections.push(
-      `// what the process plugins run with\n${toVisibleJson(Object.fromEntries(configurations))}`,
+      `The process plugins run with this configuration:\n${toVisibleJson(Object.fromEntries(configurations))}`,
     );
   }
   // what a process plugin that wasn't set up before runs with, which includes what the config file extends
   if (approval.trustedConfiguration != null) {
     sections.push(
-      `// what the process plugins that weren't set up before run with\n${
+      `The process plugins that weren't set up before run with this configuration, including what the configuration file extends:\n${
         toVisibleJson(approval.trustedConfiguration)
       }`,
     );
   }
-  return sections.join("\n\n");
+  return sections.length === 0 ? undefined : sections.join("\n\n");
 }
 
 /** A decision that the dprint processes listed, with each config file they listed it for. */
@@ -320,16 +308,6 @@ export function getForgettableConfigFiles(decisions: readonly ListedDecision[]) 
   return configFiles;
 }
 
-/** Gets text as lines of comments, which text from a config file can't end (ex. to add a section). */
-function toCommentLines(text: string) {
-  return text.split(/\r\n|[\r\n\u2028\u2029]/).map(line => `// ${line}`).join("\n");
-}
-
-/** Gets text as one line of a comment. */
-function toCommentLine(text: string) {
-  return text.replace(/\r\n|[\r\n\u2028\u2029]/g, " ");
-}
-
 /**
  * Gets the JSON text of what's from the project (ex. the configuration of a process plugin), where
  * its strings are escaped like other text from the project apart from the line breaks of the JSON.
@@ -345,27 +323,6 @@ function toVisibleJson(value: unknown) {
 function getAskedKey(approval: PendingApproval) {
   const specifiers = approval.items.map(item => item.specifier).sort();
   return JSON.stringify([approval.configFile.uri, approval.configFile.dirUri, approval.kind, specifiers]);
-}
-
-/** Gets the text of an approval's item, which has where it's from. */
-function getItemText(item: ApprovalItem) {
-  // dprint escaped the specifier and registry already
-  if (item.kind === "npmrcProxy") {
-    const npmrc = item.npmrcUri == null ? "" : ` that ${getDisplayPath(item.npmrcUri)} sets`;
-    return `the proxy ${item.specifier}${npmrc}`;
-  }
-  if (item.kind === "networkPath") {
-    const reachedFrom = item.localUri == null ? "" : `, which ${getDisplayPath(item.localUri)} in the project reaches`;
-    return `${item.specifier} (read from another machine${reachedFrom})`;
-  }
-  if (item.registry == null) {
-    return item.specifier;
-  }
-  // the download of a registry itself, which allows every url under it unlike another url
-  if (item.registry === item.specifier) {
-    return `the npm registry ${item.specifier} (allowing it allows every package and url under it)`;
-  }
-  return `${item.specifier} (from the npm registry ${item.registry})`;
 }
 
 /**

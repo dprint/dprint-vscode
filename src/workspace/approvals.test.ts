@@ -6,7 +6,6 @@ import {
   combineDecisions,
   getApprovalChoices,
   getApprovalDetails,
-  getApprovalMessage,
   getForgettableConfigFiles,
   toPlainNotificationText,
   toVisibleText,
@@ -726,36 +725,9 @@ describe("getForgettableConfigFiles", () => {
   });
 });
 
-describe("getApprovalMessage", () => {
-  it("joins the lines of dprint's message", () => {
-    const processPlugins = {
-      ...approval("processPlugins"),
-      message: "Allow them?\n\nConfig file: `/project/dprint.json`\nPlugins: `exec`",
-    };
-    assert.strictEqual(
-      getApprovalMessage(processPlugins),
-      "Allow them? · Config file: `/project/dprint.json` · Plugins: `exec`",
-    );
-  });
-});
-
 describe("getApprovalDetails", () => {
-  it("has what's approved and where it's from", () => {
-    const download = approval("download");
-    download.items = [
-      { specifier: "https://example.com/plugin.wasm", kind: "plugin" },
-      { specifier: "npm:@scope/plugin@1.0.0", kind: "plugin", registry: "https://registry.example.com/" },
-      { specifier: "https://registry.example.com/", kind: "plugin", registry: "https://registry.example.com/" },
-      { specifier: "https://${TOKEN}@proxy.example", kind: "npmrcProxy", npmrcUri: "https://example.com/.npmrc" },
-    ];
-    assert.strictEqual(
-      getApprovalDetails(download),
-      "// download\n// Approve download?\n\n// what's approved\n"
-        + "// - https://example.com/plugin.wasm\n"
-        + "// - npm:@scope/plugin@1.0.0 (from the npm registry https://registry.example.com/)\n"
-        + "// - the npm registry https://registry.example.com/ (allowing it allows every package and url under it)\n"
-        + "// - the proxy https://${TOKEN}@proxy.example that https://example.com/.npmrc sets",
-    );
+  it("has nothing for what the message names", () => {
+    assert.strictEqual(getApprovalDetails(approval("download")), undefined);
   });
 
   it("has what the process plugins run with", () => {
@@ -765,32 +737,23 @@ describe("getApprovalDetails", () => {
       plugin: { name: "dprint-plugin-exec", version: "0.5.0", configKey: "exec" },
       configuration: { commands: [{ command: "a" }] },
     };
-    assert.match(
+    assert.strictEqual(
       getApprovalDetails(processPlugins),
-      new RegExp(
-        "// what the process plugins run with\n"
-          + escapeRegExp(JSON.stringify({ exec: { commands: [{ command: "a" }] } }, undefined, 2))
-          + "$",
-      ),
+      "The process plugins run with this configuration:\n"
+        + JSON.stringify({ exec: { commands: [{ command: "a" }] } }, undefined, 2),
     );
   });
 
   it("has what the process plugins that weren't set up run with", () => {
     const processPlugins = { ...approval("processPlugins"), trustedConfiguration: { exec: { commands: [] } } };
-    assert.match(
+    assert.strictEqual(
       getApprovalDetails(processPlugins),
-      new RegExp(
-        "// what the process plugins that weren't set up before run with\n"
-          + escapeRegExp(JSON.stringify({ exec: { commands: [] } }, undefined, 2))
-          + "$",
-      ),
+      "The process plugins that weren't set up before run with this configuration, including what the configuration "
+        + "file extends:\n"
+        + JSON.stringify({ exec: { commands: [] } }, undefined, 2),
     );
   });
 });
-
-function escapeRegExp(text: string) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 describe("toVisibleText", () => {
   it("escapes what changes how the text around it looks", () => {
