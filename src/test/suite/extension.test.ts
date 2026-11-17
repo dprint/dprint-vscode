@@ -282,7 +282,7 @@ suite("Extension Test Suite", function() {
         /needs to download from domains that aren't trusted \(`https:\/\/example\.com\/dprint-vscode-test-plugin\.wasm/,
       );
       // the message names what's downloaded, so there are no details to show
-      assert.deepStrictEqual(prompts[0].buttons, ["Allow", "Deny"]);
+      assert.deepStrictEqual(prompts[0].buttons, ["Allow", "Deny", "Always Deny"]);
       assert.equal(doc.getText(), `{\n"test":     5\n}`);
 
       // it's only asked once without the user asking for it
