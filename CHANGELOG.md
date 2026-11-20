@@ -1,5 +1,9 @@
 # Change Log
 
+### 0.19.0
+
+- feat: format the files of a workspace with dprint's language server (#192)
+
 ### 0.18.2
 
 - fix: probe for an executable at a relative `dprint.path` on Windows (#189)
