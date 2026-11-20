@@ -1,56 +1,35 @@
 import { which } from "@dsherret/which";
-import { exec, execFile, spawn } from "node:child_process";
+import { type ChildProcess, exec, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
 import type { ApprovedConfigPaths } from "../ApprovedConfigPaths";
 import type { DprintExtensionConfigPathInfo } from "../config";
 import type { Environment } from "../environment";
 import type { Logger } from "../logger";
-import { getCliEnv } from "./cliEnv";
 import {
   type DprintCommand,
   expandWindowsEnvVars,
   getCommandDisplayText,
   getCommandLaunchInfo,
+  getProcessKey,
+  killProcessTreeWith,
   resolveWindowsCommand,
   substituteCommands,
 } from "./command";
 import { tryResolveNpmExecutable } from "./npm";
 
-export interface EditorInfo {
-  schemaVersion: number;
-  cliVersion: string;
-  configSchemaUrl: string;
-  plugins: PluginInfo[];
-}
-
-export interface PluginInfo {
-  name: string;
-  version: string;
-  configKey: string;
-  fileExtensions: string[];
-  fileNames: string[];
-  configSchemaUrl: string | undefined;
-  helpUrl: string;
-}
-
-/** A config discovery mode supported by the cli. */
-export type ConfigDiscovery = "ignore-descendants";
-
 export interface DprintExecutableOptions {
   approvedPaths: ApprovedConfigPaths;
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   cwd: vscode.Uri;
-  configUri: vscode.Uri | undefined;
   /** Whether to use a dprint executable found in node_modules. Defaults to true. */
   resolveNpmExecutable?: boolean;
   /** Directory to start searching node_modules for a dprint executable from. Defaults to the cwd. */
   npmSearchDir?: vscode.Uri;
-  /** The cli's config discovery mode. Defaults to the cli's default. */
-  configDiscovery?: ConfigDiscovery;
-  /** Whether to format again until the output is stable. Defaults to false. */
-  ensureStableFormat?: boolean;
+  /** The environment variables to launch the cli with. Defaults to this process' environment. */
+  env?: NodeJS.ProcessEnv;
   verbose: boolean;
   logger: Logger;
   environment: Environment;
@@ -59,17 +38,13 @@ export interface DprintExecutableOptions {
 export class DprintExecutable {
   readonly #command: DprintCommand;
   readonly #cwd: vscode.Uri;
-  readonly #configUri: vscode.Uri | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #verbose: boolean;
-  readonly #logger: Logger;
 
   private constructor(command: DprintCommand, options: DprintExecutableOptions) {
-    this.#logger = options.logger;
     this.#command = command;
     this.#cwd = options.cwd;
-    this.#configUri = options.configUri;
-    this.#env = getCliEnv(process.env, options);
+    this.#env = options.env;
     this.#verbose = options.verbose;
   }
 
@@ -80,79 +55,72 @@ export class DprintExecutable {
 
   static async resolveCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
     const command = await getCommand(options);
-    return process.platform === "win32"
-      ? await resolveWindowsCommand(
-        command,
-        commandPath => which(commandPath, whichEnvironment),
-        process.env.PATHEXT,
-      )
-      : command;
+    if (process.platform !== "win32") {
+      // a bare name is found on the absolute directories of the path, which an empty or relative
+      // one (ex. ".") would otherwise make the workspace folder
+      if (isBareCommand(command.path) && /^[\w.-]+$/.test(command.path)) {
+        const filePath = await which(command.path, whichEnvironment);
+        if (filePath == null) {
+          throw new Error(`${command.path} wasn't found on the path.`);
+        }
+        // a plain name doesn't need the shell
+        return { kind: "path", path: filePath };
+      }
+      return command;
+    }
+    const resolved = await resolveWindowsCommand(
+      command,
+      commandPath => which(commandPath, whichEnvironment),
+      process.env.PATHEXT,
+    );
+    // Windows looks for a bare command in the current directory first, which is the workspace
+    // folder, so one that isn't found on the path isn't started
+    if (isBareCommand(resolved.path)) {
+      throw new Error(`${resolved.path} wasn't found on the path.`);
+    }
+    return resolved;
   }
 
   get cmdPath() {
     return getCommandDisplayText(this.#command);
   }
 
-  get initializationFolderUri() {
-    if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
-    }
-    return this.#cwd;
+  /**
+   * Identifies the executable and how it's launched, which is the same for the
+   * executables that can share a dprint process.
+   */
+  get processKey() {
+    return getProcessKey(this.#command, { cwd: this.#cwd.fsPath, env: this.#env, verbose: this.#verbose });
   }
 
-  async checkInstalled() {
-    try {
-      await this.#execShell(["-v"], undefined, undefined);
-      return true;
-    } catch (err: any) {
-      this.#logger.logError(`Problem launching ${this.cmdPath}.`, err);
-      return false;
-    }
-  }
-
-  async getEditorInfo() {
-    const stdout = await this.#execShell(
-      ["editor-info", ...this.#getConfigArgs()],
-      undefined,
-      undefined,
-    );
-    const editorInfo = parseEditorInfo();
-
-    if (
-      !(editorInfo.plugins instanceof Array) || typeof editorInfo.schemaVersion !== "number"
-      || isNaN(editorInfo.schemaVersion)
-    ) {
-      throw new Error("Error getting editor info. Your editor extension or dprint CLI might be out of date.");
-    }
-
-    return editorInfo;
-
-    function parseEditorInfo() {
-      try {
-        return JSON.parse(stdout) as EditorInfo;
-      } catch (err) {
-        throw new Error(`Error parsing editor info. Output was: ${stdout}\n\nError: ${err}`);
-      }
-    }
-  }
-
-  spawnEditorService() {
-    const currentProcessId = process.pid;
-    const args = ["editor-service", "--parent-pid", currentProcessId.toString(), ...this.#getConfigArgs()];
+  /**
+   * Starts dprint's language server, which an editor extension uses with the `dprint/*`
+   * methods. It exits with the process of the `processId` it's initialized with. It's
+   * started in its own process group outside Windows, so it can be killed with what it
+   * started (see `killProcessTree`).
+   */
+  spawnLanguageServer() {
+    const args = ["lsp"];
     if (this.#verbose) {
       args.push("--verbose");
     }
+    return this.spawn(args, { detached: process.platform !== "win32" });
+  }
 
+  /** Starts the cli with the arguments and pipes for its stdio. */
+  spawn(args: string[], options: { detached?: boolean } = {}) {
     const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
     return spawn(launchInfo.command, launchInfo.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.#cwd.fsPath,
-      env: this.#env,
+      env: getLaunchEnv(this.#env),
       shell: launchInfo.shell,
+      detached: options.detached,
     });
   }
 
-  #execShell(
+  /** Runs the cli with the arguments and gets its stdout without the last newline. */
+  execShell(
     args: string[],
     stdin: string | undefined,
     token: vscode.CancellationToken | undefined,
@@ -163,7 +131,7 @@ export class DprintExecutable {
         const launchInfo = getCommandLaunchInfo(this.#command, args, process.platform);
         const childProcess = execFile(launchInfo.command, launchInfo.args, {
           cwd: this.#cwd.fsPath,
-          env: this.#env,
+          env: getLaunchEnv(this.#env),
           encoding: "utf8",
           shell: launchInfo.shell,
         }, (err, stdout, stderr) => {
@@ -187,14 +155,23 @@ export class DprintExecutable {
       }
     });
   }
+}
 
-  #getConfigArgs() {
-    if (this.#configUri) {
-      return ["--config", this.#configUri.fsPath];
-    } else {
-      return [];
-    }
-  }
+/**
+ * Kills the language server's process with the processes it started (see `killProcessTreeWith`),
+ * which resolves once that was done. Only the process is killed when that fails.
+ */
+export function killProcessTree(childProcess: ChildProcess, signal: NodeJS.Signals | undefined): Promise<void> {
+  return killProcessTreeWith(childProcess, signal, {
+    platform: process.platform,
+    systemRoot: process.env.SystemRoot,
+    signal: (pid, signal) => process.kill(pid, signal),
+    run: (command, args) =>
+      new Promise(resolve => {
+        execFile(command, args, { cwd: path.dirname(command), windowsHide: true }, err => resolve(err == null));
+      }),
+    delay: ms => new Promise(resolve => setTimeout(resolve, ms).unref()),
+  });
 }
 
 async function getCommand(options: DprintExecutableOptions): Promise<DprintCommand> {
@@ -231,7 +208,7 @@ async function getCommand(options: DprintExecutableOptions): Promise<DprintComma
 
 function runShellCommand(command: string, cwd: string | undefined) {
   return new Promise<string>((resolve, reject) => {
-    exec(command, { cwd, encoding: "utf8" }, (err, stdout, stderr) => {
+    exec(command, { cwd, encoding: "utf8", env: getLaunchEnv(undefined) }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`Failed running \`${command}\` from the dprint.path setting: ${stderr || err.message}`));
       } else {
@@ -241,11 +218,38 @@ function runShellCommand(command: string, cwd: string | undefined) {
   });
 }
 
-/** File system access for `which` that works with the older Node.js versions of vscode. */
+/**
+ * Gets the environment to launch a process with, which has cmd.exe not look for the commands it
+ * runs in the current directory first (the workspace folder) on Windows.
+ */
+function getLaunchEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv | undefined {
+  if (process.platform !== "win32") {
+    return env;
+  }
+  return { ...(env ?? process.env), NoDefaultCurrentDirectoryInExePath: "1" };
+}
+
+/** Gets if the command is a name without a directory, which is looked for on the path. */
+function isBareCommand(command: string) {
+  return !/[\\/]/.test(command);
+}
+
+/**
+ * File system access for `which` that works with the older Node.js versions of vscode, which only
+ * looks in the absolute directories of the path so a relative one can't be the workspace folder.
+ */
 const whichEnvironment: Parameters<typeof which>[1] = {
   isWindows: process.platform === "win32",
   env(key) {
-    return process.env[key];
+    const value = process.env[key];
+    if (key.toUpperCase() !== "PATH" || value == null) {
+      return value;
+    }
+    // a directory may be quoted or have whitespace around it, which `which` and the shell remove
+    return value.split(path.delimiter)
+      .map(dir => dir.trim().replace(/^"(.*)"$/, "$1"))
+      .filter(dir => path.isAbsolute(dir))
+      .join(path.delimiter);
   },
   async stat(filePath) {
     const info = await fs.promises.stat(filePath);

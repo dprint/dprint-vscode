@@ -1,6 +1,18 @@
 import * as assert from "node:assert";
 import { describe, it } from "node:test";
-import { isDprintExtensionId } from "./constants";
+import { DPRINT_CONFIG_FILEPATH_GLOB, getConfigFilePathGlob, isDprintExtensionId } from "./constants";
+
+describe("getConfigFilePathGlob", () => {
+  it("matches the names in either case on a case insensitive file system", () => {
+    // ex. `Dprint.json` on Windows or macOS, which dprint finds there
+    assert.strictEqual(
+      getConfigFilePathGlob("win32"),
+      "**/{[dD][pP][rR][iI][nN][tT],.[dD][pP][rR][iI][nN][tT]}.{[jJ][sS][oO][nN],[jJ][sS][oO][nN][cC]}",
+    );
+    assert.strictEqual(getConfigFilePathGlob("darwin"), getConfigFilePathGlob("win32"));
+    assert.strictEqual(getConfigFilePathGlob("linux"), DPRINT_CONFIG_FILEPATH_GLOB);
+  });
+});
 
 describe("isDprintExtensionId", () => {
   it("matches the extension id ignoring case", () => {
